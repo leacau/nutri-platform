@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return request.auth.token.role;
+    }
+
+    function clinicId() {
+      return request.auth.token.clinicId;
+    }
+
+    function isPlatformAdmin() {
+      return isSignedIn() && role() == 'platform_admin';
+    }
+
+    function isClinicRole() {
+      return isSignedIn() && (role() == 'clinic_admin' || role() == 'nutri' || role() == 'staff');
+    }
+
+    function isPatient() {
+      return isSignedIn() && role() == 'patient';
+    }
+
+    // Default deny (fail closed)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Patients: staff can read limited fields in API, BUT rules don't do field-level well.
+    // So we keep patients locked down to prevent direct client access.
+    match /patients/{patientId} {
+      allow read, write: if false;
+    }
+
+    // Appointments: also locked down from client direct access.
+    match /appointments/{appointmentId} {
+      allow read, write: if false;
+    }
+
+    // Visits: locked down
+    match /visits/{visitId} {
+      allow read, write: if false;
+    }
+  }
+}
