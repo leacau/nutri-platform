@@ -145,42 +145,19 @@ export default function App() {
 		return data;
 	}
 
+	async function callAuthedGet(endpoint: string) {
+		setLoading(true);
+		try {
+			await authedFetch('GET', endpoint);
+		} finally {
+			setLoading(false);
+		}
+	}
+
 	async function callAuthedPost(endpoint: string, payload: unknown) {
 		setLoading(true);
 		try {
-			if (!user) {
-				pushErr(endpoint, payload, 'No authenticated user');
-				return;
-			}
-
-			const token = await getIdToken(user, true);
-
-			const res = await fetch(`${API_BASE}${endpoint}`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
-				body: JSON.stringify(payload),
-			});
-
-			const data = await res.json().catch(() => null);
-			if (!res.ok) {
-				pushErr(
-					endpoint,
-					payload,
-					`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
-				);
-				return;
-			}
-
-			pushOk(endpoint, payload, data);
-		} catch (e) {
-			pushErr(
-				endpoint,
-				payload,
-				e instanceof Error ? e.message : 'Unknown error'
-			);
+			await authedFetch('POST', endpoint, payload);
 		} finally {
 			setLoading(false);
 		}
@@ -335,7 +312,17 @@ export default function App() {
 	async function handleRequestAppointmentAsPatient() {
 		setLoading(true);
 		try {
-			await authedFetch('POST', '/appointments/request', {});
+			if (!apptNutriUid) {
+				pushErr(
+					'/appointments/request',
+					{ apptNutriUid },
+					'Missing nutriUid to request appointment'
+				);
+				return;
+			}
+			await authedFetch('POST', '/appointments/request', {
+				nutriUid: apptNutriUid,
+			});
 			await authedFetch('GET', '/appointments');
 		} finally {
 			setLoading(false);
@@ -759,4 +746,3 @@ export default function App() {
 		</div>
 	);
 }
-
