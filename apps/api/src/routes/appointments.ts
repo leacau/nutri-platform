@@ -21,6 +21,9 @@ export type AppointmentDoc = {
 	patientId: string; // patients/{id}
 	patientUid: string; // auth uid (linkedUid)
 
+	// Selección del nutricionista
+	nutriUid: string | null;
+
 	status: AppointmentStatus;
 
 	requestedAt: FirebaseFirestore.Timestamp;
@@ -36,15 +39,27 @@ export type AppointmentDoc = {
 
 const router = Router();
 
-const requestBodySchema = z.object({}).strict();
+const requestBodySchema = z
+	.object({
+		nutriUid: z.string().min(1),
+	})
+	.strict();
 
-const cancelParamsSchema = z.object({
-	id: z.string().min(1),
-});
+const cancelParamsSchema = z.object({ id: z.string().min(1) });
+const scheduleParamsSchema = z.object({ id: z.string().min(1) });
+
+const scheduleBodySchema = z
+	.object({
+		// ISO string desde el front
+		scheduledForIso: z.string().min(10),
+
+		// uid del nutri seleccionado
+		nutriUid: z.string().min(1),
+	})
+	.strict();
 
 function mustAuth(req: Request) {
 	if (!req.auth) {
-		// middleware order bug = infra bug, not user error
 		throw Object.assign(new Error('Missing req.auth'), { statusCode: 500 });
 	}
 	return req.auth;
@@ -90,16 +105,9 @@ function canCancelWith24hRule(
 			http: 403,
 		};
 	}
+	if (status === 'cancelled') return { ok: true };
+	if (status === 'requested') return { ok: true };
 
-	if (status === 'cancelled') {
-		return { ok: true };
-	}
-
-	if (status === 'requested') {
-		return { ok: true };
-	}
-
-	// scheduled
 	if (!scheduledFor) {
 		return {
 			ok: false,
@@ -125,7 +133,8 @@ function canCancelWith24hRule(
 /**
  * POST /api/appointments/request
  * - patient only
- * - creates requested appointment (no scheduledFor)
+ * - paciente elige nutriUid
+ * - idempotente por (patientUid + nutriUid + status=requested)
  */
 router.post(
 	'/request',
@@ -143,12 +152,37 @@ router.post(
 			});
 		}
 
+		const { nutriUid } = parsed.data;
+
 		const { firestore } = getFirebaseAdmin();
+
+		// ✅ Idempotencia anti-spam (por nutri seleccionado)
+		const existing = await firestore
+			.collection('appointments')
+			.where('patientUid', '==', ctx.uid)
+			.where('nutriUid', '==', nutriUid)
+			.where('status', '==', 'requested')
+			.limit(1)
+			.get();
+
+		if (!existing.empty) {
+			return res.status(200).json({
+				success: true,
+				message: 'Already requested',
+				data: {
+					id: existing.docs[0].id,
+					...(existing.docs[0].data() as AppointmentDoc),
+				},
+			});
+		}
 
 		const { patientId, clinicId } = await getPatientProfileByUid(
 			firestore,
 			ctx.uid
 		);
+
+		// (Opcional) Hard guard: verificar que el nutri pertenece a la misma clínica.
+		// Hoy no tenemos colección nutris, así que lo dejamos para la próxima iteración.
 
 		const now = Timestamp.now();
 
@@ -156,6 +190,7 @@ router.post(
 			clinicId,
 			patientId,
 			patientUid: ctx.uid,
+			nutriUid,
 			status: 'requested',
 			requestedAt: now,
 			scheduledFor: null,
@@ -177,9 +212,172 @@ router.post(
 );
 
 /**
+ * POST /api/appointments/:id/schedule
+ * - clinic_admin/nutri
+ * - clinic scoped
+ * - solo desde requested
+ * - respeta nutriUid del request salvo clinic_admin (puede cambiar)
+ */
+router.post(
+	'/:id/schedule',
+	authMiddleware,
+	requireRole('clinic_admin', 'nutri'),
+	requireClinicContext,
+	async (req: Request, res: Response) => {
+		const ctx = mustAuth(req);
+
+		const parsedParams = scheduleParamsSchema.safeParse(req.params);
+		if (!parsedParams.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid params',
+				errors: parsedParams.error.flatten(),
+			});
+		}
+
+		const parsedBody = scheduleBodySchema.safeParse(req.body ?? {});
+		if (!parsedBody.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsedBody.error.flatten(),
+			});
+		}
+
+		const clinicId = ctx.clinicId;
+		if (!clinicId) {
+			return res
+				.status(403)
+				.json({ success: false, message: 'Missing clinicId claim' });
+		}
+
+		// guard: si schedule lo hace un nutri, solo puede schedule para sí mismo
+		if (ctx.role === 'nutri' && parsedBody.data.nutriUid !== ctx.uid) {
+			return res.status(403).json({
+				success: false,
+				message: 'nutri can only schedule appointments for own uid',
+			});
+		}
+
+		const scheduledMs = Date.parse(parsedBody.data.scheduledForIso);
+		if (!Number.isFinite(scheduledMs)) {
+			return res.status(400).json({
+				success: false,
+				message: 'scheduledForIso must be a valid ISO date string',
+			});
+		}
+
+		const { firestore } = getFirebaseAdmin();
+		const ref = firestore.collection('appointments').doc(parsedParams.data.id);
+
+		const result = await firestore.runTransaction(async (tx) => {
+			const snap = await tx.get(ref);
+			if (!snap.exists) {
+				return {
+					http: 404 as const,
+					body: { success: false, message: 'Appointment not found' },
+				};
+			}
+
+			const appt = snap.data() as AppointmentDoc;
+
+			// clinic isolation
+			if (appt.clinicId !== clinicId) {
+				return {
+					http: 403 as const,
+					body: { success: false, message: 'Forbidden' },
+				};
+			}
+
+			if (appt.status === 'cancelled') {
+				return {
+					http: 409 as const,
+					body: {
+						success: false,
+						message: 'Cannot schedule a cancelled appointment',
+					},
+				};
+			}
+			if (appt.status === 'completed') {
+				return {
+					http: 409 as const,
+					body: {
+						success: false,
+						message: 'Cannot schedule a completed appointment',
+					},
+				};
+			}
+
+			const newScheduled = Timestamp.fromMillis(scheduledMs);
+
+			// idempotente: ya scheduled igual => OK
+			if (
+				appt.status === 'scheduled' &&
+				appt.scheduledFor?.toMillis() === newScheduled.toMillis() &&
+				appt.nutriUid === parsedBody.data.nutriUid
+			) {
+				return {
+					http: 200 as const,
+					body: {
+						success: true,
+						message: 'Already scheduled',
+						data: { id: snap.id, ...appt },
+					},
+				};
+			}
+
+			if (appt.status !== 'requested') {
+				return {
+					http: 409 as const,
+					body: {
+						success: false,
+						message: `Cannot schedule from status=${appt.status}`,
+					},
+				};
+			}
+
+			// Regla: si el request ya tiene nutriUid, un nutri NO puede cambiarlo
+			if (ctx.role === 'nutri') {
+				if (appt.nutriUid !== ctx.uid) {
+					return {
+						http: 403 as const,
+						body: {
+							success: false,
+							message: 'This appointment was requested for another nutri',
+						},
+					};
+				}
+			}
+
+			// clinic_admin puede reasignar (si querés bloquearlo, lo cambiamos después)
+			const now = Timestamp.now();
+			const update: Partial<AppointmentDoc> = {
+				status: 'scheduled',
+				scheduledFor: newScheduled,
+				nutriUid: parsedBody.data.nutriUid,
+				updatedAt: now,
+			};
+
+			tx.update(ref, update);
+
+			return {
+				http: 200 as const,
+				body: {
+					success: true,
+					message: 'Scheduled',
+					data: { id: snap.id, ...appt, ...update },
+				},
+			};
+		});
+
+		return res.status(result.http).json(result.body);
+	}
+);
+
+/**
  * GET /api/appointments
- * - patient: only own (patientUid == uid)
- * - clinic roles: clinic-scoped (clinicId claim required)
+ * - patient: own
+ * - clinic roles: clinic scoped
  * - platform_admin: all
  */
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
@@ -223,7 +421,6 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		return res.status(200).json({ success: true, data: items });
 	}
 
-	// clinic roles: enforce claim via middleware
 	return requireClinicContext(req, res, async () => {
 		const clinicId = req.auth?.clinicId;
 		if (!clinicId) {
@@ -249,12 +446,6 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 
 /**
  * POST /api/appointments/:id/cancel
- * - patient: only own
- * - clinic roles: only same clinic (clinicId claim required)
- * - platform_admin: any
- *
- * Idempotent: if already cancelled => 200 OK
- * 24h rule: only enforced for scheduled (needs scheduledFor)
  */
 router.post(
 	'/:id/cancel',
@@ -294,7 +485,7 @@ router.post(
 
 			const appt = snap.data() as AppointmentDoc;
 
-			// AuthZ (fail closed)
+			// AuthZ
 			if (role === 'patient') {
 				if (appt.patientUid !== ctx.uid) {
 					return {
@@ -303,7 +494,7 @@ router.post(
 					};
 				}
 			} else if (role === 'platform_admin') {
-				// allowed
+				// ok
 			} else {
 				const clinicId = ctx.clinicId;
 				if (!clinicId) {
@@ -320,7 +511,6 @@ router.post(
 				}
 			}
 
-			// Idempotent cancel
 			if (appt.status === 'cancelled') {
 				return {
 					http: 200 as const,
@@ -345,7 +535,6 @@ router.post(
 			}
 
 			const now = Timestamp.now();
-
 			const updated: Partial<AppointmentDoc> = {
 				status: 'cancelled',
 				cancelledAt: now,

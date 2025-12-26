@@ -8,6 +8,7 @@ import { getFirebaseAdmin } from '../firebase/admin.js';
 import type { PatientDoc } from '../types/patients.js';
 import { sanitizePatientForRole } from '../security/patientSanitizer.js';
 import { getDocInClinic } from '../security/getDocInClinic.js';
+import { Timestamp } from 'firebase-admin/firestore';
 
 export const patientsRouter = Router();
 
@@ -286,6 +287,8 @@ const patchPatientSchema = z.object({
 	name: z.string().min(2).optional(),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
+	assignedNutriUid: z.string().min(1).optional().nullable(),
+
 	// linkedUid NO acá: linkeo es endpoint dedicado
 });
 
@@ -360,6 +363,16 @@ patientsRouter.patch(
 				update.email = parsed.data.email ?? null;
 			if (parsed.data.phone !== undefined)
 				update.phone = parsed.data.phone ?? null;
+			if (parsed.data.assignedNutriUid !== undefined) {
+				if (role === 'nutri') {
+					return res.status(403).json({
+						success: false,
+						message: 'nutri cannot assign patients',
+					});
+				}
+				// clinic_admin o platform_admin
+				update.assignedNutriUid = parsed.data.assignedNutriUid ?? null;
+			}
 		}
 
 		await db.collection('patients').doc(id).update(update);
@@ -371,6 +384,84 @@ patientsRouter.patch(
 			success: true,
 			message: 'Patient updated',
 			data: sanitizePatientForRole(role, fresh),
+		});
+	}
+);
+
+const moveClinicSchema = z
+	.object({
+		clinicId: z.string().min(1),
+		reason: z.string().min(3).optional(),
+	})
+	.strict();
+
+/**
+ * POST /api/patients/:id/move-clinic
+ * - SOLO platform_admin
+ * - cambia clinicId y registra auditoría en subcolección
+ */
+patientsRouter.post(
+	'/:id/move-clinic',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const db = getFirestoreDb();
+		const id = req.params.id;
+
+		const parsed = moveClinicSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const patientRef = db.collection('patients').doc(id);
+		const snap = await patientRef.get();
+		if (!snap.exists) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const current = snap.data() as any;
+		const fromClinicId = current?.clinicId;
+
+		const toClinicId = parsed.data.clinicId;
+
+		if (fromClinicId === toClinicId) {
+			return res.status(200).json({
+				success: true,
+				message: 'No changes',
+				data: { id, clinicId: toClinicId },
+			});
+		}
+
+		const now = Timestamp.now();
+
+		await db.runTransaction(async (tx) => {
+			tx.update(patientRef, {
+				clinicId: toClinicId,
+				updatedAt: now,
+			});
+
+			// auditoría: subcolección
+			const auditRef = patientRef.collection('audit').doc();
+			tx.set(auditRef, {
+				action: 'MOVE_CLINIC',
+				fromClinicId: fromClinicId ?? null,
+				toClinicId,
+				byUid: req.auth!.uid,
+				byRole: req.auth!.role ?? null,
+				reason: parsed.data.reason ?? null,
+				at: now,
+			});
+		});
+
+		const fresh = await patientRef.get();
+		return res.status(200).json({
+			success: true,
+			message: 'Patient clinic moved',
+			data: { id, ...(fresh.data() as any) },
 		});
 	}
 );

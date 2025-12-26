@@ -35,10 +35,6 @@ apiRouter.get('/users/me', authMiddleware, (req: Request, res: Response) => {
 	});
 });
 
-/**
- * Endpoint de prueba RBAC
- * Sirve para validar 403 reales
- */
 apiRouter.get(
 	'/secure/clinic-scope',
 	authMiddleware,

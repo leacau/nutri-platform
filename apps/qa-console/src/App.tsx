@@ -29,12 +29,13 @@ type ClaimsView = {
 	clinicId: string | null;
 };
 
-type PatientCreatePayload = {
-	name: string;
-	email?: string | null;
-	phone?: string | null;
-	linkedUid?: string | null;
-};
+function toIsoFromDatetimeLocal(v: string): string | null {
+	// v: "2025-12-26T18:30"
+	if (!v || !v.includes('T')) return null;
+	const d = new Date(v);
+	if (!Number.isFinite(d.getTime())) return null;
+	return d.toISOString();
+}
 
 export default function App() {
 	const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
@@ -51,27 +52,33 @@ export default function App() {
 	const [email, setEmail] = useState('qa1@test.com');
 	const [password, setPassword] = useState('Passw0rd!');
 
-	// Token tools
-	const [idToken, setIdToken] = useState<string | null>(null);
-
-	// Patients form
+	// Patients create
 	const [pName, setPName] = useState('Juan Perez');
 	const [pEmail, setPEmail] = useState('juan@test.com');
 	const [pPhone, setPPhone] = useState('+549341000000');
+
+	// Assign nutri to patient
+	const [assignPatientId, setAssignPatientId] = useState('');
+	const [assignNutriUid, setAssignNutriUid] = useState('');
+	const [apptNutriUid, setApptNutriUid] = useState('');
+
+	// Appointment flows
+	const [apptNutriUidRequest, setApptNutriUidRequest] = useState('');
+	const [apptScheduleId, setApptScheduleId] = useState('');
+	const [apptScheduleIso, setApptScheduleIso] = useState('');
+	const [apptScheduleNutriUid, setApptScheduleNutriUid] = useState('');
+	const [apptCancelId, setApptCancelId] = useState('');
+	const [apptScheduleWhen, setApptScheduleWhen] = useState(''); // datetime-local
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 
 	useEffect(() => {
 		const unsub = onAuthStateChanged(auth, async (u) => {
 			setUser(u);
-			setIdToken(null);
-
 			if (!u) {
 				setClaims({ role: null, clinicId: null });
 				return;
 			}
-
-			// Force refresh so claims are picked up right after /dev/set-claims
 			const tokenRes = await getIdTokenResult(u, true);
 			const role =
 				typeof tokenRes.claims.role === 'string' ? tokenRes.claims.role : null;
@@ -79,14 +86,8 @@ export default function App() {
 				typeof tokenRes.claims.clinicId === 'string'
 					? tokenRes.claims.clinicId
 					: null;
-
 			setClaims({ role, clinicId });
-
-			// Keep a fresh idToken available (for copy/debug)
-			const token = await getIdToken(u, true);
-			setIdToken(token);
 		});
-
 		return () => unsub();
 	}, []);
 
@@ -100,7 +101,6 @@ export default function App() {
 			{ ts: nowIso(), endpoint, payload, ok: true, data },
 		]);
 	}
-
 	function pushErr(
 		endpoint: string,
 		payload: unknown | undefined,
@@ -112,40 +112,40 @@ export default function App() {
 		]);
 	}
 
-	async function callPublicGet(endpoint: string) {
-		setLoading(true);
-		try {
-			const res = await fetch(`${API_BASE}${endpoint}`, {
-				method: 'GET',
-				headers: { 'Content-Type': 'application/json' },
-			});
+	async function authedFetch(
+		method: 'GET' | 'POST' | 'PATCH',
+		endpoint: string,
+		body?: unknown
+	) {
+		if (!user) {
+			pushErr(endpoint, body, 'No authenticated user');
+			return null;
+		}
+		const token = await getIdToken(user, true);
 
-			const data = await res.json().catch(() => null);
-			if (!res.ok) {
-				pushErr(
-					endpoint,
-					undefined,
-					`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
-				);
-				return;
-			}
-			pushOk(endpoint, undefined, data);
-		} catch (e) {
+		const res = await fetch(`${API_BASE}${endpoint}`, {
+			method,
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`,
+			},
+			body: body ? JSON.stringify(body) : undefined,
+		});
+
+		const data = await res.json().catch(() => null);
+		if (!res.ok) {
 			pushErr(
 				endpoint,
-				undefined,
-				e instanceof Error ? e.message : 'Unknown error'
+				body,
+				`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
 			);
-		} finally {
-			setLoading(false);
+			return null;
 		}
+		pushOk(endpoint, body, data);
+		return data;
 	}
 
-	async function callAuthed(
-		endpoint: string,
-		method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-		payload?: unknown
-	) {
+	async function callAuthedPost(endpoint: string, payload: unknown) {
 		setLoading(true);
 		try {
 			if (!user) {
@@ -154,18 +154,14 @@ export default function App() {
 			}
 
 			const token = await getIdToken(user, true);
-			setIdToken(token);
 
 			const res = await fetch(`${API_BASE}${endpoint}`, {
-				method,
+				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 					Authorization: `Bearer ${token}`,
 				},
-				body:
-					method === 'GET' || method === 'DELETE'
-						? undefined
-						: JSON.stringify(payload ?? {}),
+				body: JSON.stringify(payload),
 			});
 
 			const data = await res.json().catch(() => null);
@@ -183,6 +179,34 @@ export default function App() {
 			pushErr(
 				endpoint,
 				payload,
+				e instanceof Error ? e.message : 'Unknown error'
+			);
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function publicGet(endpoint: string) {
+		setLoading(true);
+		try {
+			const res = await fetch(`${API_BASE}${endpoint}`, {
+				method: 'GET',
+				headers: { 'Content-Type': 'application/json' },
+			});
+			const data = await res.json().catch(() => null);
+			if (!res.ok) {
+				pushErr(
+					endpoint,
+					undefined,
+					`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
+				);
+				return;
+			}
+			pushOk(endpoint, undefined, data);
+		} catch (e) {
+			pushErr(
+				endpoint,
+				undefined,
 				e instanceof Error ? e.message : 'Unknown error'
 			);
 		} finally {
@@ -234,7 +258,6 @@ export default function App() {
 		setLoading(true);
 		try {
 			await signOut(auth);
-			setIdToken(null);
 			pushOk('AUTH logout', undefined, { ok: true });
 		} catch (e) {
 			pushErr(
@@ -248,12 +271,12 @@ export default function App() {
 	}
 
 	async function handleRefreshToken() {
-		if (!user) {
-			pushErr('AUTH refreshToken', undefined, 'No authenticated user');
-			return;
-		}
 		setLoading(true);
 		try {
+			if (!user) {
+				pushErr('AUTH refreshToken', undefined, 'No authenticated user');
+				return;
+			}
 			const tokenRes = await getIdTokenResult(user, true);
 			const role =
 				typeof tokenRes.claims.role === 'string' ? tokenRes.claims.role : null;
@@ -262,10 +285,6 @@ export default function App() {
 					? tokenRes.claims.clinicId
 					: null;
 			setClaims({ role, clinicId });
-
-			const token = await getIdToken(user, true);
-			setIdToken(token);
-
 			pushOk('AUTH refreshToken', undefined, { ok: true, role, clinicId });
 		} catch (e) {
 			pushErr(
@@ -278,29 +297,99 @@ export default function App() {
 		}
 	}
 
-	async function copyToken() {
-		if (!idToken) {
-			pushErr('COPY token', undefined, 'No idToken available');
-			return;
-		}
+	async function handleCreatePatient() {
+		setLoading(true);
 		try {
-			await navigator.clipboard.writeText(idToken);
-			pushOk('COPY token', undefined, { ok: true });
-		} catch (e) {
-			pushErr(
-				'COPY token',
-				undefined,
-				e instanceof Error ? e.message : 'Copy failed'
-			);
+			await authedFetch('POST', '/patients', {
+				name: pName,
+				email: pEmail || null,
+				phone: pPhone || null,
+			});
+			// refresh list
+			await authedFetch('GET', '/patients');
+		} finally {
+			setLoading(false);
 		}
 	}
 
-	function buildPatientPayload(): PatientCreatePayload {
-		return {
-			name: pName.trim(),
-			email: pEmail.trim() ? pEmail.trim() : null,
-			phone: pPhone.trim() ? pPhone.trim() : null,
-		};
+	async function handleAssignNutri() {
+		setLoading(true);
+		try {
+			if (!assignPatientId || !assignNutriUid) {
+				pushErr(
+					'/patients/:id (assign)',
+					{ assignPatientId, assignNutriUid },
+					'Missing patientId or nutriUid'
+				);
+				return;
+			}
+			await authedFetch('PATCH', `/patients/${assignPatientId}`, {
+				assignedNutriUid: assignNutriUid,
+			});
+			await authedFetch('GET', '/patients');
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleRequestAppointmentAsPatient() {
+		setLoading(true);
+		try {
+			await authedFetch('POST', '/appointments/request', {});
+			await authedFetch('GET', '/appointments');
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleListAppointments() {
+		setLoading(true);
+		try {
+			await authedFetch('GET', '/appointments');
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleScheduleAppointment() {
+		setLoading(true);
+		try {
+			const iso = toIsoFromDatetimeLocal(apptScheduleWhen);
+			if (!apptScheduleId || !iso) {
+				pushErr(
+					'/appointments/:id/schedule',
+					{ apptScheduleId, apptScheduleWhen },
+					'Missing appointmentId or invalid datetime'
+				);
+				return;
+			}
+			await authedFetch('POST', `/appointments/${apptScheduleId}/schedule`, {
+				scheduledForIso: iso,
+				nutriUid: apptNutriUid,
+			});
+
+			await authedFetch('GET', '/appointments');
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleCancelAppointment() {
+		setLoading(true);
+		try {
+			if (!apptCancelId) {
+				pushErr(
+					'/appointments/:id/cancel',
+					{ apptCancelId },
+					'Missing appointmentId'
+				);
+				return;
+			}
+			await authedFetch('POST', `/appointments/${apptCancelId}/cancel`, {});
+			await authedFetch('GET', '/appointments');
+		} finally {
+			setLoading(false);
+		}
 	}
 
 	return (
@@ -308,7 +397,7 @@ export default function App() {
 			style={{
 				fontFamily: 'system-ui, Arial',
 				padding: 16,
-				maxWidth: 1100,
+				maxWidth: 1200,
 				margin: '0 auto',
 			}}
 		>
@@ -341,7 +430,14 @@ export default function App() {
 						/>
 					</div>
 
-					<div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+					<div
+						style={{
+							display: 'flex',
+							gap: 8,
+							marginBottom: 10,
+							flexWrap: 'wrap',
+						}}
+					>
 						<button disabled={loading} onClick={handleLogin}>
 							Login
 						</button>
@@ -351,7 +447,7 @@ export default function App() {
 						<button disabled={loading} onClick={handleLogout}>
 							Logout
 						</button>
-						<button disabled={loading || !user} onClick={handleRefreshToken}>
+						<button disabled={loading} onClick={handleRefreshToken}>
 							Refresh token
 						</button>
 					</div>
@@ -366,28 +462,7 @@ export default function App() {
 						<div>
 							<strong>claims:</strong> <code>{JSON.stringify(claims)}</code>
 						</div>
-
-						<div style={{ marginTop: 10 }}>
-							<strong>idToken:</strong>{' '}
-							<code
-								style={{
-									display: 'inline-block',
-									maxWidth: 720,
-									overflow: 'hidden',
-									textOverflow: 'ellipsis',
-									verticalAlign: 'bottom',
-								}}
-							>
-								{idToken
-									? `${idToken.slice(0, 18)}...${idToken.slice(-18)}`
-									: 'null'}
-							</code>{' '}
-							<button disabled={!idToken || loading} onClick={copyToken}>
-								Copy
-							</button>
-						</div>
-
-						<div style={{ opacity: 0.7, marginTop: 6 }}>
+						<div style={{ opacity: 0.7 }}>
 							API_BASE = <code>{API_BASE}</code>
 						</div>
 					</div>
@@ -404,63 +479,240 @@ export default function App() {
 							marginBottom: 10,
 						}}
 					>
-						<button disabled={loading} onClick={() => callPublicGet('/health')}>
+						<button disabled={loading} onClick={() => publicGet('/health')}>
 							GET /api/health
 						</button>
-
 						<button
 							disabled={loading}
-							onClick={() => callAuthed('/users/me', 'GET')}
+							onClick={() => authedFetch('GET', '/users/me')}
 						>
 							GET /api/users/me
 						</button>
-
 						<button
 							disabled={loading}
-							onClick={() => callAuthed('/patients', 'GET')}
+							onClick={() => authedFetch('GET', '/patients')}
 						>
 							GET /api/patients
 						</button>
+						<button disabled={loading} onClick={handleListAppointments}>
+							GET /api/appointments
+						</button>
 					</div>
 
-					<div style={{ borderTop: '1px solid #eee', paddingTop: 10 }}>
-						<h4 style={{ margin: '0 0 8px 0' }}>Patients – Create</h4>
+					<hr />
 
-						<div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-							<input
-								style={{ flex: 1 }}
-								value={pName}
-								onChange={(e) => setPName(e.target.value)}
-								placeholder='name'
-							/>
-							<input
-								style={{ flex: 1 }}
-								value={pEmail}
-								onChange={(e) => setPEmail(e.target.value)}
-								placeholder='email'
-							/>
-							<input
-								style={{ flex: 1 }}
-								value={pPhone}
-								onChange={(e) => setPPhone(e.target.value)}
-								placeholder='phone'
-							/>
-						</div>
+					<h4 style={{ margin: '10px 0 6px' }}>Patients – Create</h4>
+					<div
+						style={{
+							display: 'grid',
+							gridTemplateColumns: '1fr 1fr 1fr',
+							gap: 8,
+						}}
+					>
+						<input
+							value={pName}
+							onChange={(e) => setPName(e.target.value)}
+							placeholder='name'
+						/>
+						<input
+							value={pEmail}
+							onChange={(e) => setPEmail(e.target.value)}
+							placeholder='email'
+						/>
+						<input
+							value={pPhone}
+							onChange={(e) => setPPhone(e.target.value)}
+							placeholder='phone'
+						/>
+					</div>
+					<div style={{ marginTop: 8 }}>
+						<button disabled={loading} onClick={handleCreatePatient}>
+							POST /api/patients
+						</button>
+					</div>
 
+					<hr />
+
+					<h4 style={{ margin: '10px 0 6px' }}>Patients – Assign Nutri</h4>
+					<div
+						style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
+					>
+						<input
+							value={assignPatientId}
+							onChange={(e) => setAssignPatientId(e.target.value)}
+							placeholder='patientId (Firestore doc id)'
+						/>
+						<input
+							value={assignNutriUid}
+							onChange={(e) => setAssignNutriUid(e.target.value)}
+							placeholder='nutriUid (auth uid)'
+						/>
+					</div>
+					<div style={{ marginTop: 8 }}>
+						<button disabled={loading} onClick={handleAssignNutri}>
+							PATCH /api/patients/:id (assignedNutriUid)
+						</button>
+					</div>
+
+					<hr style={{ margin: '12px 0', opacity: 0.3 }} />
+
+					<h4 style={{ margin: '8px 0' }}>Appointments</h4>
+
+					<div
+						style={{
+							display: 'grid',
+							gap: 8,
+							gridTemplateColumns: '1fr 1fr 1fr',
+						}}
+					>
+						<input
+							value={apptNutriUidRequest}
+							onChange={(e) => setApptNutriUidRequest(e.target.value)}
+							placeholder='nutriUid (para request)'
+						/>
 						<button
 							disabled={loading}
 							onClick={() =>
-								callAuthed('/patients', 'POST', buildPatientPayload())
+								callAuthedPost('/appointments/request', {
+									nutriUid: apptNutriUidRequest,
+								})
 							}
 						>
-							POST /api/patients
+							POST /api/appointments/request
 						</button>
-
-						<p style={{ marginBottom: 0, opacity: 0.7 }}>
-							Este POST requiere token real. El <code>clinicId</code> se toma
-							del token (excepto platform_admin).
-						</p>
+						<button
+							disabled={loading}
+							onClick={() => callAuthedGet('/appointments')}
+						>
+							GET /api/appointments
+						</button>
 					</div>
+
+					<div
+						style={{
+							display: 'grid',
+							gap: 8,
+							gridTemplateColumns: '1fr 1fr 1fr 1fr',
+							marginTop: 10,
+						}}
+					>
+						<input
+							value={apptScheduleId}
+							onChange={(e) => setApptScheduleId(e.target.value)}
+							placeholder='appointmentId (schedule)'
+						/>
+						<input
+							value={apptScheduleIso}
+							onChange={(e) => setApptScheduleIso(e.target.value)}
+							placeholder='scheduledForIso (ej: 2025-12-26T15:30:00.000Z)'
+						/>
+						<input
+							value={apptScheduleNutriUid}
+							onChange={(e) => setApptScheduleNutriUid(e.target.value)}
+							placeholder='nutriUid (schedule)'
+						/>
+						<button
+							disabled={loading}
+							onClick={() =>
+								callAuthedPost(`/appointments/${apptScheduleId}/schedule`, {
+									scheduledForIso: apptScheduleIso,
+									nutriUid: apptScheduleNutriUid,
+								})
+							}
+						>
+							POST /api/appointments/:id/schedule
+						</button>
+					</div>
+
+					<div
+						style={{
+							display: 'grid',
+							gap: 8,
+							gridTemplateColumns: '1fr 1fr',
+							marginTop: 10,
+						}}
+					>
+						<input
+							value={apptCancelId}
+							onChange={(e) => setApptCancelId(e.target.value)}
+							placeholder='appointmentId (cancel)'
+						/>
+						<button
+							disabled={loading}
+							onClick={() =>
+								callAuthedPost(`/appointments/${apptCancelId}/cancel`, {})
+							}
+						>
+							POST /api/appointments/:id/cancel
+						</button>
+					</div>
+
+					<hr />
+
+					<h4 style={{ margin: '10px 0 6px' }}>Appointments</h4>
+					<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+						<button
+							disabled={loading}
+							onClick={handleRequestAppointmentAsPatient}
+						>
+							POST /api/appointments/request (patient)
+						</button>
+					</div>
+
+					<div style={{ marginTop: 10 }}>
+						<div
+							style={{
+								display: 'grid',
+								gridTemplateColumns: '1fr 1fr',
+								gap: 8,
+							}}
+						>
+							<input
+								value={apptScheduleId}
+								onChange={(e) => setApptScheduleId(e.target.value)}
+								placeholder='appointmentId'
+							/>
+							<input
+								value={apptScheduleWhen}
+								onChange={(e) => setApptScheduleWhen(e.target.value)}
+								type='datetime-local'
+							/>
+							<input
+								value={apptNutriUid}
+								onChange={(e) => setApptNutriUid(e.target.value)}
+								placeholder='nutriUid'
+							/>
+						</div>
+						<div style={{ marginTop: 8 }}>
+							<button disabled={loading} onClick={handleScheduleAppointment}>
+								POST /api/appointments/:id/schedule (nutri/clinic_admin)
+							</button>
+						</div>
+					</div>
+
+					<div style={{ marginTop: 10 }}>
+						<div
+							style={{
+								display: 'grid',
+								gridTemplateColumns: '1fr auto',
+								gap: 8,
+							}}
+						>
+							<input
+								value={apptCancelId}
+								onChange={(e) => setApptCancelId(e.target.value)}
+								placeholder='appointmentId to cancel'
+							/>
+							<button disabled={loading} onClick={handleCancelAppointment}>
+								POST /api/appointments/:id/cancel
+							</button>
+						</div>
+					</div>
+
+					<p style={{ marginBottom: 0, opacity: 0.7, marginTop: 10 }}>
+						Nota: “request” es idempotente (1 requested activo). “schedule” solo
+						desde status=requested.
+					</p>
 				</div>
 			</div>
 
@@ -489,14 +741,12 @@ export default function App() {
 										{l.ok ? 'OK' : 'ERROR'}
 									</span>
 								</div>
-
 								{l.payload !== undefined && (
 									<div>
 										<small>payload:</small>{' '}
 										<code>{JSON.stringify(l.payload)}</code>
 									</div>
 								)}
-
 								<div>
 									<small>{l.ok ? 'data:' : 'error:'}</small>{' '}
 									<code>{l.ok ? JSON.stringify(l.data) : l.error}</code>

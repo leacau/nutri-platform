@@ -6,6 +6,11 @@ export type PatientDoc = {
 	email: string | null;
 	phone: string | null;
 	linkedUid: string | null;
+
+	// NUEVO
+	assignedNutriUid?: string | null;
+
+	// audit simple
 	createdAt: Timestamp;
 	updatedAt: Timestamp;
 };
