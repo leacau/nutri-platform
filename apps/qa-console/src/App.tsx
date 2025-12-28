@@ -68,6 +68,7 @@ export default function App() {
 	const [apptScheduleIso, setApptScheduleIso] = useState('');
 	const [apptScheduleNutriUid, setApptScheduleNutriUid] = useState('');
 	const [apptCancelId, setApptCancelId] = useState('');
+	const [apptCompleteId, setApptCompleteId] = useState('');
 	const [apptScheduleWhen, setApptScheduleWhen] = useState(''); // datetime-local
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
@@ -379,6 +380,24 @@ export default function App() {
 		}
 	}
 
+	async function handleCompleteAppointment() {
+		setLoading(true);
+		try {
+			if (!apptCompleteId) {
+				pushErr(
+					'/appointments/:id/complete',
+					{ apptCompleteId },
+					'Missing appointmentId to complete'
+				);
+				return;
+			}
+			await authedFetch('POST', `/appointments/${apptCompleteId}/complete`, {});
+			await authedFetch('GET', '/appointments');
+		} finally {
+			setLoading(false);
+		}
+	}
+
 	return (
 		<div
 			style={{
@@ -631,6 +650,24 @@ export default function App() {
 							}
 						>
 							POST /api/appointments/:id/cancel
+						</button>
+					</div>
+
+					<div
+						style={{
+							display: 'grid',
+							gap: 8,
+							gridTemplateColumns: '1fr 1fr',
+							marginTop: 10,
+						}}
+					>
+						<input
+							value={apptCompleteId}
+							onChange={(e) => setApptCompleteId(e.target.value)}
+							placeholder='appointmentId (complete)'
+						/>
+						<button disabled={loading} onClick={handleCompleteAppointment}>
+							POST /api/appointments/:id/complete
 						</button>
 					</div>
 
