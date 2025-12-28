@@ -23,10 +23,25 @@
 	text-decoration: none;
 }
 
+.badge {
+	background: #ecfeff;
+	color: #0ea5e9;
+	border-radius: 999px;
+	padding: 4px 10px;
+	font-size: 12px;
+	font-weight: 700;
+	border: 1px solid #bae6fd;
+}
+
 .top-actions {
 	display: flex;
 	align-items: center;
 	gap: 12px;
+}
+
+.topbar .actions {
+	margin-top: 0;
+	align-items: center;
 }
 
 .page {
@@ -245,6 +260,35 @@ pre {
 .pill.error {
 	background: #fef2f2;
 	color: #b91c1c;
+}
+
+.appointments {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 12px;
+}
+
+.appt-card {
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	background: #fff;
+	padding: 12px;
+	box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+}
+
+.appt-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 8px;
+}
+
+.appt-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	gap: 10px;
 }
 
 @media (max-width: 900px) {

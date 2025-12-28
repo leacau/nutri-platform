@@ -40,6 +40,22 @@ function toIsoFromDatetimeLocal(v: string): string | null {
 	return d.toISOString();
 }
 
+function toReadableDate(v: unknown): string {
+	if (!v) return '—';
+	if (typeof v === 'string') {
+		const d = new Date(v);
+		return Number.isFinite(d.getTime()) ? d.toLocaleString() : v;
+	}
+	if (typeof v === 'object' && v !== null) {
+		const any = v as { _seconds?: number; _nanoseconds?: number };
+		if (typeof any._seconds === 'number') {
+			const ms = any._seconds * 1000 + Math.floor((any._nanoseconds ?? 0) / 1_000_000);
+			return new Date(ms).toLocaleString();
+		}
+	}
+	return String(v);
+}
+
 function ProtectedRoute({ user, children }: ProtectedProps) {
 	if (!user) return <Navigate to='/login' replace />;
 	return children;
@@ -68,7 +84,7 @@ export default function App() {
 	const [patients, setPatients] = useState<unknown[]>([]);
 
 	// Turnos
-	const [apptNutriUid, setApptNutriUid] = useState('');
+	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
 	const [apptScheduleId, setApptScheduleId] = useState('');
 	const [apptScheduleWhen, setApptScheduleWhen] = useState('');
 	const [apptScheduleNutriUid, setApptScheduleNutriUid] = useState('');
@@ -296,16 +312,16 @@ export default function App() {
 	async function handleRequestAppointment() {
 		setLoading(true);
 		try {
-			if (!apptNutriUid) {
+			if (!apptRequestNutriUid) {
 				pushErr(
 					'/appointments/request',
-					{ apptNutriUid },
+					{ apptRequestNutriUid },
 					'Falta nutriUid para pedir turno'
 				);
 				return;
 			}
 			await authedFetch('POST', '/appointments/request', {
-				nutriUid: apptNutriUid,
+				nutriUid: apptRequestNutriUid,
 			});
 			await handleListAppointments();
 		} finally {
@@ -327,7 +343,7 @@ export default function App() {
 			}
 			await authedFetch('POST', `/appointments/${apptScheduleId}/schedule`, {
 				scheduledForIso: iso,
-				nutriUid: apptScheduleNutriUid || apptNutriUid || '',
+				nutriUid: apptScheduleNutriUid || apptRequestNutriUid || '',
 			});
 			await handleListAppointments();
 		} finally {
@@ -461,10 +477,12 @@ export default function App() {
 		);
 	}
 
-	function Dashboard() {
-		const role = claims.role;
-		const canClinic =
-			role === 'clinic_admin' || role === 'nutri' || role === 'staff';
+		function Dashboard() {
+			const role = claims.role;
+			const canClinic =
+				role === 'clinic_admin' || role === 'nutri' || role === 'staff';
+			const isPlatform = role === 'platform_admin';
+			const isPatient = role === 'patient';
 
 		return (
 			<div className='page'>
@@ -494,27 +512,27 @@ export default function App() {
 							Consultá tu perfil o hacé un ping al backend.
 						</p>
 						<div className='actions'>
-							<button
-								className='btn primary'
-								disabled={loading}
-								onClick={() => handleGetMe()}
-							>
-								GET /api/users/me
-							</button>
-							<button
-								className='btn'
-								disabled={loading}
-								onClick={() => authedFetch('GET', '/health')}
-							>
-								GET /api/health
-							</button>
+								<button
+									className='btn primary'
+									disabled={loading}
+									onClick={() => handleGetMe()}
+								>
+									Ver mi perfil
+								</button>
+								<button
+									className='btn'
+									disabled={loading}
+									onClick={() => authedFetch('GET', '/health')}
+								>
+									Ping health
+								</button>
+							</div>
 						</div>
-					</div>
 
-					<div className='card'>
-						<h3>Pacientes</h3>
-						{canClinic || role === 'platform_admin' ? (
-							<>
+						<div className='card'>
+							<h3>Pacientes</h3>
+							{canClinic || isPlatform ? (
+								<>
 								<div className='grid two'>
 									<label className='field'>
 										<span>Nombre</span>
@@ -589,34 +607,44 @@ export default function App() {
 									</div>
 								)}
 							</>
-						) : (
-							<p className='muted'>Disponible para roles de clínica.</p>
-						)}
+							) : (
+								<p className='muted'>Disponible para roles de clínica.</p>
+							)}
+						</div>
 					</div>
-				</div>
 
-				<div className='card'>
-					<h3>Turnos</h3>
-					<p className='muted'>
-						Flujo completo: pedir como paciente, schedule como nutri/clinic_admin,
-						cancelar, completar.
-					</p>
-					<div className='grid three'>
-						<label className='field'>
-							<span>nutriUid para solicitar</span>
-							<input
-								value={apptNutriUid}
-								onChange={(e) => setApptNutriUid(e.target.value)}
-								placeholder='UID del nutri'
-							/>
-						</label>
-						<button className='btn primary' disabled={loading} onClick={handleRequestAppointment}>
-							POST /appointments/request
+					<div className='card'>
+						<h3>Turnos</h3>
+						<p className='muted'>
+							Flujo completo: pedir como paciente, schedule como nutri/clinic_admin,
+							cancelar, completar.
+						</p>
+						{!isPatient && (
+							<p className='muted'>
+								Para solicitar turnos necesitás rol <strong>patient</strong>.
+								Aun así podés programar/cancelar/completar si tu rol lo permite.
+							</p>
+						)}
+						<div className='grid three'>
+							<label className='field'>
+								<span>nutriUid para solicitar</span>
+								<input
+									value={apptRequestNutriUid}
+									onChange={(e) => setApptRequestNutriUid(e.target.value)}
+									placeholder='UID del nutri (paciente)'
+								/>
+							</label>
+						<button
+							className='btn primary'
+							disabled={loading || !isPatient}
+							onClick={handleRequestAppointment}
+						>
+							Solicitar turno (paciente)
 						</button>
-						<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
-							Listar turnos
-						</button>
-					</div>
+							<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
+								Listar turnos
+							</button>
+						</div>
 
 					<div className='grid three'>
 						<label className='field'>
@@ -646,21 +674,60 @@ export default function App() {
 					</div>
 					<div className='actions'>
 						<button className='btn' disabled={loading} onClick={handleScheduleAppointment}>
-							Schedule (clinic_admin / nutri)
+							Programar turno (nutri / admin clínica)
 						</button>
 						<button className='btn' disabled={loading} onClick={handleCancelAppointment}>
-							Cancelar turno
+							Cancelar turno (según reglas 24h)
 						</button>
 						<button className='btn' disabled={loading} onClick={handleCompleteAppointment}>
-							Completar turno
+							Completar turno (nutri / admin)
 						</button>
 					</div>
 
 					{appointments.length > 0 && (
-						<div className='list'>
-							{appointments.map((a, idx) => (
-								<pre key={idx}>{JSON.stringify(a, null, 2)}</pre>
-							))}
+						<div className='appointments'>
+							{appointments.map((a, idx) => {
+								const appt = a as Record<string, any>;
+								return (
+									<div className='appt-card' key={appt.id ?? idx}>
+										<div className='appt-head'>
+											<div>
+												<p className='eyebrow'>Turno</p>
+												<strong>{appt.id ?? 'sin-id'}</strong>
+											</div>
+											<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
+												{appt.status ?? 'sin-status'}
+											</span>
+										</div>
+										<div className='appt-grid'>
+											<div>
+												<small>Clínica</small>
+												<div className='muted'>{appt.clinicId ?? '—'}</div>
+											</div>
+											<div>
+												<small>Paciente</small>
+												<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
+											</div>
+											<div>
+												<small>Nutri</small>
+												<div className='muted'>{appt.nutriUid ?? '—'}</div>
+											</div>
+											<div>
+												<small>Solicitado</small>
+												<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
+											</div>
+											<div>
+												<small>Programado</small>
+												<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
+											</div>
+											<div>
+												<small>Actualizado</small>
+												<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
+											</div>
+										</div>
+									</div>
+								);
+							})}
 						</div>
 					)}
 				</div>
@@ -699,15 +766,18 @@ export default function App() {
 		);
 	}
 
-	return (
-		<div>
-			<nav className='topbar'>
-				<Link to='/' className='brand'>
-					Nutri Platform
-				</Link>
-				<div className='top-actions'>
-					<Link to='/' className='link'>
-						Inicio
+		return (
+			<div>
+				<nav className='topbar'>
+					<div className='actions'>
+						<Link to='/' className='brand'>
+							Nutri Platform
+						</Link>
+						<span className='badge'>Modo tester (sin Firebase real)</span>
+					</div>
+					<div className='top-actions'>
+						<Link to='/' className='link'>
+							Inicio
 					</Link>
 					<Link to='/dashboard' className='link'>
 						Dashboard
@@ -739,4 +809,3 @@ export default function App() {
 		</div>
 	);
 }
-
