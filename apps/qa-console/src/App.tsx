@@ -76,23 +76,52 @@ export default function App() {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 
 	// Pacientes
-	const [pName, setPName] = useState('Juan Perez');
-	const [pEmail, setPEmail] = useState('juan@test.com');
-	const [pPhone, setPPhone] = useState('+549341000000');
-	const [assignPatientId, setAssignPatientId] = useState('');
-	const [assignNutriUid, setAssignNutriUid] = useState('');
-	const [patients, setPatients] = useState<unknown[]>([]);
+		const [pName, setPName] = useState('Juan Perez');
+		const [pEmail, setPEmail] = useState('juan@test.com');
+		const [pPhone, setPPhone] = useState('+549341000000');
+		const [patientAssignSelections, setPatientAssignSelections] = useState<
+			Record<string, string>
+		>({});
+		const [patients, setPatients] = useState<unknown[]>([]);
 
-	// Turnos
-	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-	const [apptScheduleId, setApptScheduleId] = useState('');
-	const [apptScheduleWhen, setApptScheduleWhen] = useState('');
-	const [apptScheduleNutriUid, setApptScheduleNutriUid] = useState('');
-	const [apptCancelId, setApptCancelId] = useState('');
-	const [apptCompleteId, setApptCompleteId] = useState('');
+		// Turnos
+		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+		const [scheduleSelections, setScheduleSelections] = useState<
+			Record<string, { when: string; nutri: string }>
+		>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
+	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
+		useState<string>('');
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
+
+	const knownNutris = useMemo(() => {
+		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
+		if (claims.role === 'nutri' && user?.uid) seed.add(user.uid);
+		patients.forEach((p) => {
+			const n = (p as any).assignedNutriUid;
+			if (typeof n === 'string' && n) seed.add(n);
+		});
+		appointments.forEach((a) => {
+			const n = (a as any).nutriUid;
+			if (typeof n === 'string' && n) seed.add(n);
+		});
+		return Array.from(seed);
+	}, [patients, appointments, claims.role, user?.uid]);
+
+	const clinicOptions = useMemo(() => {
+		const seed = new Set<string>();
+		if (claims.clinicId) seed.add(claims.clinicId);
+		patients.forEach((p) => {
+			const cid = (p as any).clinicId;
+			if (typeof cid === 'string' && cid) seed.add(cid);
+		});
+		appointments.forEach((a) => {
+			const cid = (a as any).clinicId;
+			if (typeof cid === 'string' && cid) seed.add(cid);
+		});
+		return Array.from(seed);
+	}, [claims.clinicId, patients, appointments]);
 
 	useEffect(() => {
 		const unsub = onAuthStateChanged(auth, async (u) => {
@@ -109,9 +138,22 @@ export default function App() {
 					? tokenRes.claims.clinicId
 					: null;
 			setClaims({ role, clinicId });
+			setSelectedClinicForNewPatient((prev) => prev || clinicId || '');
 		});
 		return () => unsub();
 	}, []);
+
+	useEffect(() => {
+		if (!selectedClinicForNewPatient && clinicOptions.length > 0) {
+			setSelectedClinicForNewPatient(clinicOptions[0]);
+		}
+	}, [clinicOptions, selectedClinicForNewPatient]);
+
+	useEffect(() => {
+		if (!apptRequestNutriUid && knownNutris.length > 0) {
+			setApptRequestNutriUid(knownNutris[0]);
+		}
+	}, [knownNutris, apptRequestNutriUid]);
 
 	function pushOk(endpoint: string, payload: unknown | undefined, data: unknown) {
 		setLogs((prev) => [
@@ -256,6 +298,7 @@ export default function App() {
 				name: pName,
 				email: pEmail || null,
 				phone: pPhone || null,
+				clinicId: selectedClinicForNewPatient || undefined,
 			});
 			if (created) {
 				await handleListPatients();
@@ -277,19 +320,20 @@ export default function App() {
 		}
 	}
 
-	async function handleAssignNutri() {
+	async function handleAssignNutri(patientId: string) {
 		setLoading(true);
 		try {
-			if (!assignPatientId || !assignNutriUid) {
+			const chosenNutri = patientAssignSelections[patientId];
+			if (!chosenNutri) {
 				pushErr(
 					'/patients/:id (assign)',
-					{ assignPatientId, assignNutriUid },
-					'Falta patientId o nutriUid'
+					{ patientId },
+					'Seleccioná un nutri para asignar'
 				);
 				return;
 			}
-			await authedFetch('PATCH', `/patients/${assignPatientId}`, {
-				assignedNutriUid: assignNutriUid,
+			await authedFetch('PATCH', `/patients/${patientId}`, {
+				assignedNutriUid: chosenNutri,
 			});
 			await handleListPatients();
 		} finally {
@@ -329,21 +373,22 @@ export default function App() {
 		}
 	}
 
-	async function handleScheduleAppointment() {
+	async function handleScheduleAppointment(apptId: string) {
 		setLoading(true);
 		try {
-			const iso = toIsoFromDatetimeLocal(apptScheduleWhen);
-			if (!apptScheduleId || !iso) {
+			const sched = scheduleSelections[apptId];
+			const iso = toIsoFromDatetimeLocal(sched?.when ?? '');
+			if (!iso) {
 				pushErr(
 					'/appointments/:id/schedule',
-					{ apptScheduleId, apptScheduleWhen },
-					'Falta appointmentId o fecha inválida'
+					{ apptId, when: sched?.when },
+					'Falta fecha válida para programar'
 				);
 				return;
 			}
-			await authedFetch('POST', `/appointments/${apptScheduleId}/schedule`, {
+			await authedFetch('POST', `/appointments/${apptId}/schedule`, {
 				scheduledForIso: iso,
-				nutriUid: apptScheduleNutriUid || apptRequestNutriUid || '',
+				nutriUid: sched?.nutri || apptRequestNutriUid || '',
 			});
 			await handleListAppointments();
 		} finally {
@@ -351,36 +396,20 @@ export default function App() {
 		}
 	}
 
-	async function handleCancelAppointment() {
+	async function handleCancelAppointment(apptId: string) {
 		setLoading(true);
 		try {
-			if (!apptCancelId) {
-				pushErr(
-					'/appointments/:id/cancel',
-					{ apptCancelId },
-					'Falta appointmentId'
-				);
-				return;
-			}
-			await authedFetch('POST', `/appointments/${apptCancelId}/cancel`, {});
+			await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
 			await handleListAppointments();
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	async function handleCompleteAppointment() {
+	async function handleCompleteAppointment(apptId: string) {
 		setLoading(true);
 		try {
-			if (!apptCompleteId) {
-				pushErr(
-					'/appointments/:id/complete',
-					{ apptCompleteId },
-					'Falta appointmentId'
-				);
-				return;
-			}
-			await authedFetch('POST', `/appointments/${apptCompleteId}/complete`, {});
+			await authedFetch('POST', `/appointments/${apptId}/complete`, {});
 			await handleListAppointments();
 		} finally {
 			setLoading(false);
@@ -533,80 +562,126 @@ export default function App() {
 							<h3>Pacientes</h3>
 							{canClinic || isPlatform ? (
 								<>
-								<div className='grid two'>
-									<label className='field'>
-										<span>Nombre</span>
-										<input
-											value={pName}
-											onChange={(e) => setPName(e.target.value)}
-											placeholder='Nombre y apellido'
-										/>
-									</label>
-									<label className='field'>
-										<span>Teléfono</span>
-										<input
-											value={pPhone}
-											onChange={(e) => setPPhone(e.target.value)}
-											placeholder='+54...'
-										/>
-									</label>
-								</div>
-								<div className='grid two'>
-									<label className='field'>
-										<span>Email</span>
-										<input
-											value={pEmail}
-											onChange={(e) => setPEmail(e.target.value)}
-											placeholder='correo opcional'
-										/>
-									</label>
-									<div className='actions end'>
-										<button
-											className='btn primary'
-											disabled={loading}
-											onClick={handleCreatePatient}
+									<div className='grid two'>
+										<label className='field'>
+											<span>Nombre</span>
+											<input
+												value={pName}
+												onChange={(e) => setPName(e.target.value)}
+												placeholder='Nombre y apellido'
+											/>
+										</label>
+										<label className='field'>
+											<span>Teléfono</span>
+											<input
+												value={pPhone}
+												onChange={(e) => setPPhone(e.target.value)}
+												placeholder='+54...'
+											/>
+										</label>
+									</div>
+									<div className='grid two'>
+										<label className='field'>
+											<span>Email</span>
+											<input
+												value={pEmail}
+												onChange={(e) => setPEmail(e.target.value)}
+												placeholder='correo opcional'
+											/>
+										</label>
+										<label className='field'>
+											<span>Clínica</span>
+											<select
+												value={selectedClinicForNewPatient}
+												onChange={(e) => setSelectedClinicForNewPatient(e.target.value)}
+												disabled={clinicOptions.length === 0}
+											>
+												{clinicOptions.map((cid) => (
+													<option key={cid} value={cid}>
+														{cid}
+													</option>
+												))}
+												{clinicOptions.length === 0 && (
+													<option value=''>Sin opciones cargadas</option>
+												)}
+											</select>
+										</label>
+										<div className='actions end'>
+											<button
+												className='btn primary'
+												disabled={loading}
+												onClick={handleCreatePatient}
 										>
 											Crear paciente
 										</button>
 									</div>
 								</div>
 
-								<div className='divider' />
+									<div className='divider' />
 
-								<div className='grid two'>
-									<label className='field'>
-										<span>patientId</span>
-										<input
-											value={assignPatientId}
-											onChange={(e) => setAssignPatientId(e.target.value)}
-											placeholder='ID de paciente'
-										/>
-									</label>
-									<label className='field'>
-										<span>nutriUid</span>
-										<input
-											value={assignNutriUid}
-											onChange={(e) => setAssignNutriUid(e.target.value)}
-											placeholder='UID del nutri'
-										/>
-									</label>
-								</div>
-								<div className='actions'>
-									<button className='btn' disabled={loading} onClick={handleAssignNutri}>
-										Asignar nutri
-									</button>
+									{patients.length > 0 && (
+										<div className='list'>
+											{patients.map((p, idx) => {
+												const patient = p as Record<string, any>;
+												const selectedNutri =
+													patientAssignSelections[patient.id] ??
+													(patient.assignedNutriUid ?? '');
+												return (
+													<div className='card' key={patient.id ?? idx}>
+														<div className='inline-info'>
+															<div>
+																<strong>{patient.name ?? 'Sin nombre'}</strong>
+																<div className='muted'>{patient.email ?? 'Sin email'}</div>
+															</div>
+															<div>
+																<small>Clínica</small>
+																<div className='muted'>{patient.clinicId ?? '—'}</div>
+															</div>
+														</div>
+														<div className='inline-info'>
+															<div>
+																<small>Teléfono</small>
+																<div className='muted'>{patient.phone ?? '—'}</div>
+															</div>
+															<div>
+																<small>Nutri asignado</small>
+																<div className='muted'>{patient.assignedNutriUid ?? '—'}</div>
+															</div>
+														</div>
+														<div className='actions'>
+															<select
+																value={selectedNutri}
+																onChange={(e) =>
+																	setPatientAssignSelections((prev) => ({
+																		...prev,
+																		[patient.id]: e.target.value,
+																	}))
+																}
+															>
+																<option value=''>Elegí un nutri</option>
+																{knownNutris.map((n) => (
+																	<option key={n} value={n}>
+																		{n}
+																	</option>
+																))}
+															</select>
+															<button
+																className='btn'
+																disabled={loading || !selectedNutri}
+																onClick={() => handleAssignNutri(patient.id)}
+															>
+																Asignar nutri
+															</button>
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
 									<button className='btn ghost' disabled={loading} onClick={handleListPatients}>
-										Listar pacientes
+										Refrescar pacientes
 									</button>
-								</div>
-								{patients.length > 0 && (
-									<div className='list'>
-										{patients.map((p, idx) => (
-											<pre key={idx}>{JSON.stringify(p, null, 2)}</pre>
-										))}
-									</div>
-								)}
-							</>
+								</>
 							) : (
 								<p className='muted'>Disponible para roles de clínica.</p>
 							)}
@@ -627,67 +702,48 @@ export default function App() {
 						)}
 						<div className='grid three'>
 							<label className='field'>
-								<span>nutriUid para solicitar</span>
-								<input
+								<span>Seleccioná nutri</span>
+								<select
 									value={apptRequestNutriUid}
 									onChange={(e) => setApptRequestNutriUid(e.target.value)}
-									placeholder='UID del nutri (paciente)'
-								/>
+								>
+									{knownNutris.map((n) => (
+										<option key={n} value={n}>
+											{n}
+										</option>
+									))}
+									{knownNutris.length === 0 && (
+										<option value=''>Sin opciones</option>
+									)}
+								</select>
 							</label>
-						<button
-							className='btn primary'
-							disabled={loading || !isPatient}
-							onClick={handleRequestAppointment}
-						>
-							Solicitar turno (paciente)
-						</button>
+							<button
+								className='btn primary'
+								disabled={loading || !isPatient || knownNutris.length === 0}
+								onClick={handleRequestAppointment}
+							>
+								Solicitar turno (paciente)
+							</button>
 							<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
 								Listar turnos
 							</button>
 						</div>
 
-					<div className='grid three'>
-						<label className='field'>
-							<span>appointmentId</span>
-							<input
-								value={apptScheduleId}
-								onChange={(e) => setApptScheduleId(e.target.value)}
-								placeholder='ID a schedule'
-							/>
-						</label>
-						<label className='field'>
-							<span>Fecha/hora (local)</span>
-							<input
-								type='datetime-local'
-								value={apptScheduleWhen}
-								onChange={(e) => setApptScheduleWhen(e.target.value)}
-							/>
-						</label>
-						<label className='field'>
-							<span>nutriUid (opcional)</span>
-							<input
-								value={apptScheduleNutriUid}
-								onChange={(e) => setApptScheduleNutriUid(e.target.value)}
-								placeholder='UID para schedule'
-							/>
-						</label>
-					</div>
-					<div className='actions'>
-						<button className='btn' disabled={loading} onClick={handleScheduleAppointment}>
-							Programar turno (nutri / admin clínica)
-						</button>
-						<button className='btn' disabled={loading} onClick={handleCancelAppointment}>
-							Cancelar turno (según reglas 24h)
-						</button>
-						<button className='btn' disabled={loading} onClick={handleCompleteAppointment}>
-							Completar turno (nutri / admin)
-						</button>
-					</div>
-
-					{appointments.length > 0 && (
-						<div className='appointments'>
-							{appointments.map((a, idx) => {
+						{appointments.length > 0 && (
+							<div className='appointments'>
+								{appointments.map((a, idx) => {
 								const appt = a as Record<string, any>;
+								const sched =
+									scheduleSelections[appt.id] ?? {
+										when: '',
+										nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
+									};
+								const canSchedule =
+									role === 'nutri' || role === 'clinic_admin';
+								const canComplete =
+									role === 'nutri' ||
+									role === 'clinic_admin' ||
+									role === 'platform_admin';
 								return (
 									<div className='appt-card' key={appt.id ?? idx}>
 										<div className='appt-head'>
@@ -724,6 +780,69 @@ export default function App() {
 												<small>Actualizado</small>
 												<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
 											</div>
+										</div>
+										<div className='actions wrap'>
+											{canSchedule && (
+												<>
+													<input
+														type='datetime-local'
+														value={sched.when}
+														onChange={(e) =>
+															setScheduleSelections((prev) => ({
+																...prev,
+																[appt.id]: {
+																	...prev[appt.id],
+																	when: e.target.value,
+																	nutri: sched.nutri,
+																},
+															}))
+														}
+													/>
+													<select
+														value={sched.nutri}
+														onChange={(e) =>
+															setScheduleSelections((prev) => ({
+																...prev,
+																[appt.id]: {
+																	...prev[appt.id],
+																	when: sched.when,
+																	nutri: e.target.value,
+																},
+															}))
+														}
+													>
+														<option value=''>Elegí nutri</option>
+														{knownNutris.map((n) => (
+															<option key={n} value={n}>
+																{n}
+															</option>
+														))}
+													</select>
+													<button
+														className='btn'
+														disabled={loading || !sched.when}
+														onClick={() => handleScheduleAppointment(appt.id)}
+													>
+														Programar
+													</button>
+												</>
+											)}
+											<button
+												className='btn ghost'
+												disabled={loading}
+												onClick={() => handleCancelAppointment(appt.id)}
+											>
+												Cancelar
+											</button>
+											{canComplete && (
+												<button
+													className='btn'
+													disabled={loading}
+													onClick={() => handleCompleteAppointment(appt.id)}
+												>
+													Completar
+												</button>
+											)}
 										</div>
 									</div>
 								);

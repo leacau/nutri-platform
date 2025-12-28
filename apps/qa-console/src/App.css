@@ -97,6 +97,10 @@
 	margin-top: 6px;
 }
 
+.actions.wrap {
+	flex-wrap: wrap;
+}
+
 .actions.end {
 	justify-content: flex-end;
 }
@@ -172,6 +176,14 @@ input {
 	border-radius: 8px;
 	border: 1px solid #cbd5e1;
 	font-size: 14px;
+}
+
+select {
+	padding: 10px 12px;
+	border-radius: 8px;
+	border: 1px solid #cbd5e1;
+	font-size: 14px;
+	background: #fff;
 }
 
 input:focus {
