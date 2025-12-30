@@ -700,6 +700,17 @@ export default function App() {
 								Aun así podés programar/cancelar/completar si tu rol lo permite.
 							</p>
 						)}
+						<p className='muted'>
+							Tip: el backend exige que tu usuario esté vinculado a un perfil de paciente en
+							el emulador (linkedUid). Si ves un 500 al solicitar, creá un paciente y
+							linkealo antes de pedir turno.
+						</p>
+						{appointments.length === 0 && (
+							<p className='muted'>
+								No hay turnos aún. Solicitá uno como paciente (con perfil vinculado) y luego
+								podrás elegir fecha y horario en la tarjeta del turno.
+							</p>
+						)}
 						<div className='grid three'>
 							<label className='field'>
 								<span>Seleccioná nutri</span>
@@ -732,8 +743,8 @@ export default function App() {
 						{appointments.length > 0 && (
 							<div className='appointments'>
 								{appointments.map((a, idx) => {
-								const appt = a as Record<string, any>;
-								const sched =
+									const appt = a as Record<string, any>;
+									const sched =
 									scheduleSelections[appt.id] ?? {
 										when: '',
 										nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
@@ -776,16 +787,21 @@ export default function App() {
 												<small>Programado</small>
 												<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
 											</div>
-											<div>
-												<small>Actualizado</small>
-												<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
+												<div>
+													<small>Actualizado</small>
+													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
+												</div>
 											</div>
-										</div>
-										<div className='actions wrap'>
-											{canSchedule && (
-												<>
-													<input
-														type='datetime-local'
+											{!canSchedule && (
+												<p className='muted' style={{ marginTop: 8 }}>
+													Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.
+												</p>
+											)}
+											<div className='actions wrap'>
+												{canSchedule && (
+													<>
+														<input
+															type='datetime-local'
 														value={sched.when}
 														onChange={(e) =>
 															setScheduleSelections((prev) => ({
