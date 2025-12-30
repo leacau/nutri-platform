@@ -84,11 +84,12 @@ export default function App() {
 		>({});
 		const [patients, setPatients] = useState<unknown[]>([]);
 
-		// Turnos
-		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-		const [scheduleSelections, setScheduleSelections] = useState<
-			Record<string, { when: string; nutri: string }>
-		>({});
+	// Turnos
+	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+	const [apptRequestWhen, setApptRequestWhen] = useState('');
+	const [scheduleSelections, setScheduleSelections] = useState<
+		Record<string, { when: string; nutri: string }>
+	>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
 	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
 		useState<string>('');
@@ -366,6 +367,7 @@ export default function App() {
 			}
 			await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
+				preferredForIso: toIsoFromDatetimeLocal(apptRequestWhen) ?? undefined,
 			});
 			await handleListAppointments();
 		} finally {
@@ -728,6 +730,14 @@ export default function App() {
 									)}
 								</select>
 							</label>
+							<label className='field'>
+								<span>Fecha/hora deseada</span>
+								<input
+									type='datetime-local'
+									value={apptRequestWhen}
+									onChange={(e) => setApptRequestWhen(e.target.value)}
+								/>
+							</label>
 							<button
 								className='btn primary'
 								disabled={loading || !isPatient || knownNutris.length === 0}
@@ -787,10 +797,14 @@ export default function App() {
 												<small>Programado</small>
 												<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
 											</div>
-												<div>
-													<small>Actualizado</small>
-													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
-												</div>
+											<div>
+												<small>Preferido por paciente</small>
+												<div className='muted'>{toReadableDate(appt.preferredFor)}</div>
+											</div>
+											<div>
+												<small>Actualizado</small>
+												<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
+											</div>
 											</div>
 											{!canSchedule && (
 												<p className='muted' style={{ marginTop: 8 }}>

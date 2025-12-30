@@ -24,6 +24,9 @@ export type AppointmentDoc = {
 	// Selección del nutricionista
 	nutriUid: string | null;
 
+	// Preferencia inicial (paciente)
+	preferredFor: FirebaseFirestore.Timestamp | null;
+
 	status: AppointmentStatus;
 
 	requestedAt: FirebaseFirestore.Timestamp;
@@ -46,6 +49,7 @@ const router = Router();
 const requestBodySchema = z
 	.object({
 		nutriUid: z.string().min(1),
+		preferredForIso: z.string().min(10).optional(),
 	})
 	.strict();
 
@@ -156,7 +160,14 @@ router.post(
 			});
 		}
 
-		const { nutriUid } = parsed.data;
+		const { nutriUid, preferredForIso } = parsed.data;
+		const preferredFor =
+			typeof preferredForIso === 'string'
+				? (() => {
+						const ms = Date.parse(preferredForIso);
+						return Number.isFinite(ms) ? Timestamp.fromMillis(ms) : null;
+				  })()
+				: null;
 
 		const { firestore } = getFirebaseAdmin();
 
@@ -180,10 +191,20 @@ router.post(
 			});
 		}
 
-		const { patientId, clinicId } = await getPatientProfileByUid(
-			firestore,
-			ctx.uid
-		);
+		let patientProfile: { patientId: string; clinicId: string };
+		try {
+			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
+		} catch (err) {
+			const msg =
+				err instanceof Error ? err.message : 'Patient profile not linked';
+			const http = (err as any)?.statusCode === 403 ? 403 : 404;
+			return res.status(http).json({
+				success: false,
+				message: msg,
+			});
+		}
+
+		const { patientId, clinicId } = patientProfile;
 
 		// (Opcional) Hard guard: verificar que el nutri pertenece a la misma clínica.
 		// Hoy no tenemos colección nutris, así que lo dejamos para la próxima iteración.
@@ -195,6 +216,7 @@ router.post(
 			patientId,
 			patientUid: ctx.uid,
 			nutriUid,
+			preferredFor,
 			status: 'requested',
 			requestedAt: now,
 			scheduledFor: null,
