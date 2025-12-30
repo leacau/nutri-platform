@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-	onAuthStateChanged,
-	signInWithEmailAndPassword,
 	createUserWithEmailAndPassword,
-	signOut,
 	getIdToken,
 	getIdTokenResult,
+	onAuthStateChanged,
+	signInWithEmailAndPassword,
+	signOut,
 	type User,
 } from 'firebase/auth';
+import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import './App.css';
 import { auth } from './firebase';
+
+type Claims = { role: string | null; clinicId: string | null };
 
 type LogEntry =
 	| { ts: string; endpoint: string; payload?: unknown; ok: true; data: unknown }
@@ -20,57 +24,104 @@ type LogEntry =
 			error: string;
 	  };
 
-function nowIso(): string {
+type ProtectedProps = {
+	user: User | null;
+	children: JSX.Element;
+};
+
+function nowIso() {
 	return new Date().toISOString();
 }
 
-type ClaimsView = {
-	role: string | null;
-	clinicId: string | null;
-};
-
 function toIsoFromDatetimeLocal(v: string): string | null {
-	// v: "2025-12-26T18:30"
 	if (!v || !v.includes('T')) return null;
 	const d = new Date(v);
 	if (!Number.isFinite(d.getTime())) return null;
 	return d.toISOString();
 }
 
+function toReadableDate(v: unknown): string {
+	if (!v) return '—';
+	if (typeof v === 'string') {
+		const d = new Date(v);
+		return Number.isFinite(d.getTime()) ? d.toLocaleString() : v;
+	}
+	if (typeof v === 'object' && v !== null) {
+		const any = v as { _seconds?: number; _nanoseconds?: number };
+		if (typeof any._seconds === 'number') {
+			const ms = any._seconds * 1000 + Math.floor((any._nanoseconds ?? 0) / 1_000_000);
+			return new Date(ms).toLocaleString();
+		}
+	}
+	return String(v);
+}
+
+function ProtectedRoute({ user, children }: ProtectedProps) {
+	if (!user) return <Navigate to='/login' replace />;
+	return children;
+}
+
 export default function App() {
 	const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
 
-	const [logs, setLogs] = useState<LogEntry[]>([]);
-	const [loading, setLoading] = useState(false);
+	const navigate = useNavigate();
 
 	const [user, setUser] = useState<User | null>(null);
-	const [claims, setClaims] = useState<ClaimsView>({
-		role: null,
-		clinicId: null,
-	});
+	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
+	const [loading, setLoading] = useState(false);
 
 	const [email, setEmail] = useState('qa1@test.com');
 	const [password, setPassword] = useState('Passw0rd!');
 
-	// Patients create
-	const [pName, setPName] = useState('Juan Perez');
-	const [pEmail, setPEmail] = useState('juan@test.com');
-	const [pPhone, setPPhone] = useState('+549341000000');
+	const [logs, setLogs] = useState<LogEntry[]>([]);
 
-	// Assign nutri to patient
-	const [assignPatientId, setAssignPatientId] = useState('');
-	const [assignNutriUid, setAssignNutriUid] = useState('');
-	const [apptNutriUid, setApptNutriUid] = useState('');
+	// Pacientes
+		const [pName, setPName] = useState('Juan Perez');
+		const [pEmail, setPEmail] = useState('juan@test.com');
+		const [pPhone, setPPhone] = useState('+549341000000');
+		const [patientAssignSelections, setPatientAssignSelections] = useState<
+			Record<string, string>
+		>({});
+		const [patients, setPatients] = useState<unknown[]>([]);
 
-	// Appointment flows
-	const [apptNutriUidRequest, setApptNutriUidRequest] = useState('');
-	const [apptScheduleId, setApptScheduleId] = useState('');
-	const [apptScheduleIso, setApptScheduleIso] = useState('');
-	const [apptScheduleNutriUid, setApptScheduleNutriUid] = useState('');
-	const [apptCancelId, setApptCancelId] = useState('');
-	const [apptScheduleWhen, setApptScheduleWhen] = useState(''); // datetime-local
+		// Turnos
+		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+		const [scheduleSelections, setScheduleSelections] = useState<
+			Record<string, { when: string; nutri: string }>
+		>({});
+	const [appointments, setAppointments] = useState<unknown[]>([]);
+	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
+		useState<string>('');
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
+
+	const knownNutris = useMemo(() => {
+		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
+		if (claims.role === 'nutri' && user?.uid) seed.add(user.uid);
+		patients.forEach((p) => {
+			const n = (p as any).assignedNutriUid;
+			if (typeof n === 'string' && n) seed.add(n);
+		});
+		appointments.forEach((a) => {
+			const n = (a as any).nutriUid;
+			if (typeof n === 'string' && n) seed.add(n);
+		});
+		return Array.from(seed);
+	}, [patients, appointments, claims.role, user?.uid]);
+
+	const clinicOptions = useMemo(() => {
+		const seed = new Set<string>();
+		if (claims.clinicId) seed.add(claims.clinicId);
+		patients.forEach((p) => {
+			const cid = (p as any).clinicId;
+			if (typeof cid === 'string' && cid) seed.add(cid);
+		});
+		appointments.forEach((a) => {
+			const cid = (a as any).clinicId;
+			if (typeof cid === 'string' && cid) seed.add(cid);
+		});
+		return Array.from(seed);
+	}, [claims.clinicId, patients, appointments]);
 
 	useEffect(() => {
 		const unsub = onAuthStateChanged(auth, async (u) => {
@@ -87,25 +138,31 @@ export default function App() {
 					? tokenRes.claims.clinicId
 					: null;
 			setClaims({ role, clinicId });
+			setSelectedClinicForNewPatient((prev) => prev || clinicId || '');
 		});
 		return () => unsub();
 	}, []);
 
-	function pushOk(
-		endpoint: string,
-		payload: unknown | undefined,
-		data: unknown
-	) {
+	useEffect(() => {
+		if (!selectedClinicForNewPatient && clinicOptions.length > 0) {
+			setSelectedClinicForNewPatient(clinicOptions[0]);
+		}
+	}, [clinicOptions, selectedClinicForNewPatient]);
+
+	useEffect(() => {
+		if (!apptRequestNutriUid && knownNutris.length > 0) {
+			setApptRequestNutriUid(knownNutris[0]);
+		}
+	}, [knownNutris, apptRequestNutriUid]);
+
+	function pushOk(endpoint: string, payload: unknown | undefined, data: unknown) {
 		setLogs((prev) => [
 			...prev,
 			{ ts: nowIso(), endpoint, payload, ok: true, data },
 		]);
 	}
-	function pushErr(
-		endpoint: string,
-		payload: unknown | undefined,
-		error: string
-	) {
+
+	function pushErr(endpoint: string, payload: unknown | undefined, error: string) {
 		setLogs((prev) => [
 			...prev,
 			{ ts: nowIso(), endpoint, payload, ok: false, error },
@@ -118,7 +175,7 @@ export default function App() {
 		body?: unknown
 	) {
 		if (!user) {
-			pushErr(endpoint, body, 'No authenticated user');
+			pushErr(endpoint, body, 'Usuario no autenticado');
 			return null;
 		}
 		const token = await getIdToken(user, true);
@@ -145,89 +202,17 @@ export default function App() {
 		return data;
 	}
 
-	async function callAuthedPost(endpoint: string, payload: unknown) {
-		setLoading(true);
-		try {
-			if (!user) {
-				pushErr(endpoint, payload, 'No authenticated user');
-				return;
-			}
-
-			const token = await getIdToken(user, true);
-
-			const res = await fetch(`${API_BASE}${endpoint}`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
-				body: JSON.stringify(payload),
-			});
-
-			const data = await res.json().catch(() => null);
-			if (!res.ok) {
-				pushErr(
-					endpoint,
-					payload,
-					`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
-				);
-				return;
-			}
-
-			pushOk(endpoint, payload, data);
-		} catch (e) {
-			pushErr(
-				endpoint,
-				payload,
-				e instanceof Error ? e.message : 'Unknown error'
-			);
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function publicGet(endpoint: string) {
-		setLoading(true);
-		try {
-			const res = await fetch(`${API_BASE}${endpoint}`, {
-				method: 'GET',
-				headers: { 'Content-Type': 'application/json' },
-			});
-			const data = await res.json().catch(() => null);
-			if (!res.ok) {
-				pushErr(
-					endpoint,
-					undefined,
-					`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
-				);
-				return;
-			}
-			pushOk(endpoint, undefined, data);
-		} catch (e) {
-			pushErr(
-				endpoint,
-				undefined,
-				e instanceof Error ? e.message : 'Unknown error'
-			);
-		} finally {
-			setLoading(false);
-		}
-	}
-
 	async function handleLogin() {
 		setLoading(true);
 		try {
 			const cred = await signInWithEmailAndPassword(auth, email, password);
-			pushOk(
-				'AUTH login',
-				{ email },
-				{ uid: cred.user.uid, email: cred.user.email }
-			);
-		} catch (e) {
+			pushOk('auth/login', { email }, { uid: cred.user.uid });
+			navigate('/dashboard');
+		} catch (err) {
 			pushErr(
-				'AUTH login',
+				'auth/login',
 				{ email },
-				e instanceof Error ? e.message : 'Unknown error'
+				err instanceof Error ? err.message : 'Error desconocido'
 			);
 		} finally {
 			setLoading(false);
@@ -238,16 +223,13 @@ export default function App() {
 		setLoading(true);
 		try {
 			const cred = await createUserWithEmailAndPassword(auth, email, password);
-			pushOk(
-				'AUTH register',
-				{ email },
-				{ uid: cred.user.uid, email: cred.user.email }
-			);
-		} catch (e) {
+			pushOk('auth/register', { email }, { uid: cred.user.uid });
+			navigate('/dashboard');
+		} catch (err) {
 			pushErr(
-				'AUTH register',
+				'auth/register',
 				{ email },
-				e instanceof Error ? e.message : 'Unknown error'
+				err instanceof Error ? err.message : 'Error desconocido'
 			);
 		} finally {
 			setLoading(false);
@@ -258,23 +240,26 @@ export default function App() {
 		setLoading(true);
 		try {
 			await signOut(auth);
-			pushOk('AUTH logout', undefined, { ok: true });
-		} catch (e) {
+			pushOk('auth/logout', undefined, { ok: true });
+			setPatients([]);
+			setAppointments([]);
+			navigate('/login');
+		} catch (err) {
 			pushErr(
-				'AUTH logout',
+				'auth/logout',
 				undefined,
-				e instanceof Error ? e.message : 'Unknown error'
+				err instanceof Error ? err.message : 'Error desconocido'
 			);
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	async function handleRefreshToken() {
+	async function handleRefreshClaims() {
 		setLoading(true);
 		try {
 			if (!user) {
-				pushErr('AUTH refreshToken', undefined, 'No authenticated user');
+				pushErr('auth/refresh', undefined, 'Sin usuario logueado');
 				return;
 			}
 			const tokenRes = await getIdTokenResult(user, true);
@@ -285,13 +270,22 @@ export default function App() {
 					? tokenRes.claims.clinicId
 					: null;
 			setClaims({ role, clinicId });
-			pushOk('AUTH refreshToken', undefined, { ok: true, role, clinicId });
-		} catch (e) {
+			pushOk('auth/refresh', undefined, { role, clinicId });
+		} catch (err) {
 			pushErr(
-				'AUTH refreshToken',
+				'auth/refresh',
 				undefined,
-				e instanceof Error ? e.message : 'Unknown error'
+				err instanceof Error ? err.message : 'Error desconocido'
 			);
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleGetMe() {
+		setLoading(true);
+		try {
+			await authedFetch('GET', '/users/me');
 		} finally {
 			setLoading(false);
 		}
@@ -300,43 +294,48 @@ export default function App() {
 	async function handleCreatePatient() {
 		setLoading(true);
 		try {
-			await authedFetch('POST', '/patients', {
+			const created = await authedFetch('POST', '/patients', {
 				name: pName,
 				email: pEmail || null,
 				phone: pPhone || null,
+				clinicId: selectedClinicForNewPatient || undefined,
 			});
-			// refresh list
-			await authedFetch('GET', '/patients');
+			if (created) {
+				await handleListPatients();
+			}
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	async function handleAssignNutri() {
+	async function handleListPatients() {
 		setLoading(true);
 		try {
-			if (!assignPatientId || !assignNutriUid) {
+			const data = await authedFetch('GET', '/patients');
+			if (data && typeof data === 'object' && 'data' in data) {
+				setPatients((data as any).data ?? []);
+			}
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleAssignNutri(patientId: string) {
+		setLoading(true);
+		try {
+			const chosenNutri = patientAssignSelections[patientId];
+			if (!chosenNutri) {
 				pushErr(
 					'/patients/:id (assign)',
-					{ assignPatientId, assignNutriUid },
-					'Missing patientId or nutriUid'
+					{ patientId },
+					'Seleccioná un nutri para asignar'
 				);
 				return;
 			}
-			await authedFetch('PATCH', `/patients/${assignPatientId}`, {
-				assignedNutriUid: assignNutriUid,
+			await authedFetch('PATCH', `/patients/${patientId}`, {
+				assignedNutriUid: chosenNutri,
 			});
-			await authedFetch('GET', '/patients');
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleRequestAppointmentAsPatient() {
-		setLoading(true);
-		try {
-			await authedFetch('POST', '/appointments/request', {});
-			await authedFetch('GET', '/appointments');
+			await handleListPatients();
 		} finally {
 			setLoading(false);
 		}
@@ -345,418 +344,603 @@ export default function App() {
 	async function handleListAppointments() {
 		setLoading(true);
 		try {
-			await authedFetch('GET', '/appointments');
+			const data = await authedFetch('GET', '/appointments');
+			if (data && typeof data === 'object' && 'data' in data) {
+				setAppointments((data as any).data ?? []);
+			}
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	async function handleScheduleAppointment() {
+	async function handleRequestAppointment() {
 		setLoading(true);
 		try {
-			const iso = toIsoFromDatetimeLocal(apptScheduleWhen);
-			if (!apptScheduleId || !iso) {
+			if (!apptRequestNutriUid) {
+				pushErr(
+					'/appointments/request',
+					{ apptRequestNutriUid },
+					'Falta nutriUid para pedir turno'
+				);
+				return;
+			}
+			await authedFetch('POST', '/appointments/request', {
+				nutriUid: apptRequestNutriUid,
+			});
+			await handleListAppointments();
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	async function handleScheduleAppointment(apptId: string) {
+		setLoading(true);
+		try {
+			const sched = scheduleSelections[apptId];
+			const iso = toIsoFromDatetimeLocal(sched?.when ?? '');
+			if (!iso) {
 				pushErr(
 					'/appointments/:id/schedule',
-					{ apptScheduleId, apptScheduleWhen },
-					'Missing appointmentId or invalid datetime'
+					{ apptId, when: sched?.when },
+					'Falta fecha válida para programar'
 				);
 				return;
 			}
-			await authedFetch('POST', `/appointments/${apptScheduleId}/schedule`, {
+			await authedFetch('POST', `/appointments/${apptId}/schedule`, {
 				scheduledForIso: iso,
-				nutriUid: apptNutriUid,
+				nutriUid: sched?.nutri || apptRequestNutriUid || '',
 			});
-
-			await authedFetch('GET', '/appointments');
+			await handleListAppointments();
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	async function handleCancelAppointment() {
+	async function handleCancelAppointment(apptId: string) {
 		setLoading(true);
 		try {
-			if (!apptCancelId) {
-				pushErr(
-					'/appointments/:id/cancel',
-					{ apptCancelId },
-					'Missing appointmentId'
-				);
-				return;
-			}
-			await authedFetch('POST', `/appointments/${apptCancelId}/cancel`, {});
-			await authedFetch('GET', '/appointments');
+			await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
+			await handleListAppointments();
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	return (
-		<div
-			style={{
-				fontFamily: 'system-ui, Arial',
-				padding: 16,
-				maxWidth: 1200,
-				margin: '0 auto',
-			}}
-		>
-			<h2>Nutri Platform – QA Console</h2>
+	async function handleCompleteAppointment(apptId: string) {
+		setLoading(true);
+		try {
+			await authedFetch('POST', `/appointments/${apptId}/complete`, {});
+			await handleListAppointments();
+		} finally {
+			setLoading(false);
+		}
+	}
 
-			<div
-				style={{
-					display: 'grid',
-					gridTemplateColumns: '1fr 1fr',
-					gap: 16,
-					marginBottom: 16,
-				}}
-			>
-				<div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-					<h3 style={{ marginTop: 0 }}>Auth (Emulator)</h3>
+	function Landing() {
+		return (
+			<div className='page'>
+				<section className='hero'>
+					<div>
+						<p className='eyebrow'>Modo tester</p>
+						<h1>Nutri Platform</h1>
+						<p className='lead'>
+							Pantalla real de onboarding con registro, login y navegación
+							guiada por rol. Seguimos conectando contra emuladores locales.
+						</p>
+						<div className='actions'>
+							<Link className='btn primary' to='/login'>
+								Ingresar / Crear cuenta
+							</Link>
+							<Link className='btn ghost' to='/dashboard'>
+								Ir al dashboard
+							</Link>
+						</div>
+					</div>
+					<div className='panel'>
+						<h3>Cómo probar rápido</h3>
+						<ol>
+							<li>Creá un usuario en el emulador o logueate si ya existe.</li>
+							<li>Usá el endpoint dev/set-claims con el secreto para setear rol y clinicId.</li>
+							<li>Refrescá claims desde el dashboard y probá flujos según tu rol.</li>
+						</ol>
+					</div>
+				</section>
+			</div>
+		);
+	}
 
-					<div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+	function AuthPage() {
+		return (
+			<div className='page narrow'>
+				<h2>Acceso</h2>
+				<p className='muted'>
+					Autenticamos contra el emulador de Firebase Auth. No se contacta
+					producción.
+				</p>
+				<div className='card'>
+					<label className='field'>
+						<span>Email</span>
 						<input
-							style={{ flex: 1 }}
 							value={email}
 							onChange={(e) => setEmail(e.target.value)}
-							placeholder='email'
+							placeholder='usuario@test.com'
 						/>
+					</label>
+					<label className='field'>
+						<span>Password</span>
 						<input
-							style={{ flex: 1 }}
+							type='password'
 							value={password}
 							onChange={(e) => setPassword(e.target.value)}
-							placeholder='password'
-							type='password'
+							placeholder='mínimo 6 caracteres'
 						/>
-					</div>
-
-					<div
-						style={{
-							display: 'flex',
-							gap: 8,
-							marginBottom: 10,
-							flexWrap: 'wrap',
-						}}
-					>
-						<button disabled={loading} onClick={handleLogin}>
+					</label>
+					<div className='actions'>
+						<button className='btn primary' disabled={loading} onClick={handleLogin}>
 							Login
 						</button>
-						<button disabled={loading} onClick={handleRegister}>
-							Register
+						<button className='btn' disabled={loading} onClick={handleRegister}>
+							Registrar
 						</button>
-						<button disabled={loading} onClick={handleLogout}>
-							Logout
-						</button>
-						<button disabled={loading} onClick={handleRefreshToken}>
-							Refresh token
-						</button>
+						{user && (
+							<button className='btn ghost' disabled={loading} onClick={handleLogout}>
+								Logout
+							</button>
+						)}
 					</div>
-
-					<div style={{ fontSize: 14, lineHeight: 1.4 }}>
+					<div className='inline-info'>
 						<div>
-							<strong>user:</strong>{' '}
-							<code>
-								{user ? `${user.uid} (${user.email ?? 'no-email'})` : 'null'}
-							</code>
+							<strong>UID:</strong>{' '}
+							<code>{user ? user.uid : 'no logueado'}</code>
 						</div>
 						<div>
-							<strong>claims:</strong> <code>{JSON.stringify(claims)}</code>
-						</div>
-						<div style={{ opacity: 0.7 }}>
-							API_BASE = <code>{API_BASE}</code>
+							<strong>Claims:</strong>{' '}
+							<code>{JSON.stringify(claims)}</code>
 						</div>
 					</div>
-				</div>
-
-				<div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-					<h3 style={{ marginTop: 0 }}>API Calls</h3>
-
-					<div
-						style={{
-							display: 'flex',
-							gap: 8,
-							flexWrap: 'wrap',
-							marginBottom: 10,
-						}}
-					>
-						<button disabled={loading} onClick={() => publicGet('/health')}>
-							GET /api/health
-						</button>
-						<button
-							disabled={loading}
-							onClick={() => authedFetch('GET', '/users/me')}
-						>
-							GET /api/users/me
-						</button>
-						<button
-							disabled={loading}
-							onClick={() => authedFetch('GET', '/patients')}
-						>
-							GET /api/patients
-						</button>
-						<button disabled={loading} onClick={handleListAppointments}>
-							GET /api/appointments
-						</button>
-					</div>
-
-					<hr />
-
-					<h4 style={{ margin: '10px 0 6px' }}>Patients – Create</h4>
-					<div
-						style={{
-							display: 'grid',
-							gridTemplateColumns: '1fr 1fr 1fr',
-							gap: 8,
-						}}
-					>
-						<input
-							value={pName}
-							onChange={(e) => setPName(e.target.value)}
-							placeholder='name'
-						/>
-						<input
-							value={pEmail}
-							onChange={(e) => setPEmail(e.target.value)}
-							placeholder='email'
-						/>
-						<input
-							value={pPhone}
-							onChange={(e) => setPPhone(e.target.value)}
-							placeholder='phone'
-						/>
-					</div>
-					<div style={{ marginTop: 8 }}>
-						<button disabled={loading} onClick={handleCreatePatient}>
-							POST /api/patients
-						</button>
-					</div>
-
-					<hr />
-
-					<h4 style={{ margin: '10px 0 6px' }}>Patients – Assign Nutri</h4>
-					<div
-						style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
-					>
-						<input
-							value={assignPatientId}
-							onChange={(e) => setAssignPatientId(e.target.value)}
-							placeholder='patientId (Firestore doc id)'
-						/>
-						<input
-							value={assignNutriUid}
-							onChange={(e) => setAssignNutriUid(e.target.value)}
-							placeholder='nutriUid (auth uid)'
-						/>
-					</div>
-					<div style={{ marginTop: 8 }}>
-						<button disabled={loading} onClick={handleAssignNutri}>
-							PATCH /api/patients/:id (assignedNutriUid)
-						</button>
-					</div>
-
-					<hr style={{ margin: '12px 0', opacity: 0.3 }} />
-
-					<h4 style={{ margin: '8px 0' }}>Appointments</h4>
-
-					<div
-						style={{
-							display: 'grid',
-							gap: 8,
-							gridTemplateColumns: '1fr 1fr 1fr',
-						}}
-					>
-						<input
-							value={apptNutriUidRequest}
-							onChange={(e) => setApptNutriUidRequest(e.target.value)}
-							placeholder='nutriUid (para request)'
-						/>
-						<button
-							disabled={loading}
-							onClick={() =>
-								callAuthedPost('/appointments/request', {
-									nutriUid: apptNutriUidRequest,
-								})
-							}
-						>
-							POST /api/appointments/request
-						</button>
-						<button
-							disabled={loading}
-							onClick={() => callAuthedGet('/appointments')}
-						>
-							GET /api/appointments
-						</button>
-					</div>
-
-					<div
-						style={{
-							display: 'grid',
-							gap: 8,
-							gridTemplateColumns: '1fr 1fr 1fr 1fr',
-							marginTop: 10,
-						}}
-					>
-						<input
-							value={apptScheduleId}
-							onChange={(e) => setApptScheduleId(e.target.value)}
-							placeholder='appointmentId (schedule)'
-						/>
-						<input
-							value={apptScheduleIso}
-							onChange={(e) => setApptScheduleIso(e.target.value)}
-							placeholder='scheduledForIso (ej: 2025-12-26T15:30:00.000Z)'
-						/>
-						<input
-							value={apptScheduleNutriUid}
-							onChange={(e) => setApptScheduleNutriUid(e.target.value)}
-							placeholder='nutriUid (schedule)'
-						/>
-						<button
-							disabled={loading}
-							onClick={() =>
-								callAuthedPost(`/appointments/${apptScheduleId}/schedule`, {
-									scheduledForIso: apptScheduleIso,
-									nutriUid: apptScheduleNutriUid,
-								})
-							}
-						>
-							POST /api/appointments/:id/schedule
-						</button>
-					</div>
-
-					<div
-						style={{
-							display: 'grid',
-							gap: 8,
-							gridTemplateColumns: '1fr 1fr',
-							marginTop: 10,
-						}}
-					>
-						<input
-							value={apptCancelId}
-							onChange={(e) => setApptCancelId(e.target.value)}
-							placeholder='appointmentId (cancel)'
-						/>
-						<button
-							disabled={loading}
-							onClick={() =>
-								callAuthedPost(`/appointments/${apptCancelId}/cancel`, {})
-							}
-						>
-							POST /api/appointments/:id/cancel
-						</button>
-					</div>
-
-					<hr />
-
-					<h4 style={{ margin: '10px 0 6px' }}>Appointments</h4>
-					<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-						<button
-							disabled={loading}
-							onClick={handleRequestAppointmentAsPatient}
-						>
-							POST /api/appointments/request (patient)
-						</button>
-					</div>
-
-					<div style={{ marginTop: 10 }}>
-						<div
-							style={{
-								display: 'grid',
-								gridTemplateColumns: '1fr 1fr',
-								gap: 8,
-							}}
-						>
-							<input
-								value={apptScheduleId}
-								onChange={(e) => setApptScheduleId(e.target.value)}
-								placeholder='appointmentId'
-							/>
-							<input
-								value={apptScheduleWhen}
-								onChange={(e) => setApptScheduleWhen(e.target.value)}
-								type='datetime-local'
-							/>
-							<input
-								value={apptNutriUid}
-								onChange={(e) => setApptNutriUid(e.target.value)}
-								placeholder='nutriUid'
-							/>
-						</div>
-						<div style={{ marginTop: 8 }}>
-							<button disabled={loading} onClick={handleScheduleAppointment}>
-								POST /api/appointments/:id/schedule (nutri/clinic_admin)
-							</button>
-						</div>
-					</div>
-
-					<div style={{ marginTop: 10 }}>
-						<div
-							style={{
-								display: 'grid',
-								gridTemplateColumns: '1fr auto',
-								gap: 8,
-							}}
-						>
-							<input
-								value={apptCancelId}
-								onChange={(e) => setApptCancelId(e.target.value)}
-								placeholder='appointmentId to cancel'
-							/>
-							<button disabled={loading} onClick={handleCancelAppointment}>
-								POST /api/appointments/:id/cancel
-							</button>
-						</div>
-					</div>
-
-					<p style={{ marginBottom: 0, opacity: 0.7, marginTop: 10 }}>
-						Nota: “request” es idempotente (1 requested activo). “schedule” solo
-						desde status=requested.
-					</p>
+					<button className='link' disabled={loading} onClick={handleRefreshClaims}>
+						Refrescar claims
+					</button>
 				</div>
 			</div>
+		);
+	}
 
-			<div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-				<h3 style={{ marginTop: 0 }}>Log</h3>
+		function Dashboard() {
+			const role = claims.role;
+			const canClinic =
+				role === 'clinic_admin' || role === 'nutri' || role === 'staff';
+			const isPlatform = role === 'platform_admin';
+			const isPatient = role === 'patient';
 
-				{reversedLogs.length === 0 ? (
-					<p style={{ opacity: 0.7 }}>Sin llamadas todavía.</p>
-				) : (
-					<ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-						{reversedLogs.map((l, idx) => (
-							<li
-								key={idx}
-								style={{
-									padding: '10px 8px',
-									borderBottom: '1px solid #eee',
-									whiteSpace: 'pre-wrap',
-								}}
-							>
-								<div
-									style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}
+		return (
+			<div className='page'>
+				<header className='subheader'>
+					<div>
+						<p className='eyebrow'>Sesión activa</p>
+						<h2>{user?.email ?? 'Sin email'}</h2>
+						<p className='muted'>
+							Rol: <strong>{role ?? 'sin rol'}</strong> — Clínica:{' '}
+							<strong>{claims.clinicId ?? 'n/a'}</strong>
+						</p>
+					</div>
+					<div className='actions'>
+						<button className='btn ghost' disabled={loading} onClick={handleRefreshClaims}>
+							Refrescar claims
+						</button>
+						<button className='btn' disabled={loading} onClick={handleLogout}>
+							Cerrar sesión
+						</button>
+					</div>
+				</header>
+
+				<div className='grid two'>
+					<div className='card'>
+						<h3>Perfil</h3>
+						<p className='muted'>
+							Consultá tu perfil o hacé un ping al backend.
+						</p>
+						<div className='actions'>
+								<button
+									className='btn primary'
+									disabled={loading}
+									onClick={() => handleGetMe()}
 								>
-									<code>{l.ts}</code>
-									<strong>{l.endpoint}</strong>
-									<span style={{ marginLeft: 'auto', fontWeight: 700 }}>
-										{l.ok ? 'OK' : 'ERROR'}
-									</span>
-								</div>
-								{l.payload !== undefined && (
-									<div>
-										<small>payload:</small>{' '}
-										<code>{JSON.stringify(l.payload)}</code>
+									Ver mi perfil
+								</button>
+								<button
+									className='btn'
+									disabled={loading}
+									onClick={() => authedFetch('GET', '/health')}
+								>
+									Ping health
+								</button>
+							</div>
+						</div>
+
+						<div className='card'>
+							<h3>Pacientes</h3>
+							{canClinic || isPlatform ? (
+								<>
+									<div className='grid two'>
+										<label className='field'>
+											<span>Nombre</span>
+											<input
+												value={pName}
+												onChange={(e) => setPName(e.target.value)}
+												placeholder='Nombre y apellido'
+											/>
+										</label>
+										<label className='field'>
+											<span>Teléfono</span>
+											<input
+												value={pPhone}
+												onChange={(e) => setPPhone(e.target.value)}
+												placeholder='+54...'
+											/>
+										</label>
 									</div>
-								)}
-								<div>
-									<small>{l.ok ? 'data:' : 'error:'}</small>{' '}
-									<code>{l.ok ? JSON.stringify(l.data) : l.error}</code>
+									<div className='grid two'>
+										<label className='field'>
+											<span>Email</span>
+											<input
+												value={pEmail}
+												onChange={(e) => setPEmail(e.target.value)}
+												placeholder='correo opcional'
+											/>
+										</label>
+										<label className='field'>
+											<span>Clínica</span>
+											<select
+												value={selectedClinicForNewPatient}
+												onChange={(e) => setSelectedClinicForNewPatient(e.target.value)}
+												disabled={clinicOptions.length === 0}
+											>
+												{clinicOptions.map((cid) => (
+													<option key={cid} value={cid}>
+														{cid}
+													</option>
+												))}
+												{clinicOptions.length === 0 && (
+													<option value=''>Sin opciones cargadas</option>
+												)}
+											</select>
+										</label>
+										<div className='actions end'>
+											<button
+												className='btn primary'
+												disabled={loading}
+												onClick={handleCreatePatient}
+										>
+											Crear paciente
+										</button>
+									</div>
 								</div>
-							</li>
-						))}
-					</ul>
-				)}
+
+									<div className='divider' />
+
+									{patients.length > 0 && (
+										<div className='list'>
+											{patients.map((p, idx) => {
+												const patient = p as Record<string, any>;
+												const selectedNutri =
+													patientAssignSelections[patient.id] ??
+													(patient.assignedNutriUid ?? '');
+												return (
+													<div className='card' key={patient.id ?? idx}>
+														<div className='inline-info'>
+															<div>
+																<strong>{patient.name ?? 'Sin nombre'}</strong>
+																<div className='muted'>{patient.email ?? 'Sin email'}</div>
+															</div>
+															<div>
+																<small>Clínica</small>
+																<div className='muted'>{patient.clinicId ?? '—'}</div>
+															</div>
+														</div>
+														<div className='inline-info'>
+															<div>
+																<small>Teléfono</small>
+																<div className='muted'>{patient.phone ?? '—'}</div>
+															</div>
+															<div>
+																<small>Nutri asignado</small>
+																<div className='muted'>{patient.assignedNutriUid ?? '—'}</div>
+															</div>
+														</div>
+														<div className='actions'>
+															<select
+																value={selectedNutri}
+																onChange={(e) =>
+																	setPatientAssignSelections((prev) => ({
+																		...prev,
+																		[patient.id]: e.target.value,
+																	}))
+																}
+															>
+																<option value=''>Elegí un nutri</option>
+																{knownNutris.map((n) => (
+																	<option key={n} value={n}>
+																		{n}
+																	</option>
+																))}
+															</select>
+															<button
+																className='btn'
+																disabled={loading || !selectedNutri}
+																onClick={() => handleAssignNutri(patient.id)}
+															>
+																Asignar nutri
+															</button>
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
+									<button className='btn ghost' disabled={loading} onClick={handleListPatients}>
+										Refrescar pacientes
+									</button>
+								</>
+							) : (
+								<p className='muted'>Disponible para roles de clínica.</p>
+							)}
+						</div>
+					</div>
+
+					<div className='card'>
+						<h3>Turnos</h3>
+						<p className='muted'>
+							Flujo completo: pedir como paciente, schedule como nutri/clinic_admin,
+							cancelar, completar.
+						</p>
+						{!isPatient && (
+							<p className='muted'>
+								Para solicitar turnos necesitás rol <strong>patient</strong>.
+								Aun así podés programar/cancelar/completar si tu rol lo permite.
+							</p>
+						)}
+						<p className='muted'>
+							Tip: el backend exige que tu usuario esté vinculado a un perfil de paciente en
+							el emulador (linkedUid). Si ves un 500 al solicitar, creá un paciente y
+							linkealo antes de pedir turno.
+						</p>
+						{appointments.length === 0 && (
+							<p className='muted'>
+								No hay turnos aún. Solicitá uno como paciente (con perfil vinculado) y luego
+								podrás elegir fecha y horario en la tarjeta del turno.
+							</p>
+						)}
+						<div className='grid three'>
+							<label className='field'>
+								<span>Seleccioná nutri</span>
+								<select
+									value={apptRequestNutriUid}
+									onChange={(e) => setApptRequestNutriUid(e.target.value)}
+								>
+									{knownNutris.map((n) => (
+										<option key={n} value={n}>
+											{n}
+										</option>
+									))}
+									{knownNutris.length === 0 && (
+										<option value=''>Sin opciones</option>
+									)}
+								</select>
+							</label>
+							<button
+								className='btn primary'
+								disabled={loading || !isPatient || knownNutris.length === 0}
+								onClick={handleRequestAppointment}
+							>
+								Solicitar turno (paciente)
+							</button>
+							<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
+								Listar turnos
+							</button>
+						</div>
+
+						{appointments.length > 0 && (
+							<div className='appointments'>
+								{appointments.map((a, idx) => {
+									const appt = a as Record<string, any>;
+									const sched =
+									scheduleSelections[appt.id] ?? {
+										when: '',
+										nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
+									};
+								const canSchedule =
+									role === 'nutri' || role === 'clinic_admin';
+								const canComplete =
+									role === 'nutri' ||
+									role === 'clinic_admin' ||
+									role === 'platform_admin';
+								return (
+									<div className='appt-card' key={appt.id ?? idx}>
+										<div className='appt-head'>
+											<div>
+												<p className='eyebrow'>Turno</p>
+												<strong>{appt.id ?? 'sin-id'}</strong>
+											</div>
+											<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
+												{appt.status ?? 'sin-status'}
+											</span>
+										</div>
+										<div className='appt-grid'>
+											<div>
+												<small>Clínica</small>
+												<div className='muted'>{appt.clinicId ?? '—'}</div>
+											</div>
+											<div>
+												<small>Paciente</small>
+												<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
+											</div>
+											<div>
+												<small>Nutri</small>
+												<div className='muted'>{appt.nutriUid ?? '—'}</div>
+											</div>
+											<div>
+												<small>Solicitado</small>
+												<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
+											</div>
+											<div>
+												<small>Programado</small>
+												<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
+											</div>
+												<div>
+													<small>Actualizado</small>
+													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
+												</div>
+											</div>
+											{!canSchedule && (
+												<p className='muted' style={{ marginTop: 8 }}>
+													Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.
+												</p>
+											)}
+											<div className='actions wrap'>
+												{canSchedule && (
+													<>
+														<input
+															type='datetime-local'
+														value={sched.when}
+														onChange={(e) =>
+															setScheduleSelections((prev) => ({
+																...prev,
+																[appt.id]: {
+																	...prev[appt.id],
+																	when: e.target.value,
+																	nutri: sched.nutri,
+																},
+															}))
+														}
+													/>
+													<select
+														value={sched.nutri}
+														onChange={(e) =>
+															setScheduleSelections((prev) => ({
+																...prev,
+																[appt.id]: {
+																	...prev[appt.id],
+																	when: sched.when,
+																	nutri: e.target.value,
+																},
+															}))
+														}
+													>
+														<option value=''>Elegí nutri</option>
+														{knownNutris.map((n) => (
+															<option key={n} value={n}>
+																{n}
+															</option>
+														))}
+													</select>
+													<button
+														className='btn'
+														disabled={loading || !sched.when}
+														onClick={() => handleScheduleAppointment(appt.id)}
+													>
+														Programar
+													</button>
+												</>
+											)}
+											<button
+												className='btn ghost'
+												disabled={loading}
+												onClick={() => handleCancelAppointment(appt.id)}
+											>
+												Cancelar
+											</button>
+											{canComplete && (
+												<button
+													className='btn'
+													disabled={loading}
+													onClick={() => handleCompleteAppointment(appt.id)}
+												>
+													Completar
+												</button>
+											)}
+										</div>
+									</div>
+								);
+							})}
+						</div>
+					)}
+				</div>
+
+				<div className='card'>
+					<h3>Log</h3>
+					{reversedLogs.length === 0 ? (
+						<p className='muted'>Sin llamadas todavía.</p>
+					) : (
+						<ul className='log'>
+							{reversedLogs.map((l, idx) => (
+								<li key={idx}>
+									<div className='log-head'>
+										<code>{l.ts}</code>
+										<strong>{l.endpoint}</strong>
+										<span className={l.ok ? 'pill ok' : 'pill error'}>
+											{l.ok ? 'OK' : 'ERROR'}
+										</span>
+									</div>
+									{l.payload !== undefined && (
+										<div className='log-body'>
+											<small>payload</small>{' '}
+											<code>{JSON.stringify(l.payload)}</code>
+										</div>
+									)}
+									<div className='log-body'>
+										<small>{l.ok ? 'data' : 'error'}</small>{' '}
+										<code>{l.ok ? JSON.stringify(l.data) : l.error}</code>
+									</div>
+								</li>
+							))}
+						</ul>
+					)}
+				</div>
 			</div>
+		);
+	}
+
+		return (
+			<div>
+				<nav className='topbar'>
+					<div className='actions'>
+						<Link to='/' className='brand'>
+							Nutri Platform
+						</Link>
+						<span className='badge'>Modo tester (sin Firebase real)</span>
+					</div>
+					<div className='top-actions'>
+						<Link to='/' className='link'>
+							Inicio
+					</Link>
+					<Link to='/dashboard' className='link'>
+						Dashboard
+					</Link>
+					{user ? (
+						<button className='btn ghost sm' onClick={handleLogout} disabled={loading}>
+							Cerrar sesión
+						</button>
+					) : (
+						<Link to='/login' className='btn sm'>
+							Ingresar
+						</Link>
+					)}
+				</div>
+			</nav>
+			<Routes>
+				<Route path='/' element={<Landing />} />
+				<Route path='/login' element={<AuthPage />} />
+				<Route
+					path='/dashboard'
+					element={
+						<ProtectedRoute user={user}>
+							<Dashboard />
+						</ProtectedRoute>
+					}
+				/>
+				<Route path='*' element={<Navigate to='/' />} />
+			</Routes>
 		</div>
 	);
 }
-
