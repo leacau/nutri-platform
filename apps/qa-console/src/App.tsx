@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	createUserWithEmailAndPassword,
 	getIdToken,
@@ -70,6 +70,12 @@ export default function App() {
 	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
 	const [loading, setLoading] = useState(false);
 
+	const emailInputRef = useRef<HTMLInputElement>(null);
+	const passwordInputRef = useRef<HTMLInputElement>(null);
+	const [stickyAuthField, setStickyAuthField] = useState<
+		'email' | 'password' | null
+	>(null);
+
 	const [email, setEmail] = useState('qa1@test.com');
 	const [password, setPassword] = useState('Passw0rd!');
 
@@ -86,14 +92,23 @@ export default function App() {
 
 		// Turnos
 		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-		const [scheduleSelections, setScheduleSelections] = useState<
-			Record<string, { when: string; nutri: string }>
-		>({});
+	const [apptRequestWhen, setApptRequestWhen] = useState('');
+	const [scheduleSelections, setScheduleSelections] = useState<
+		Record<string, { when: string; nutri: string }>
+	>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
 	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
 		useState<string>('');
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
+
+	useEffect(() => {
+		if (stickyAuthField === 'email') {
+			emailInputRef.current?.focus({ preventScroll: true });
+		} else if (stickyAuthField === 'password') {
+			passwordInputRef.current?.focus({ preventScroll: true });
+		}
+	}, [stickyAuthField, email, password]);
 
 	const knownNutris = useMemo(() => {
 		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
@@ -122,6 +137,62 @@ export default function App() {
 		});
 		return Array.from(seed);
 	}, [claims.clinicId, patients, appointments]);
+
+	const roleGuide = useMemo(() => {
+		switch (claims.role) {
+			case 'patient':
+				return {
+					title: 'Cómo usar si sos paciente',
+					items: [
+						'Elegí un nutri y solicitá el turno; si ya sabés día/hora, completalo en el paso 1.',
+						'Si recibís error de perfil no vinculado, creá tu paciente en “Pacientes” y pedile a un rol de clínica que te linkee.',
+						'Luego podés reprogramar o cancelar desde la tarjeta del turno.',
+					],
+				};
+			case 'clinic_admin':
+				return {
+					title: 'Cómo usar si sos clinic_admin',
+					items: [
+						'Creá pacientes y asigná el nutri. Luego programá o reprogramá turnos desde la tarjeta.',
+						'Mantené las claims al día: usá “Refrescar claims” tras cambiarlas en el emulador.',
+						'Podés completar o cancelar turnos de tu clínica respetando la ventana de 24h.',
+					],
+				};
+			case 'nutri':
+				return {
+					title: 'Cómo usar si sos nutri',
+					items: [
+						'Programá tus propios turnos y completalos cuando finalicen.',
+						'Si un turno fue pedido para otro nutri, no podrás reasignarlo: pedí ayuda a clinic_admin.',
+						'Mantené tus pacientes actualizados para que aparezcan en el selector.',
+					],
+				};
+			case 'staff':
+				return {
+					title: 'Cómo usar si sos staff',
+					items: [
+						'Podés crear pacientes y ver datos sanitizados de la clínica.',
+						'Para programar turnos necesitás subir a clinic_admin o nutri.',
+					],
+				};
+			case 'platform_admin':
+				return {
+					title: 'Cómo usar si sos platform_admin',
+					items: [
+						'Podés ver y completar turnos de todas las clínicas.',
+						'Usá los filtros de clínica y asignaciones para validar aislamientos.',
+					],
+				};
+			default:
+				return {
+					title: 'Seleccioná un rol para empezar',
+					items: [
+						'Configurá claims con el endpoint dev/set-claims en el emulador.',
+						'Luego refrescá claims y seguí la guía según tu rol.',
+					],
+				};
+		}
+	}, [claims.role]);
 
 	useEffect(() => {
 		const unsub = onAuthStateChanged(auth, async (u) => {
@@ -359,15 +430,18 @@ export default function App() {
 			if (!apptRequestNutriUid) {
 				pushErr(
 					'/appointments/request',
-					{ apptRequestNutriUid },
+					{ apptRequestNutriUid, apptRequestWhen },
 					'Falta nutriUid para pedir turno'
 				);
 				return;
 			}
 			await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
+				clinicId: claims.clinicId ?? undefined,
+				scheduledForIso: toIsoFromDatetimeLocal(apptRequestWhen) ?? undefined,
 			});
 			await handleListAppointments();
+			setApptRequestWhen('');
 		} finally {
 			setLoading(false);
 		}
@@ -461,8 +535,13 @@ export default function App() {
 					<label className='field'>
 						<span>Email</span>
 						<input
+							ref={emailInputRef}
 							value={email}
-							onChange={(e) => setEmail(e.target.value)}
+							onFocus={() => setStickyAuthField('email')}
+							onChange={(e) => {
+								setStickyAuthField('email');
+								setEmail(e.target.value);
+							}}
 							placeholder='usuario@test.com'
 						/>
 					</label>
@@ -470,8 +549,13 @@ export default function App() {
 						<span>Password</span>
 						<input
 							type='password'
+							ref={passwordInputRef}
 							value={password}
-							onChange={(e) => setPassword(e.target.value)}
+							onFocus={() => setStickyAuthField('password')}
+							onChange={(e) => {
+								setStickyAuthField('password');
+								setPassword(e.target.value);
+							}}
 							placeholder='mínimo 6 caracteres'
 						/>
 					</label>
@@ -533,6 +617,15 @@ export default function App() {
 						</button>
 					</div>
 				</header>
+
+				<div className='card'>
+					<h3>{roleGuide.title}</h3>
+					<ul className='muted' style={{ marginTop: 8, paddingLeft: 18 }}>
+						{roleGuide.items.map((tip, idx) => (
+							<li key={idx}>{tip}</li>
+						))}
+					</ul>
+				</div>
 
 				<div className='grid two'>
 					<div className='card'>
@@ -728,6 +821,14 @@ export default function App() {
 									)}
 								</select>
 							</label>
+							<label className='field'>
+								<span>Fecha y hora (opcional)</span>
+								<input
+									type='datetime-local'
+									value={apptRequestWhen}
+									onChange={(e) => setApptRequestWhen(e.target.value)}
+								/>
+							</label>
 							<button
 								className='btn primary'
 								disabled={loading || !isPatient || knownNutris.length === 0}
@@ -745,48 +846,51 @@ export default function App() {
 								{appointments.map((a, idx) => {
 									const appt = a as Record<string, any>;
 									const sched =
-									scheduleSelections[appt.id] ?? {
-										when: '',
-										nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
-									};
-								const canSchedule =
-									role === 'nutri' || role === 'clinic_admin';
-								const canComplete =
-									role === 'nutri' ||
-									role === 'clinic_admin' ||
-									role === 'platform_admin';
-								return (
-									<div className='appt-card' key={appt.id ?? idx}>
-										<div className='appt-head'>
-											<div>
-												<p className='eyebrow'>Turno</p>
-												<strong>{appt.id ?? 'sin-id'}</strong>
+										scheduleSelections[appt.id] ?? {
+											when: '',
+											nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
+										};
+									const canSchedule =
+										role === 'nutri' ||
+										role === 'clinic_admin' ||
+										(role === 'patient' && appt.patientUid === user?.uid);
+									const canComplete =
+										role === 'nutri' ||
+										role === 'clinic_admin' ||
+										role === 'platform_admin';
+									const lockNutri = role === 'patient';
+									return (
+										<div className='appt-card' key={appt.id ?? idx}>
+											<div className='appt-head'>
+												<div>
+													<p className='eyebrow'>Turno</p>
+													<strong>{appt.id ?? 'sin-id'}</strong>
+												</div>
+												<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
+													{appt.status ?? 'sin-status'}
+												</span>
 											</div>
-											<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
-												{appt.status ?? 'sin-status'}
-											</span>
-										</div>
-										<div className='appt-grid'>
-											<div>
-												<small>Clínica</small>
-												<div className='muted'>{appt.clinicId ?? '—'}</div>
-											</div>
-											<div>
-												<small>Paciente</small>
-												<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
-											</div>
-											<div>
-												<small>Nutri</small>
-												<div className='muted'>{appt.nutriUid ?? '—'}</div>
-											</div>
-											<div>
-												<small>Solicitado</small>
-												<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
-											</div>
-											<div>
-												<small>Programado</small>
-												<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
-											</div>
+											<div className='appt-grid'>
+												<div>
+													<small>Clínica</small>
+													<div className='muted'>{appt.clinicId ?? '—'}</div>
+												</div>
+												<div>
+													<small>Paciente</small>
+													<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
+												</div>
+												<div>
+													<small>Nutri</small>
+													<div className='muted'>{appt.nutriUid ?? '—'}</div>
+												</div>
+												<div>
+													<small>Solicitado</small>
+													<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
+												</div>
+												<div>
+													<small>Programado</small>
+													<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
+												</div>
 												<div>
 													<small>Actualizado</small>
 													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
@@ -794,7 +898,9 @@ export default function App() {
 											</div>
 											{!canSchedule && (
 												<p className='muted' style={{ marginTop: 8 }}>
-													Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.
+													{role === 'patient'
+														? 'Solo podés programar turnos que solicitaste vos.'
+														: 'Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.'}
 												</p>
 											)}
 											<div className='actions wrap'>
@@ -802,70 +908,71 @@ export default function App() {
 													<>
 														<input
 															type='datetime-local'
-														value={sched.when}
-														onChange={(e) =>
-															setScheduleSelections((prev) => ({
-																...prev,
-																[appt.id]: {
-																	...prev[appt.id],
-																	when: e.target.value,
-																	nutri: sched.nutri,
-																},
-															}))
-														}
-													/>
-													<select
-														value={sched.nutri}
-														onChange={(e) =>
-															setScheduleSelections((prev) => ({
-																...prev,
-																[appt.id]: {
-																	...prev[appt.id],
-																	when: sched.when,
-																	nutri: e.target.value,
-																},
-															}))
-														}
-													>
-														<option value=''>Elegí nutri</option>
-														{knownNutris.map((n) => (
-															<option key={n} value={n}>
-																{n}
-															</option>
-														))}
-													</select>
+															value={sched.when}
+															onChange={(e) =>
+																setScheduleSelections((prev) => ({
+																	...prev,
+																	[appt.id]: {
+																		...prev[appt.id],
+																		when: e.target.value,
+																		nutri: sched.nutri,
+																	},
+																}))
+															}
+														/>
+														<select
+															value={sched.nutri}
+															disabled={lockNutri}
+															onChange={(e) =>
+																setScheduleSelections((prev) => ({
+																	...prev,
+																	[appt.id]: {
+																		...prev[appt.id],
+																		when: sched.when,
+																		nutri: e.target.value,
+																	},
+																}))
+															}
+														>
+															<option value=''>Elegí nutri</option>
+															{knownNutris.map((n) => (
+																<option key={n} value={n}>
+																	{n}
+																</option>
+															))}
+														</select>
+														<button
+															className='btn'
+															disabled={loading || !sched.when}
+															onClick={() => handleScheduleAppointment(appt.id)}
+														>
+															Programar
+														</button>
+													</>
+												)}
+												<button
+													className='btn ghost'
+													disabled={loading}
+													onClick={() => handleCancelAppointment(appt.id)}
+												>
+													Cancelar
+												</button>
+												{canComplete && (
 													<button
 														className='btn'
-														disabled={loading || !sched.when}
-														onClick={() => handleScheduleAppointment(appt.id)}
+														disabled={loading}
+														onClick={() => handleCompleteAppointment(appt.id)}
 													>
-														Programar
+														Completar
 													</button>
-												</>
-											)}
-											<button
-												className='btn ghost'
-												disabled={loading}
-												onClick={() => handleCancelAppointment(appt.id)}
-											>
-												Cancelar
-											</button>
-											{canComplete && (
-												<button
-													className='btn'
-													disabled={loading}
-													onClick={() => handleCompleteAppointment(appt.id)}
-												>
-													Completar
-												</button>
-											)}
+												)}
+											</div>
 										</div>
-									</div>
-								);
-							})}
-						</div>
-					)}
-				</div>
+									);
+								})}
+							</div>
+						)}
+					</div>
 
 				<div className='card'>
 					<h3>Log</h3>
