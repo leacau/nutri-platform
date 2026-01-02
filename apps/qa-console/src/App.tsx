@@ -76,16 +76,17 @@ export default function App() {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 
 	// Pacientes
-		const [pName, setPName] = useState('Juan Perez');
-		const [pEmail, setPEmail] = useState('juan@test.com');
-		const [pPhone, setPPhone] = useState('+549341000000');
-		const [patientAssignSelections, setPatientAssignSelections] = useState<
-			Record<string, string>
-		>({});
-		const [patients, setPatients] = useState<unknown[]>([]);
+	const [pName, setPName] = useState('Juan Perez');
+	const [pEmail, setPEmail] = useState('juan@test.com');
+	const [pPhone, setPPhone] = useState('+549341000000');
+	const [patientAssignSelections, setPatientAssignSelections] = useState<
+		Record<string, string>
+	>({});
+	const [patients, setPatients] = useState<unknown[]>([]);
 
-		// Turnos
-		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+	// Turnos
+	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+	const [apptRequestWhen, setApptRequestWhen] = useState('');
 	const [scheduleSelections, setScheduleSelections] = useState<
 		Record<string, { when: string; nutri: string }>
 	>({});
