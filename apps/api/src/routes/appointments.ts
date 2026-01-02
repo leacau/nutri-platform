@@ -46,6 +46,8 @@ const router = Router();
 const requestBodySchema = z
 	.object({
 		nutriUid: z.string().min(1),
+		scheduledForIso: z.string().min(10).optional(),
+		clinicId: z.string().min(1).optional(),
 	})
 	.strict();
 
@@ -168,7 +170,18 @@ router.post(
 			});
 		}
 
-		const { nutriUid } = parsed.data;
+		const { nutriUid, scheduledForIso, clinicId: clinicIdFromBody } =
+			parsed.data;
+
+		if (
+			typeof scheduledForIso === 'string' &&
+			!Number.isFinite(Date.parse(scheduledForIso))
+		) {
+			return res.status(400).json({
+				success: false,
+				message: 'scheduledForIso must be a valid ISO date string',
+			});
+		}
 
 		const { firestore } = getFirebaseAdmin();
 
@@ -199,7 +212,7 @@ router.post(
 			});
 		}
 
-		let patientProfile: { patientId: string; clinicId: string };
+		let patientProfile: { patientId: string; clinicId: string } | null = null;
 		try {
 			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
 		} catch (err) {
@@ -213,21 +226,30 @@ router.post(
 					: 'Unknown error resolving patient profile';
 			return res.status(statusCode).json({ success: false, message });
 		}
-		const { patientId, clinicId } = patientProfile;
+		const patientId = patientProfile?.patientId ?? `unlinked:${ctx.uid}`;
+		const clinicId =
+			patientProfile?.clinicId ??
+			clinicIdFromBody ??
+			ctx.clinicId ??
+			'self-service';
 
 		// (Opcional) Hard guard: verificar que el nutri pertenece a la misma clínica.
 		// Hoy no tenemos colección nutris, así que lo dejamos para la próxima iteración.
 
 		const now = Timestamp.now();
+		const scheduledTimestamp =
+			scheduledForIso && Number.isFinite(Date.parse(scheduledForIso))
+				? Timestamp.fromMillis(Date.parse(scheduledForIso))
+				: null;
 
 		const doc: AppointmentDoc = {
 			clinicId,
 			patientId,
 			patientUid: ctx.uid,
 			nutriUid,
-			status: 'requested',
+			status: scheduledTimestamp ? 'scheduled' : 'requested',
 			requestedAt: now,
-			scheduledFor: null,
+			scheduledFor: scheduledTimestamp,
 			cancelledAt: null,
 			cancelledByUid: null,
 			cancelledByRole: null,
@@ -242,7 +264,7 @@ router.post(
 
 		return res.status(201).json({
 			success: true,
-			message: 'Appointment requested',
+			message: scheduledTimestamp ? 'Appointment scheduled' : 'Appointment requested',
 			data: { id: ref.id, ...doc },
 		});
 	}

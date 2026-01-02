@@ -397,13 +397,15 @@ export default function App() {
 			if (!apptRequestNutriUid) {
 				pushErr(
 					'/appointments/request',
-					{ apptRequestNutriUid },
+					{ apptRequestNutriUid, apptRequestWhen },
 					'Falta nutriUid para pedir turno'
 				);
 				return;
 			}
 			const result = await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
+				clinicId: claims.clinicId ?? undefined,
+				scheduledForIso: toIsoFromDatetimeLocal(apptRequestWhen) ?? undefined,
 			});
 			if (result.ok) {
 				setLinkRequired({ active: false, reason: '' });
@@ -884,6 +886,14 @@ export default function App() {
 										<option value=''>Sin opciones</option>
 									)}
 								</select>
+							</label>
+							<label className='field'>
+								<span>Fecha y hora (opcional)</span>
+								<input
+									type='datetime-local'
+									value={apptRequestWhen}
+									onChange={(e) => setApptRequestWhen(e.target.value)}
+								/>
 							</label>
 							<button
 								className='btn primary'
