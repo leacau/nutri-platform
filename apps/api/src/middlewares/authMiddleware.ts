@@ -38,8 +38,8 @@ export async function authMiddleware(
 		const ctx: AuthContext = {
 			uid: decoded.uid,
 			email: decoded.email ?? null,
-			role,
-			clinicId,
+			...(role ? { role } : {}),
+			...(clinicId ? { clinicId } : {}),
 		};
 
 		req.auth = ctx;
