@@ -82,14 +82,19 @@ export default function App() {
 	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
 	const [loading, setLoading] = useState(false);
 
-	const emailInputRef = useRef<HTMLInputElement>(null);
-	const passwordInputRef = useRef<HTMLInputElement>(null);
-	const [stickyAuthField, setStickyAuthField] = useState<
-		'email' | 'password' | null
-	>(null);
+	const authFieldRefs = useRef<{ email: HTMLInputElement | null; password: HTMLInputElement | null }>(
+		{ email: null, password: null }
+	);
+	const [stickyAuthField, setStickyAuthField] = useState<'email' | 'password' | null>(null);
 
 	const [email, setEmail] = useState('qa1@test.com');
 	const [password, setPassword] = useState('Passw0rd!');
+	const [showPassword, setShowPassword] = useState(false);
+	const [authPending, setAuthPending] = useState(false);
+	const [authActionError, setAuthActionError] = useState<string | null>(null);
+	const [emailError, setEmailError] = useState<string | null>(null);
+	const [passwordError, setPasswordError] = useState<string | null>(null);
+	const [authErrors, setAuthErrors] = useState<string[]>([]);
 
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 
@@ -124,12 +129,17 @@ export default function App() {
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 
 	useEffect(() => {
-		if (stickyAuthField === 'email') {
-			emailInputRef.current?.focus({ preventScroll: true });
-		} else if (stickyAuthField === 'password') {
-			passwordInputRef.current?.focus({ preventScroll: true });
-		}
-	}, [stickyAuthField, email, password]);
+		const ref = stickyAuthField ? authFieldRefs.current[stickyAuthField] : null;
+		ref?.focus({ preventScroll: true });
+	}, [stickyAuthField]);
+
+	useEffect(() => {
+		const inlineErrors: string[] = [];
+		if (emailError) inlineErrors.push(emailError);
+		if (passwordError) inlineErrors.push(passwordError);
+		if (authActionError) inlineErrors.push(authActionError);
+		setAuthErrors(inlineErrors);
+	}, [emailError, passwordError, authActionError]);
 
 	const knownNutris = useMemo(() => {
 		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
@@ -320,37 +330,66 @@ export default function App() {
 		return { ok: true, status: res.status, data };
 	}
 
+	function getEmailError(value: string) {
+		if (!value.trim()) return 'Ingresá un email';
+		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+		if (!emailRegex.test(value.trim())) return 'Ingresá un email válido';
+		return null;
+	}
+
+	function getPasswordError(value: string) {
+		if (!value) return 'Ingresá una contraseña';
+		if (value.length < 6) return 'La contraseña debe tener al menos 6 caracteres';
+		return null;
+	}
+
+	function validateAuthForm() {
+		const emailIssue = getEmailError(email);
+		const passwordIssue = getPasswordError(password);
+		setEmailError(emailIssue);
+		setPasswordError(passwordIssue);
+		if (emailIssue) setStickyAuthField('email');
+		else if (passwordIssue) setStickyAuthField('password');
+		return !emailIssue && !passwordIssue;
+	}
+
 	async function handleLogin() {
+		if (!validateAuthForm()) return;
 		setLoading(true);
+		setAuthPending(true);
+		setAuthActionError(null);
 		try {
 			const cred = await signInWithEmailAndPassword(auth, email, password);
 			pushOk('auth/login', { email }, { uid: cred.user.uid });
 			navigate('/dashboard');
 		} catch (err) {
-			pushErr(
-				'auth/login',
-				{ email },
-				err instanceof Error ? err.message : 'Error desconocido'
-			);
+			const msg = err instanceof Error ? err.message : 'Error desconocido';
+			setAuthActionError(msg);
+			pushErr('auth/login', { email }, msg);
+			setStickyAuthField('email');
 		} finally {
 			setLoading(false);
+			setAuthPending(false);
 		}
 	}
 
 	async function handleRegister() {
+		if (!validateAuthForm()) return;
 		setLoading(true);
+		setAuthPending(true);
+		setAuthActionError(null);
 		try {
 			const cred = await createUserWithEmailAndPassword(auth, email, password);
 			pushOk('auth/register', { email }, { uid: cred.user.uid });
 			navigate('/dashboard');
 		} catch (err) {
-			pushErr(
-				'auth/register',
-				{ email },
-				err instanceof Error ? err.message : 'Error desconocido'
-			);
+			const msg = err instanceof Error ? err.message : 'Error desconocido';
+			setAuthActionError(msg);
+			pushErr('auth/register', { email }, msg);
+			setStickyAuthField('email');
 		} finally {
 			setLoading(false);
+			setAuthPending(false);
 		}
 	}
 
@@ -738,42 +777,76 @@ export default function App() {
 					producción.
 				</p>
 				<div className='card'>
+					{authErrors.length > 0 && (
+						<div className='error-summary' role='alert' aria-live='assertive'>
+							<p><strong>Revisá los siguientes puntos:</strong></p>
+							<ul>
+								{authErrors.map((err, idx) => (
+									<li key={idx}>{err}</li>
+								))}
+							</ul>
+						</div>
+					)}
 					<label className='field'>
 						<span>Email</span>
 						<input
-							ref={emailInputRef}
+							ref={(el) => (authFieldRefs.current.email = el)}
 							value={email}
 							onFocus={() => setStickyAuthField('email')}
 							onChange={(e) => {
 								setStickyAuthField('email');
 								setEmail(e.target.value);
+								setAuthActionError(null);
+								setEmailError(getEmailError(e.target.value));
 							}}
 							placeholder='usuario@test.com'
 						/>
+						{emailError && <p className='error-text'>{emailError}</p>}
 					</label>
 					<label className='field'>
 						<span>Password</span>
 						<input
-							type='password'
-							ref={passwordInputRef}
+							type={showPassword ? 'text' : 'password'}
+							ref={(el) => (authFieldRefs.current.password = el)}
 							value={password}
 							onFocus={() => setStickyAuthField('password')}
 							onChange={(e) => {
 								setStickyAuthField('password');
 								setPassword(e.target.value);
+								setAuthActionError(null);
+								setPasswordError(getPasswordError(e.target.value));
 							}}
 							placeholder='mínimo 6 caracteres'
 						/>
+						<div className='field-inline'>
+							<label className='toggle'>
+								<input
+									type='checkbox'
+									checked={showPassword}
+									onChange={(e) => setShowPassword(e.target.checked)}
+								/>
+								<span>Mostrar contraseña</span>
+							</label>
+						</div>
+						{passwordError && <p className='error-text'>{passwordError}</p>}
 					</label>
 					<div className='actions'>
-						<button className='btn primary' disabled={loading} onClick={handleLogin}>
-							Login
+						<button
+							className={`btn primary ${authPending ? 'is-loading' : ''}`}
+							disabled={loading || authPending}
+							onClick={handleLogin}
+						>
+							{authPending ? 'Ingresando…' : 'Login'}
 						</button>
-						<button className='btn' disabled={loading} onClick={handleRegister}>
-							Registrar
+						<button
+							className={`btn ${authPending ? 'is-loading' : ''}`}
+							disabled={loading || authPending}
+							onClick={handleRegister}
+						>
+							{authPending ? 'Creando…' : 'Registrar'}
 						</button>
 						{user && (
-							<button className='btn ghost' disabled={loading} onClick={handleLogout}>
+							<button className='btn ghost' disabled={loading || authPending} onClick={handleLogout}>
 								Logout
 							</button>
 						)}
