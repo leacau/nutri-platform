@@ -21,3 +21,4 @@ coverage/
 logs/
 *.log
 *.tsbuildinfo
+firebase-export-*/

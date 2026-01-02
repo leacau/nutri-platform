@@ -33,6 +33,10 @@ export type AppointmentDoc = {
 	cancelledByUid: string | null;
 	cancelledByRole: Role | null;
 
+	completedAt: FirebaseFirestore.Timestamp | null;
+	completedByUid: string | null;
+	completedByRole: Role | null;
+
 	createdAt: FirebaseFirestore.Timestamp;
 	updatedAt: FirebaseFirestore.Timestamp;
 };
@@ -42,6 +46,8 @@ const router = Router();
 const requestBodySchema = z
 	.object({
 		nutriUid: z.string().min(1),
+		scheduledForIso: z.string().min(10).optional(),
+		clinicId: z.string().min(1).optional(),
 	})
 	.strict();
 
@@ -81,7 +87,7 @@ async function getPatientProfileByUid(
 		});
 	}
 
-	const doc = snap.docs[0];
+	const doc = snap.docs[0]!;
 	const data = doc.data() as { clinicId?: unknown };
 
 	if (typeof data.clinicId !== 'string' || !data.clinicId) {
@@ -152,7 +158,18 @@ router.post(
 			});
 		}
 
-		const { nutriUid } = parsed.data;
+		const { nutriUid, scheduledForIso, clinicId: clinicIdFromBody } =
+			parsed.data;
+
+		if (
+			typeof scheduledForIso === 'string' &&
+			!Number.isFinite(Date.parse(scheduledForIso))
+		) {
+			return res.status(400).json({
+				success: false,
+				message: 'scheduledForIso must be a valid ISO date string',
+			});
+		}
 
 		const { firestore } = getFirebaseAdmin();
 
@@ -176,27 +193,51 @@ router.post(
 			});
 		}
 
-		const { patientId, clinicId } = await getPatientProfileByUid(
-			firestore,
-			ctx.uid
-		);
+		let patientProfile: { patientId: string; clinicId: string } | null = null;
+		try {
+			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
+		} catch (err) {
+			// Si no está linkeado, seguimos creando el turno pero marcamos el origen.
+			if ((err as any)?.message !== 'Patient profile not linked') {
+				const statusCode =
+					typeof (err as any)?.statusCode === 'number'
+						? (err as any).statusCode
+						: 500;
+				const message =
+					err instanceof Error ? err.message : 'Unknown error resolving patient';
+				return res.status(statusCode).json({ success: false, message });
+			}
+		}
+		const patientId = patientProfile?.patientId ?? `unlinked:${ctx.uid}`;
+		const clinicId =
+			patientProfile?.clinicId ??
+			clinicIdFromBody ??
+			ctx.clinicId ??
+			'self-service';
 
 		// (Opcional) Hard guard: verificar que el nutri pertenece a la misma clínica.
 		// Hoy no tenemos colección nutris, así que lo dejamos para la próxima iteración.
 
 		const now = Timestamp.now();
+		const scheduledTimestamp =
+			scheduledForIso && Number.isFinite(Date.parse(scheduledForIso))
+				? Timestamp.fromMillis(Date.parse(scheduledForIso))
+				: null;
 
 		const doc: AppointmentDoc = {
 			clinicId,
 			patientId,
 			patientUid: ctx.uid,
 			nutriUid,
-			status: 'requested',
+			status: scheduledTimestamp ? 'scheduled' : 'requested',
 			requestedAt: now,
-			scheduledFor: null,
+			scheduledFor: scheduledTimestamp,
 			cancelledAt: null,
 			cancelledByUid: null,
 			cancelledByRole: null,
+			completedAt: null,
+			completedByUid: null,
+			completedByRole: null,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -205,7 +246,7 @@ router.post(
 
 		return res.status(201).json({
 			success: true,
-			message: 'Appointment requested',
+			message: scheduledTimestamp ? 'Appointment scheduled' : 'Appointment requested',
 			data: { id: ref.id, ...doc },
 		});
 	}
@@ -213,18 +254,31 @@ router.post(
 
 /**
  * POST /api/appointments/:id/schedule
- * - clinic_admin/nutri
- * - clinic scoped
+ * - clinic_admin/nutri/patient
+ * - clinic scoped para roles de clínica, paciente solo propias citas
  * - solo desde requested
  * - respeta nutriUid del request salvo clinic_admin (puede cambiar)
  */
 router.post(
 	'/:id/schedule',
 	authMiddleware,
-	requireRole('clinic_admin', 'nutri'),
-	requireClinicContext,
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
+		const role = (ctx.role as Role | null) ?? null;
+
+		if (!role) {
+			return res
+				.status(403)
+				.json({ success: false, message: 'Missing role claim' });
+		}
+
+		const allowedRoles: Role[] = ['clinic_admin', 'nutri', 'patient'];
+		if (!allowedRoles.includes(role)) {
+			return res.status(403).json({
+				success: false,
+				message: 'Only clinic or patient roles can schedule appointments',
+			});
+		}
 
 		const parsedParams = scheduleParamsSchema.safeParse(req.params);
 		if (!parsedParams.success) {
@@ -245,14 +299,14 @@ router.post(
 		}
 
 		const clinicId = ctx.clinicId;
-		if (!clinicId) {
+		if (!clinicId && role !== 'patient') {
 			return res
 				.status(403)
 				.json({ success: false, message: 'Missing clinicId claim' });
 		}
 
 		// guard: si schedule lo hace un nutri, solo puede schedule para sí mismo
-		if (ctx.role === 'nutri' && parsedBody.data.nutriUid !== ctx.uid) {
+		if (role === 'nutri' && parsedBody.data.nutriUid !== ctx.uid) {
 			return res.status(403).json({
 				success: false,
 				message: 'nutri can only schedule appointments for own uid',
@@ -281,11 +335,21 @@ router.post(
 
 			const appt = snap.data() as AppointmentDoc;
 
-			// clinic isolation
-			if (appt.clinicId !== clinicId) {
+			// clinic isolation (paciente no requiere clinicId en claim)
+			if (role !== 'patient') {
+				if (appt.clinicId !== clinicId) {
+					return {
+						http: 403 as const,
+						body: { success: false, message: 'Forbidden' },
+					};
+				}
+			} else if (appt.patientUid !== ctx.uid) {
 				return {
 					http: 403 as const,
-					body: { success: false, message: 'Forbidden' },
+					body: {
+						success: false,
+						message: 'Patients can only schedule own appointments',
+					},
 				};
 			}
 
@@ -337,7 +401,7 @@ router.post(
 			}
 
 			// Regla: si el request ya tiene nutriUid, un nutri NO puede cambiarlo
-			if (ctx.role === 'nutri') {
+			if (role === 'nutri') {
 				if (appt.nutriUid !== ctx.uid) {
 					return {
 						http: 403 as const,
@@ -347,6 +411,19 @@ router.post(
 						},
 					};
 				}
+			}
+			if (
+				role === 'patient' &&
+				appt.nutriUid &&
+				appt.nutriUid !== parsedBody.data.nutriUid
+			) {
+				return {
+					http: 403 as const,
+					body: {
+						success: false,
+						message: 'Patients cannot change the assigned nutri when scheduling',
+					},
+				};
 			}
 
 			// clinic_admin puede reasignar (si querés bloquearlo, lo cambiamos después)
@@ -551,6 +628,118 @@ router.post(
 					success: true,
 					message: 'Cancelled',
 					data: { id, ...appt, ...updated },
+				},
+			};
+		});
+
+		return res.status(result.http).json(result.body);
+	}
+);
+
+/**
+ * POST /api/appointments/:id/complete
+ * - clinic_admin/nutri: solo dentro de su clínica
+ * - nutri: únicamente si es el mismo asignado
+ * - platform_admin: puede completar cualquier cita
+ */
+router.post(
+	'/:id/complete',
+	authMiddleware,
+	requireRole('clinic_admin', 'nutri', 'platform_admin'),
+	async (req: Request, res: Response) => {
+		const ctx = mustAuth(req);
+		const role = ctx.role!;
+
+		const parsedParams = scheduleParamsSchema.safeParse(req.params);
+		if (!parsedParams.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid params',
+				errors: parsedParams.error.flatten(),
+			});
+		}
+
+		const { firestore } = getFirebaseAdmin();
+		const ref = firestore.collection('appointments').doc(parsedParams.data.id);
+
+		const result = await firestore.runTransaction(async (tx) => {
+			const snap = await tx.get(ref);
+			if (!snap.exists) {
+				return {
+					http: 404 as const,
+					body: { success: false, message: 'Appointment not found' },
+				};
+			}
+
+			const appt = snap.data() as AppointmentDoc;
+
+			// Aislamiento por clínica (excepto platform_admin)
+			if (role !== 'platform_admin') {
+				const clinicId = ctx.clinicId;
+				if (!clinicId) {
+					return {
+						http: 403 as const,
+						body: { success: false, message: 'Missing clinicId claim' },
+					};
+				}
+				if (appt.clinicId !== clinicId) {
+					return {
+						http: 403 as const,
+						body: { success: false, message: 'Forbidden' },
+					};
+				}
+			}
+
+			if (appt.status === 'cancelled') {
+				return {
+					http: 409 as const,
+					body: { success: false, message: 'Cannot complete a cancelled appointment' },
+				};
+			}
+
+			if (appt.status === 'completed') {
+				return {
+					http: 200 as const,
+					body: {
+						success: true,
+						message: 'Already completed',
+						data: { id: snap.id, ...appt },
+					},
+				};
+			}
+
+			if (appt.status !== 'scheduled') {
+				return {
+					http: 409 as const,
+					body: { success: false, message: 'Only scheduled appointments can be completed' },
+				};
+			}
+
+			// Nutri solo completa si es el asignado
+			if (role === 'nutri' && appt.nutriUid !== ctx.uid) {
+				return {
+					http: 403 as const,
+					body: { success: false, message: 'nutri can only complete own appointments' },
+				};
+			}
+
+			const now = Timestamp.now();
+			const updated: Partial<AppointmentDoc> = {
+				status: 'completed',
+				completedAt: now,
+				completedByUid: ctx.uid,
+				completedByRole: role as Role,
+				updatedAt: now,
+			};
+
+			tx.update(ref, updated);
+
+			return {
+				http: 200 as const,
+				body: {
+					success: true,
+					message: 'Completed',
+					data: { id: snap.id, ...appt, ...updated },
 				},
 			};
 		});
