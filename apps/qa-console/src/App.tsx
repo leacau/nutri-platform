@@ -86,6 +86,7 @@ export default function App() {
 
 		// Turnos
 		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+		const [apptRequestWhen, setApptRequestWhen] = useState('');
 		const [scheduleSelections, setScheduleSelections] = useState<
 			Record<string, { when: string; nutri: string }>
 		>({});
@@ -359,15 +360,18 @@ export default function App() {
 			if (!apptRequestNutriUid) {
 				pushErr(
 					'/appointments/request',
-					{ apptRequestNutriUid },
+					{ apptRequestNutriUid, apptRequestWhen },
 					'Falta nutriUid para pedir turno'
 				);
 				return;
 			}
 			await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
+				clinicId: claims.clinicId ?? undefined,
+				scheduledForIso: toIsoFromDatetimeLocal(apptRequestWhen) ?? undefined,
 			});
 			await handleListAppointments();
+			setApptRequestWhen('');
 		} finally {
 			setLoading(false);
 		}
@@ -727,6 +731,14 @@ export default function App() {
 										<option value=''>Sin opciones</option>
 									)}
 								</select>
+							</label>
+							<label className='field'>
+								<span>Fecha y hora (opcional)</span>
+								<input
+									type='datetime-local'
+									value={apptRequestWhen}
+									onChange={(e) => setApptRequestWhen(e.target.value)}
+								/>
 							</label>
 							<button
 								className='btn primary'
