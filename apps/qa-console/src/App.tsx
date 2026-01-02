@@ -82,6 +82,12 @@ export default function App() {
 	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
 	const [loading, setLoading] = useState(false);
 
+	const emailInputRef = useRef<HTMLInputElement>(null);
+	const passwordInputRef = useRef<HTMLInputElement>(null);
+	const [stickyAuthField, setStickyAuthField] = useState<
+		'email' | 'password' | null
+	>(null);
+
 	const [email, setEmail] = useState('qa1@test.com');
 	const [password, setPassword] = useState('Passw0rd!');
 
@@ -117,6 +123,14 @@ export default function App() {
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 
+	useEffect(() => {
+		if (stickyAuthField === 'email') {
+			emailInputRef.current?.focus({ preventScroll: true });
+		} else if (stickyAuthField === 'password') {
+			passwordInputRef.current?.focus({ preventScroll: true });
+		}
+	}, [stickyAuthField, email, password]);
+
 	const knownNutris = useMemo(() => {
 		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
 		if (claims.role === 'nutri' && user?.uid) seed.add(user.uid);
@@ -144,6 +158,62 @@ export default function App() {
 		});
 		return Array.from(seed);
 	}, [claims.clinicId, patients, appointments]);
+
+	const roleGuide = useMemo(() => {
+		switch (claims.role) {
+			case 'patient':
+				return {
+					title: 'Cómo usar si sos paciente',
+					items: [
+						'Elegí un nutri y solicitá el turno; si ya sabés día/hora, completalo en el paso 1.',
+						'Si recibís error de perfil no vinculado, creá tu paciente en “Pacientes” y pedile a un rol de clínica que te linkee.',
+						'Luego podés reprogramar o cancelar desde la tarjeta del turno.',
+					],
+				};
+			case 'clinic_admin':
+				return {
+					title: 'Cómo usar si sos clinic_admin',
+					items: [
+						'Creá pacientes y asigná el nutri. Luego programá o reprogramá turnos desde la tarjeta.',
+						'Mantené las claims al día: usá “Refrescar claims” tras cambiarlas en el emulador.',
+						'Podés completar o cancelar turnos de tu clínica respetando la ventana de 24h.',
+					],
+				};
+			case 'nutri':
+				return {
+					title: 'Cómo usar si sos nutri',
+					items: [
+						'Programá tus propios turnos y completalos cuando finalicen.',
+						'Si un turno fue pedido para otro nutri, no podrás reasignarlo: pedí ayuda a clinic_admin.',
+						'Mantené tus pacientes actualizados para que aparezcan en el selector.',
+					],
+				};
+			case 'staff':
+				return {
+					title: 'Cómo usar si sos staff',
+					items: [
+						'Podés crear pacientes y ver datos sanitizados de la clínica.',
+						'Para programar turnos necesitás subir a clinic_admin o nutri.',
+					],
+				};
+			case 'platform_admin':
+				return {
+					title: 'Cómo usar si sos platform_admin',
+					items: [
+						'Podés ver y completar turnos de todas las clínicas.',
+						'Usá los filtros de clínica y asignaciones para validar aislamientos.',
+					],
+				};
+			default:
+				return {
+					title: 'Seleccioná un rol para empezar',
+					items: [
+						'Configurá claims con el endpoint dev/set-claims en el emulador.',
+						'Luego refrescá claims y seguí la guía según tu rol.',
+					],
+				};
+		}
+	}, [claims.role]);
 
 	useEffect(() => {
 		const unsub = onAuthStateChanged(auth, async (u) => {
@@ -671,8 +741,13 @@ export default function App() {
 					<label className='field'>
 						<span>Email</span>
 						<input
+							ref={emailInputRef}
 							value={email}
-							onChange={(e) => setEmail(e.target.value)}
+							onFocus={() => setStickyAuthField('email')}
+							onChange={(e) => {
+								setStickyAuthField('email');
+								setEmail(e.target.value);
+							}}
 							placeholder='usuario@test.com'
 						/>
 					</label>
@@ -680,8 +755,13 @@ export default function App() {
 						<span>Password</span>
 						<input
 							type='password'
+							ref={passwordInputRef}
 							value={password}
-							onChange={(e) => setPassword(e.target.value)}
+							onFocus={() => setStickyAuthField('password')}
+							onChange={(e) => {
+								setStickyAuthField('password');
+								setPassword(e.target.value);
+							}}
 							placeholder='mínimo 6 caracteres'
 						/>
 					</label>
@@ -743,6 +823,15 @@ export default function App() {
 						</button>
 					</div>
 				</header>
+
+				<div className='card'>
+					<h3>{roleGuide.title}</h3>
+					<ul className='muted' style={{ marginTop: 8, paddingLeft: 18 }}>
+						{roleGuide.items.map((tip, idx) => (
+							<li key={idx}>{tip}</li>
+						))}
+					</ul>
+				</div>
 
 				<div className='grid two'>
 					<div className='card'>
