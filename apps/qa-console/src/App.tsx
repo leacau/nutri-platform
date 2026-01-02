@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useRef, useEffect, useMemo, useState, type ReactElement } from 'react';
 import {
 	createUserWithEmailAndPassword,
 	getIdToken,
