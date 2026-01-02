@@ -167,7 +167,7 @@ async function getPatientProfileByUid(
 	if (snap.empty) {
 		throw Object.assign(
 			new Error(
-				'Patient profile not linked to this user. Create and link a patient before requesting appointments.'
+				'Este usuario no tiene un paciente vinculado. Creá y linkeá un paciente antes de solicitar turnos.'
 			),
 			{
 				statusCode: 403,
@@ -283,6 +283,24 @@ router.post(
 
 		const { firestore } = getFirebaseAdmin();
 
+		let patientProfile: { patientId: string; clinicId: string } | null = null;
+		try {
+			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
+		} catch (err) {
+			const statusCode =
+				typeof (err as any)?.statusCode === 'number'
+					? (err as any).statusCode
+					: 500;
+			const message =
+				err instanceof Error
+					? err.message
+					: 'Necesitás un paciente vinculado antes de solicitar turnos.';
+			return res.status(statusCode === 403 ? 403 : statusCode).json({
+				success: false,
+				message,
+			});
+		}
+
 		// ✅ Idempotencia anti-spam (por nutri seleccionado)
 		const existing = await firestore
 			.collection('appointments')
@@ -310,23 +328,9 @@ router.post(
 			});
 		}
 
-		let patientProfile: { patientId: string; clinicId: string } | null = null;
-		try {
-			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
-		} catch (err) {
-			const statusCode =
-				typeof (err as any)?.statusCode === 'number'
-					? (err as any).statusCode
-					: 500;
-			const message =
-				err instanceof Error
-					? err.message
-					: 'Unknown error resolving patient profile';
-			return res.status(statusCode).json({ success: false, message });
-		}
-		const patientId = patientProfile?.patientId ?? `unlinked:${ctx.uid}`;
+		const patientId = patientProfile!.patientId;
 		const clinicId =
-			patientProfile?.clinicId ??
+			patientProfile!.clinicId ??
 			clinicIdFromBody ??
 			ctx.clinicId ??
 			'self-service';
