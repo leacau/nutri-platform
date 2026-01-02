@@ -86,6 +86,7 @@ export default function App() {
 
 		// Turnos
 		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+		const [apptRequestWhen, setApptRequestWhen] = useState('');
 		const [scheduleSelections, setScheduleSelections] = useState<
 			Record<string, { when: string; nutri: string }>
 		>({});
@@ -359,15 +360,18 @@ export default function App() {
 			if (!apptRequestNutriUid) {
 				pushErr(
 					'/appointments/request',
-					{ apptRequestNutriUid },
+					{ apptRequestNutriUid, apptRequestWhen },
 					'Falta nutriUid para pedir turno'
 				);
 				return;
 			}
 			await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
+				clinicId: claims.clinicId ?? undefined,
+				scheduledForIso: toIsoFromDatetimeLocal(apptRequestWhen) ?? undefined,
 			});
 			await handleListAppointments();
+			setApptRequestWhen('');
 		} finally {
 			setLoading(false);
 		}
@@ -728,6 +732,14 @@ export default function App() {
 									)}
 								</select>
 							</label>
+							<label className='field'>
+								<span>Fecha y hora (opcional)</span>
+								<input
+									type='datetime-local'
+									value={apptRequestWhen}
+									onChange={(e) => setApptRequestWhen(e.target.value)}
+								/>
+							</label>
 							<button
 								className='btn primary'
 								disabled={loading || !isPatient || knownNutris.length === 0}
@@ -745,48 +757,51 @@ export default function App() {
 								{appointments.map((a, idx) => {
 									const appt = a as Record<string, any>;
 									const sched =
-									scheduleSelections[appt.id] ?? {
-										when: '',
-										nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
-									};
-								const canSchedule =
-									role === 'nutri' || role === 'clinic_admin';
-								const canComplete =
-									role === 'nutri' ||
-									role === 'clinic_admin' ||
-									role === 'platform_admin';
-								return (
-									<div className='appt-card' key={appt.id ?? idx}>
-										<div className='appt-head'>
-											<div>
-												<p className='eyebrow'>Turno</p>
-												<strong>{appt.id ?? 'sin-id'}</strong>
+										scheduleSelections[appt.id] ?? {
+											when: '',
+											nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
+										};
+									const canSchedule =
+										role === 'nutri' ||
+										role === 'clinic_admin' ||
+										(role === 'patient' && appt.patientUid === user?.uid);
+									const canComplete =
+										role === 'nutri' ||
+										role === 'clinic_admin' ||
+										role === 'platform_admin';
+									const lockNutri = role === 'patient';
+									return (
+										<div className='appt-card' key={appt.id ?? idx}>
+											<div className='appt-head'>
+												<div>
+													<p className='eyebrow'>Turno</p>
+													<strong>{appt.id ?? 'sin-id'}</strong>
+												</div>
+												<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
+													{appt.status ?? 'sin-status'}
+												</span>
 											</div>
-											<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
-												{appt.status ?? 'sin-status'}
-											</span>
-										</div>
-										<div className='appt-grid'>
-											<div>
-												<small>Clínica</small>
-												<div className='muted'>{appt.clinicId ?? '—'}</div>
-											</div>
-											<div>
-												<small>Paciente</small>
-												<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
-											</div>
-											<div>
-												<small>Nutri</small>
-												<div className='muted'>{appt.nutriUid ?? '—'}</div>
-											</div>
-											<div>
-												<small>Solicitado</small>
-												<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
-											</div>
-											<div>
-												<small>Programado</small>
-												<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
-											</div>
+											<div className='appt-grid'>
+												<div>
+													<small>Clínica</small>
+													<div className='muted'>{appt.clinicId ?? '—'}</div>
+												</div>
+												<div>
+													<small>Paciente</small>
+													<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
+												</div>
+												<div>
+													<small>Nutri</small>
+													<div className='muted'>{appt.nutriUid ?? '—'}</div>
+												</div>
+												<div>
+													<small>Solicitado</small>
+													<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
+												</div>
+												<div>
+													<small>Programado</small>
+													<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
+												</div>
 												<div>
 													<small>Actualizado</small>
 													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
@@ -794,7 +809,9 @@ export default function App() {
 											</div>
 											{!canSchedule && (
 												<p className='muted' style={{ marginTop: 8 }}>
-													Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.
+													{role === 'patient'
+														? 'Solo podés programar turnos que solicitaste vos.'
+														: 'Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.'}
 												</p>
 											)}
 											<div className='actions wrap'>
@@ -802,70 +819,71 @@ export default function App() {
 													<>
 														<input
 															type='datetime-local'
-														value={sched.when}
-														onChange={(e) =>
-															setScheduleSelections((prev) => ({
-																...prev,
-																[appt.id]: {
-																	...prev[appt.id],
-																	when: e.target.value,
-																	nutri: sched.nutri,
-																},
-															}))
-														}
-													/>
-													<select
-														value={sched.nutri}
-														onChange={(e) =>
-															setScheduleSelections((prev) => ({
-																...prev,
-																[appt.id]: {
-																	...prev[appt.id],
-																	when: sched.when,
-																	nutri: e.target.value,
-																},
-															}))
-														}
-													>
-														<option value=''>Elegí nutri</option>
-														{knownNutris.map((n) => (
-															<option key={n} value={n}>
-																{n}
-															</option>
-														))}
-													</select>
+															value={sched.when}
+															onChange={(e) =>
+																setScheduleSelections((prev) => ({
+																	...prev,
+																	[appt.id]: {
+																		...prev[appt.id],
+																		when: e.target.value,
+																		nutri: sched.nutri,
+																	},
+																}))
+															}
+														/>
+														<select
+															value={sched.nutri}
+															disabled={lockNutri}
+															onChange={(e) =>
+																setScheduleSelections((prev) => ({
+																	...prev,
+																	[appt.id]: {
+																		...prev[appt.id],
+																		when: sched.when,
+																		nutri: e.target.value,
+																	},
+																}))
+															}
+														>
+															<option value=''>Elegí nutri</option>
+															{knownNutris.map((n) => (
+																<option key={n} value={n}>
+																	{n}
+																</option>
+															))}
+														</select>
+														<button
+															className='btn'
+															disabled={loading || !sched.when}
+															onClick={() => handleScheduleAppointment(appt.id)}
+														>
+															Programar
+														</button>
+													</>
+												)}
+												<button
+													className='btn ghost'
+													disabled={loading}
+													onClick={() => handleCancelAppointment(appt.id)}
+												>
+													Cancelar
+												</button>
+												{canComplete && (
 													<button
 														className='btn'
-														disabled={loading || !sched.when}
-														onClick={() => handleScheduleAppointment(appt.id)}
+														disabled={loading}
+														onClick={() => handleCompleteAppointment(appt.id)}
 													>
-														Programar
+														Completar
 													</button>
-												</>
-											)}
-											<button
-												className='btn ghost'
-												disabled={loading}
-												onClick={() => handleCancelAppointment(appt.id)}
-											>
-												Cancelar
-											</button>
-											{canComplete && (
-												<button
-													className='btn'
-													disabled={loading}
-													onClick={() => handleCompleteAppointment(appt.id)}
-												>
-													Completar
-												</button>
-											)}
+												)}
+											</div>
 										</div>
-									</div>
-								);
-							})}
-						</div>
-					)}
-				</div>
+									);
+								})}
+							</div>
+						)}
+					</div>
 
 				<div className='card'>
 					<h3>Log</h3>
