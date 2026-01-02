@@ -89,7 +89,13 @@ patientsRouter.get(
 			});
 		}
 
-		const doc = snap.docs[0];
+		const doc = snap.docs.at(0);
+		if (!doc) {
+			return res.status(500).json({
+				success: false,
+				message: 'Failed to resolve patient profile',
+			});
+		}
 		const patient = { ...(doc.data() as PatientDoc), id: doc.id };
 
 		return res.status(200).json({
@@ -123,9 +129,10 @@ const createPatientSchema = z.object({
 patientsRouter.post(
 	'/',
 	authMiddleware,
-	requireRole('clinic_admin', 'nutri', 'staff', 'platform_admin'),
+	requireRole('clinic_admin', 'nutri', 'staff', 'platform_admin', 'patient'),
 	async (req: Request, res: Response) => {
 		const role = req.auth!.role!;
+		const uid = req.auth!.uid;
 		const db = getFirestoreDb();
 
 		const parsed = createPatientSchema.safeParse(req.body);
@@ -149,6 +156,36 @@ patientsRouter.post(
 				});
 			}
 			clinicId = parsed.data.clinicId;
+		} else if (role === 'patient') {
+			clinicId = req.auth!.clinicId ?? null;
+			if (!clinicId) {
+				return res.status(403).json({
+					success: false,
+					message:
+						'Patients must have a clinicId claim to create their own profile',
+				});
+			}
+
+			// Evitamos duplicados si ya hay un paciente vinculado a este uid
+			const existing = await db
+				.collection('patients')
+				.where('linkedUid', '==', uid)
+				.limit(1)
+				.get();
+			if (!existing.empty) {
+				const doc = existing.docs.at(0);
+				if (!doc) {
+					return res.status(500).json({
+						success: false,
+						message: 'Failed to resolve existing patient for this user',
+					});
+				}
+				return res.status(409).json({
+					success: false,
+					message: 'A patient is already linked to this user',
+					data: { id: doc.id },
+				});
+			}
 		} else {
 			clinicId = req.auth!.clinicId ?? null;
 		}
@@ -167,7 +204,7 @@ patientsRouter.post(
 			name: parsed.data.name,
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
-			linkedUid: null, // linkeo es endpoint dedicado
+			linkedUid: role === 'patient' ? uid : null, // linkeo automático para pacientes; clinic roles usan endpoint dedicado
 		};
 
 		const ref = db.collection('patients').doc();
@@ -199,21 +236,29 @@ const linkPatientSchema = z.object({
  * PATCH /api/patients/:id/link
  * - clinic_admin/nutri: puede linkear / unlinkear (dentro de su clínica)
  * - platform_admin: puede linkear cualquier (operaciones) - en prod audit
+ * - patient: puede autovincularse a un paciente dentro de su clínica (no unlink)
  *
  * Reglas:
  * - staff: NO
- * - patient: NO
  * - si linkedUid != null, debe existir en Auth (emulador incluido)
  * - clinic roles: aislamiento estricto usando getDocInClinic
  */
 patientsRouter.patch(
 	'/:id/link',
 	authMiddleware,
-	requireRole('clinic_admin', 'nutri', 'platform_admin'),
+	requireRole('clinic_admin', 'nutri', 'platform_admin', 'patient'),
 	async (req: Request, res: Response) => {
 		const db = getFirestoreDb();
 		const role = req.auth!.role!;
-		const id = req.params.id;
+		const uid = req.auth!.uid;
+		const id = req.params.id ?? '';
+
+		if (!id) {
+			return res.status(400).json({
+				success: false,
+				message: 'Missing patient id',
+			});
+		}
 
 		const parsed = linkPatientSchema.safeParse(req.body);
 		if (!parsed.success) {
@@ -221,6 +266,66 @@ patientsRouter.patch(
 				success: false,
 				message: 'Invalid body',
 				errors: parsed.error.flatten(),
+			});
+		}
+
+		// Flujo self-service: un paciente solo puede linkearse a sí mismo y nunca deslinkear.
+		if (role === 'patient') {
+			if (parsed.data.linkedUid === null) {
+				return res.status(403).json({
+					success: false,
+					message: 'Patients cannot unlink themselves',
+				});
+			}
+			if (parsed.data.linkedUid !== uid) {
+				return res.status(403).json({
+					success: false,
+					message: 'Patients can only link their own uid',
+				});
+			}
+
+			const snap = await db.collection('patients').doc(id).get();
+			if (!snap.exists) {
+				return res.status(404).json({ success: false, message: 'Not found' });
+			}
+
+			const current = { ...(snap.data() as PatientDoc), id: snap.id };
+			const claimClinicId = req.auth!.clinicId ?? null;
+
+			if (claimClinicId && current.clinicId !== claimClinicId) {
+				return res.status(403).json({
+					success: false,
+					message: 'Patients can only link profiles from their clinic',
+				});
+			}
+
+			if (current.linkedUid && current.linkedUid !== uid) {
+				return res.status(409).json({
+					success: false,
+					message: 'Patient is already linked to another user',
+				});
+			}
+
+			if (current.linkedUid === uid) {
+				return res.status(200).json({
+					success: true,
+					message: 'Patient already linked to this user',
+					data: sanitizePatientForRole(role, current),
+				});
+			}
+
+			await db.collection('patients').doc(id).update({
+				linkedUid: uid,
+				updatedAt: new Date(),
+			});
+
+			const freshSnap = await db.collection('patients').doc(id).get();
+			const fresh = { ...(freshSnap.data() as PatientDoc), id: freshSnap.id };
+
+			return res.status(200).json({
+				success: true,
+				message: 'Patient linked',
+				data: sanitizePatientForRole(role, fresh),
 			});
 		}
 
@@ -235,7 +340,8 @@ patientsRouter.patch(
 			current = { ...(snap.data() as PatientDoc), id: snap.id };
 		} else {
 			// requiere contexto de clínica
-			if (!req.auth!.clinicId) {
+			const clinicIdClaim = req.auth!.clinicId;
+			if (!clinicIdClaim) {
 				return res
 					.status(403)
 					.json({ success: false, message: 'Missing clinicId claim' });
@@ -245,7 +351,7 @@ patientsRouter.patch(
 				db,
 				'patients',
 				id,
-				req.auth!.clinicId
+				clinicIdClaim
 			);
 			if (!current) {
 				return res.status(404).json({ success: false, message: 'Not found' });
@@ -306,7 +412,14 @@ patientsRouter.patch(
 	async (req: Request, res: Response) => {
 		const db = getFirestoreDb();
 		const role = req.auth!.role!;
-		const id = req.params.id;
+		const id = req.params.id ?? '';
+
+		if (!id) {
+			return res.status(400).json({
+				success: false,
+				message: 'Missing patient id',
+			});
+		}
 
 		const parsed = patchPatientSchema.safeParse(req.body);
 		if (!parsed.success) {
@@ -328,7 +441,8 @@ patientsRouter.patch(
 			current = { ...(snap.data() as PatientDoc), id: snap.id };
 		} else {
 			// requiere contexto de clínica
-			if (!req.auth!.clinicId) {
+			const clinicIdClaim = req.auth!.clinicId;
+			if (!clinicIdClaim) {
 				return res
 					.status(403)
 					.json({ success: false, message: 'Missing clinicId claim' });
@@ -338,7 +452,7 @@ patientsRouter.patch(
 				db,
 				'patients',
 				id,
-				req.auth!.clinicId
+				clinicIdClaim
 			);
 			if (!current) {
 				return res.status(404).json({ success: false, message: 'Not found' });
@@ -406,7 +520,14 @@ patientsRouter.post(
 	requireRole('platform_admin'),
 	async (req: Request, res: Response) => {
 		const db = getFirestoreDb();
-		const id = req.params.id;
+		const id = req.params.id ?? '';
+
+		if (!id) {
+			return res.status(400).json({
+				success: false,
+				message: 'Missing patient id',
+			});
+		}
 
 		const parsed = moveClinicSchema.safeParse(req.body);
 		if (!parsed.success) {
