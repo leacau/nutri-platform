@@ -623,42 +623,29 @@ export default function App() {
 		try {
 			let patientId: string | null = null;
 
-			const meRes = await authedFetch('GET', '/patients/me');
+			const created = await authedFetch('POST', '/patients', {
+				name: pName || user.email || 'Paciente sin nombre',
+				email: pEmail || user.email || null,
+				phone: pPhone || null,
+				clinicId: clinicIdForPatient,
+			});
 			if (
-				meRes.ok &&
-				meRes.data &&
-				typeof meRes.data === 'object' &&
-				'data' in (meRes.data as any) &&
-				(meRes.data as any).data?.id
+				created.ok &&
+				created.data &&
+				typeof created.data === 'object' &&
+				'data' in (created.data as any) &&
+				(created.data as any).data?.id
 			) {
-				patientId = (meRes.data as any).data.id as string;
-			}
-
-			if (!patientId) {
-				const created = await authedFetch('POST', '/patients', {
-					name: pName || user.email || 'Paciente sin nombre',
-					email: pEmail || user.email || null,
-					phone: pPhone || null,
-					clinicId: clinicIdForPatient,
-				});
-				if (
-					created.ok &&
-					created.data &&
-					typeof created.data === 'object' &&
-					'data' in (created.data as any) &&
-					(created.data as any).data?.id
-				) {
-					patientId = (created.data as any).data.id as string;
-				} else if (
-					!created.ok &&
-					created.status === 409 &&
-					typeof created.data === 'object' &&
-					created.data &&
-					'data' in (created.data as any) &&
-					(created.data as any).data?.id
-				) {
-					patientId = (created.data as any).data.id as string;
-				}
+				patientId = (created.data as any).data.id as string;
+			} else if (
+				!created.ok &&
+				created.status === 409 &&
+				typeof created.data === 'object' &&
+				created.data &&
+				'data' in (created.data as any) &&
+				(created.data as any).data?.id
+			) {
+				patientId = (created.data as any).data.id as string;
 			}
 
 			if (!patientId) {
@@ -1171,7 +1158,7 @@ export default function App() {
 										disabled={loading || linking}
 										onClick={handleLinkPatientAndRetry}
 									>
-										Crear paciente y linkear
+										Crear y linkear paciente
 									</button>
 									<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
 										Refrescar turnos
