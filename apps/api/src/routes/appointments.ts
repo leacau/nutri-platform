@@ -77,15 +77,25 @@ async function getPatientProfileByUid(
 		.collection('patients')
 		.where('linkedUid', '==', uid)
 		.limit(1)
-		.get();
+	.get();
 
 	if (snap.empty) {
-		throw Object.assign(new Error('Patient profile not linked'), {
-			statusCode: 403,
-		});
+		throw Object.assign(
+			new Error(
+				'Patient profile not linked to this user. Create and link a patient before requesting appointments.'
+			),
+			{
+				statusCode: 403,
+			}
+		);
 	}
 
-	const doc = snap.docs[0];
+	const doc = snap.docs.at(0);
+	if (!doc) {
+		throw Object.assign(new Error('Patient profile lookup failed'), {
+			statusCode: 500,
+		});
+	}
 	const data = doc.data() as { clinicId?: unknown };
 
 	if (typeof data.clinicId !== 'string' || !data.clinicId) {
@@ -147,6 +157,8 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 
+		// Frenamos explícitamente si el usuario no está vinculado a un perfil de paciente.
+		// Esto evita que se intente crear/usar perfiles "self-service" sin linkedUid.
 		const parsed = requestBodySchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({
@@ -170,12 +182,19 @@ router.post(
 			.get();
 
 		if (!existing.empty) {
+			const doc = existing.docs.at(0);
+			if (!doc) {
+				return res.status(500).json({
+					success: false,
+					message: 'Failed to resolve existing appointment',
+				});
+			}
 			return res.status(200).json({
 				success: true,
 				message: 'Already requested',
 				data: {
-					id: existing.docs[0].id,
-					...(existing.docs[0].data() as AppointmentDoc),
+					id: doc.id,
+					...(doc.data() as AppointmentDoc),
 				},
 			});
 		}
@@ -189,7 +208,9 @@ router.post(
 					? (err as any).statusCode
 					: 500;
 			const message =
-				err instanceof Error ? err.message : 'Unknown error resolving patient';
+				err instanceof Error
+					? err.message
+					: 'Unknown error resolving patient profile';
 			return res.status(statusCode).json({ success: false, message });
 		}
 		const { patientId, clinicId } = patientProfile;

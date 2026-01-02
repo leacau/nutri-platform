@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import {
 	createUserWithEmailAndPassword,
 	getIdToken,
@@ -26,7 +26,7 @@ type LogEntry =
 
 type ProtectedProps = {
 	user: User | null;
-	children: JSX.Element;
+	children: ReactElement;
 };
 
 function nowIso() {
@@ -86,12 +86,18 @@ export default function App() {
 
 		// Turnos
 		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-		const [scheduleSelections, setScheduleSelections] = useState<
-			Record<string, { when: string; nutri: string }>
-		>({});
+	const [scheduleSelections, setScheduleSelections] = useState<
+		Record<string, { when: string; nutri: string }>
+	>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
 	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
 		useState<string>('');
+	const [linkRequired, setLinkRequired] = useState<{ active: boolean; reason?: string }>({
+		active: false,
+		reason: '',
+	});
+	const [linkFlowMessage, setLinkFlowMessage] = useState<string | null>(null);
+	const [linking, setLinking] = useState(false);
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 
@@ -144,6 +150,12 @@ export default function App() {
 	}, []);
 
 	useEffect(() => {
+		setLinkRequired({ active: false, reason: '' });
+		setLinkFlowMessage(null);
+		setLinking(false);
+	}, [user?.uid]);
+
+	useEffect(() => {
 		if (!selectedClinicForNewPatient && clinicOptions.length > 0) {
 			setSelectedClinicForNewPatient(clinicOptions[0]);
 		}
@@ -169,37 +181,51 @@ export default function App() {
 		]);
 	}
 
+	type AuthedFetchResult =
+		| { ok: true; status: number; data: unknown }
+		| { ok: false; status: number; data: unknown; error: string };
+
 	async function authedFetch(
 		method: 'GET' | 'POST' | 'PATCH',
 		endpoint: string,
 		body?: unknown
-	) {
+	): Promise<AuthedFetchResult> {
 		if (!user) {
-			pushErr(endpoint, body, 'Usuario no autenticado');
-			return null;
+			const error = 'Usuario no autenticado';
+			pushErr(endpoint, body, error);
+			return { ok: false, status: 401, data: null, error };
 		}
 		const token = await getIdToken(user, true);
 
-		const res = await fetch(`${API_BASE}${endpoint}`, {
-			method,
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${token}`,
-			},
-			body: body ? JSON.stringify(body) : undefined,
-		});
+		let res: Response;
+		try {
+			res = await fetch(`${API_BASE}${endpoint}`, {
+				method,
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: body ? JSON.stringify(body) : undefined,
+			});
+		} catch (err) {
+			const error =
+				err instanceof Error ? err.message : 'Error de red al llamar al backend';
+			pushErr(endpoint, body, error);
+			return { ok: false, status: 0, data: null, error };
+		}
 
 		const data = await res.json().catch(() => null);
 		if (!res.ok) {
-			pushErr(
-				endpoint,
-				body,
-				`HTTP ${res.status} ${res.statusText} :: ${JSON.stringify(data)}`
-			);
-			return null;
+			const errorMessage =
+				(typeof data === 'object' && data && 'message' in data
+					? (data as any).message
+					: null) ??
+				`HTTP ${res.status} ${res.statusText}`;
+			pushErr(endpoint, body, `${errorMessage} :: ${JSON.stringify(data)}`);
+			return { ok: false, status: res.status, data, error: errorMessage };
 		}
 		pushOk(endpoint, body, data);
-		return data;
+		return { ok: true, status: res.status, data };
 	}
 
 	async function handleLogin() {
@@ -300,7 +326,7 @@ export default function App() {
 				phone: pPhone || null,
 				clinicId: selectedClinicForNewPatient || undefined,
 			});
-			if (created) {
+			if (created.ok) {
 				await handleListPatients();
 			}
 		} finally {
@@ -312,8 +338,13 @@ export default function App() {
 		setLoading(true);
 		try {
 			const data = await authedFetch('GET', '/patients');
-			if (data && typeof data === 'object' && 'data' in data) {
-				setPatients((data as any).data ?? []);
+			if (
+				data.ok &&
+				data.data &&
+				typeof data.data === 'object' &&
+				'data' in (data.data as any)
+			) {
+				setPatients((data.data as any).data ?? []);
 			}
 		} finally {
 			setLoading(false);
@@ -332,10 +363,12 @@ export default function App() {
 				);
 				return;
 			}
-			await authedFetch('PATCH', `/patients/${patientId}`, {
+			const res = await authedFetch('PATCH', `/patients/${patientId}`, {
 				assignedNutriUid: chosenNutri,
 			});
-			await handleListPatients();
+			if (res.ok) {
+				await handleListPatients();
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -345,8 +378,13 @@ export default function App() {
 		setLoading(true);
 		try {
 			const data = await authedFetch('GET', '/appointments');
-			if (data && typeof data === 'object' && 'data' in data) {
-				setAppointments((data as any).data ?? []);
+			if (
+				data.ok &&
+				data.data &&
+				typeof data.data === 'object' &&
+				'data' in (data.data as any)
+			) {
+				setAppointments((data.data as any).data ?? []);
 			}
 		} finally {
 			setLoading(false);
@@ -364,12 +402,112 @@ export default function App() {
 				);
 				return;
 			}
-			await authedFetch('POST', '/appointments/request', {
+			const result = await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
 			});
-			await handleListAppointments();
+			if (result.ok) {
+				setLinkRequired({ active: false, reason: '' });
+				setLinkFlowMessage(null);
+				await handleListAppointments();
+			} else if (result.status === 403 && claims.role === 'patient') {
+				const reason =
+					(typeof result.data === 'object' &&
+						result.data &&
+						'message' in (result.data as any) &&
+						typeof (result.data as any).message === 'string'
+						? (result.data as any).message
+						: result.error) ?? 'Necesitás vincular tu perfil antes de pedir turno.';
+				setLinkRequired({ active: true, reason });
+			}
 		} finally {
 			setLoading(false);
+		}
+	}
+
+	async function handleLinkPatientAndRetry() {
+		if (!user) {
+			pushErr(
+				'patients/link-and-retry',
+				undefined,
+				'Necesitás iniciar sesión para vincular tu paciente.'
+			);
+			return;
+		}
+
+		const clinicIdForPatient = claims.clinicId || selectedClinicForNewPatient;
+		if (!clinicIdForPatient) {
+			setLinkFlowMessage(
+				'Asigná un clinicId en los claims para poder crear y vincular tu paciente.'
+			);
+			return;
+		}
+
+		setLinking(true);
+		setLinkFlowMessage(null);
+
+		try {
+			let patientId: string | null = null;
+
+			const meRes = await authedFetch('GET', '/patients/me');
+			if (
+				meRes.ok &&
+				meRes.data &&
+				typeof meRes.data === 'object' &&
+				'data' in (meRes.data as any) &&
+				(meRes.data as any).data?.id
+			) {
+				patientId = (meRes.data as any).data.id as string;
+			}
+
+			if (!patientId) {
+				const created = await authedFetch('POST', '/patients', {
+					name: pName || user.email || 'Paciente sin nombre',
+					email: pEmail || user.email || null,
+					phone: pPhone || null,
+					clinicId: clinicIdForPatient,
+				});
+				if (
+					created.ok &&
+					created.data &&
+					typeof created.data === 'object' &&
+					'data' in (created.data as any) &&
+					(created.data as any).data?.id
+				) {
+					patientId = (created.data as any).data.id as string;
+				} else if (
+					!created.ok &&
+					created.status === 409 &&
+					typeof created.data === 'object' &&
+					created.data &&
+					'data' in (created.data as any) &&
+					(created.data as any).data?.id
+				) {
+					patientId = (created.data as any).data.id as string;
+				}
+			}
+
+			if (!patientId) {
+				setLinkFlowMessage(
+					'No se pudo crear ni ubicar un paciente para vincular. Revisá los datos e intentá de nuevo.'
+				);
+				return;
+			}
+
+			const linkRes = await authedFetch('PATCH', `/patients/${patientId}/link`, {
+				linkedUid: user.uid,
+			});
+			if (!linkRes.ok) {
+				setLinkFlowMessage(
+					'No se pudo vincular el paciente. Revisá los claims y reintentá.'
+				);
+				return;
+			}
+
+			setLinkRequired({ active: false, reason: '' });
+			setLinkFlowMessage('Paciente vinculado. Reintentando solicitud de turno...');
+			await handleRequestAppointment();
+		} finally {
+			setLinking(false);
 		}
 	}
 
@@ -386,11 +524,13 @@ export default function App() {
 				);
 				return;
 			}
-			await authedFetch('POST', `/appointments/${apptId}/schedule`, {
+			const res = await authedFetch('POST', `/appointments/${apptId}/schedule`, {
 				scheduledForIso: iso,
 				nutriUid: sched?.nutri || apptRequestNutriUid || '',
 			});
-			await handleListAppointments();
+			if (res.ok) {
+				await handleListAppointments();
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -399,8 +539,10 @@ export default function App() {
 	async function handleCancelAppointment(apptId: string) {
 		setLoading(true);
 		try {
-			await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
-			await handleListAppointments();
+			const res = await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
+			if (res.ok) {
+				await handleListAppointments();
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -409,8 +551,10 @@ export default function App() {
 	async function handleCompleteAppointment(apptId: string) {
 		setLoading(true);
 		try {
-			await authedFetch('POST', `/appointments/${apptId}/complete`, {});
-			await handleListAppointments();
+			const res = await authedFetch('POST', `/appointments/${apptId}/complete`, {});
+			if (res.ok) {
+				await handleListAppointments();
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -702,9 +846,22 @@ export default function App() {
 						)}
 						<p className='muted'>
 							Tip: el backend exige que tu usuario esté vinculado a un perfil de paciente en
-							el emulador (linkedUid). Si ves un 500 al solicitar, creá un paciente y
-							linkealo antes de pedir turno.
+							el emulador (linkedUid). Si recibís un 403, creá o vinculá tu paciente antes de
+							volver a pedir turno.
 						</p>
+						<div
+							className='muted'
+							style={{
+								padding: 12,
+								borderRadius: 8,
+								border: '1px solid #f3c96b',
+								background: '#fff7e0',
+								marginBottom: 16,
+							}}
+						>
+							<strong>Recordatorio:</strong> vinculá tu usuario a un paciente antes de
+							solicitar turnos para evitar errores.
+						</div>
 						{appointments.length === 0 && (
 							<p className='muted'>
 								No hay turnos aún. Solicitá uno como paciente (con perfil vinculado) y luego
@@ -730,7 +887,7 @@ export default function App() {
 							</label>
 							<button
 								className='btn primary'
-								disabled={loading || !isPatient || knownNutris.length === 0}
+								disabled={loading || linking || !isPatient || knownNutris.length === 0}
 								onClick={handleRequestAppointment}
 							>
 								Solicitar turno (paciente)
@@ -739,6 +896,32 @@ export default function App() {
 								Listar turnos
 							</button>
 						</div>
+
+						{linkRequired.active && (
+							<div
+								className='card'
+								style={{ background: '#fff7e0', border: '1px solid #f3c96b' }}
+							>
+								<h4>Necesitás vincular tu paciente</h4>
+								<p className='muted'>
+									{linkRequired.reason ??
+										'No encontramos un paciente vinculado. Crealo y vinculalo para continuar.'}
+								</p>
+								<div className='actions'>
+									<button
+										className='btn primary'
+										disabled={loading || linking}
+										onClick={handleLinkPatientAndRetry}
+									>
+										Crear paciente y linkear
+									</button>
+									<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
+										Refrescar turnos
+									</button>
+								</div>
+								{linkFlowMessage && <p className='muted'>{linkFlowMessage}</p>}
+							</div>
+						)}
 
 						{appointments.length > 0 && (
 							<div className='appointments'>
