@@ -51,6 +51,22 @@ const requestBodySchema = z
 	})
 	.strict();
 
+const slotsQuerySchema = z
+	.object({
+		nutriUid: z.union([z.string(), z.array(z.string())]).transform((v) =>
+			Array.isArray(v) ? v[0] : v
+		),
+		from: z
+			.union([z.string(), z.array(z.string())])
+			.optional()
+			.transform((v) => (Array.isArray(v) ? v[0] : v)),
+		to: z
+			.union([z.string(), z.array(z.string())])
+			.optional()
+			.transform((v) => (Array.isArray(v) ? v[0] : v)),
+	})
+	.strict();
+
 const cancelParamsSchema = z.object({ id: z.string().min(1) });
 const scheduleParamsSchema = z.object({ id: z.string().min(1) });
 
@@ -71,6 +87,73 @@ function mustAuth(req: Request) {
 	return req.auth;
 }
 
+/**
+ * GET /api/appointments/slots?nutriUid=&from=&to=
+ * Retorna slots libres/ocupados para un nutri
+ * Desde/ hasta son ISO opcionales, por defecto [now, now+7d]
+ */
+router.get('/slots', authMiddleware, async (req: Request, res: Response) => {
+	const parsed = slotsQuerySchema.safeParse(req.query ?? {});
+	if (!parsed.success) {
+		return res.status(400).json({
+			success: false,
+			message: 'Invalid query',
+			errors: parsed.error.flatten(),
+		});
+	}
+
+	const fromIso = parsed.data.from ?? new Date().toISOString();
+	const toIso =
+		parsed.data.to ??
+		new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+	const fromMs = Date.parse(fromIso);
+	const toMs = Date.parse(toIso);
+
+	if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+		return res.status(400).json({
+			success: false,
+			message: 'from/to must be valid ISO date strings',
+		});
+	}
+
+	if (toMs <= fromMs) {
+		return res.status(400).json({
+			success: false,
+			message: 'to must be greater than from',
+		});
+	}
+
+	const { firestore } = getFirebaseAdmin();
+
+	const snap = await firestore
+		.collection('appointments')
+		.where('nutriUid', '==', parsed.data.nutriUid)
+		.where('status', '==', 'scheduled')
+		.where('scheduledFor', '>=', Timestamp.fromMillis(fromMs))
+		.where('scheduledFor', '<=', Timestamp.fromMillis(toMs))
+		.get();
+
+	const occupiedIso = new Set<string>();
+	snap.docs.forEach((d) => {
+		const data = d.data() as AppointmentDoc;
+		const scheduled = data.scheduledFor?.toMillis();
+		if (typeof scheduled === 'number') {
+			occupiedIso.add(new Date(scheduled).toISOString());
+		}
+	});
+
+	// Mock de slots libres/ocupados basado en un grid cada 30 minutos
+	const slots = buildFreeBusySlots(fromMs, toMs, occupiedIso, 30);
+	const free = slots.filter((s) => s.status === 'free').map((s) => s.iso);
+	const busy = slots.filter((s) => s.status === 'busy').map((s) => s.iso);
+
+	return res.status(200).json({
+		success: true,
+		data: { free, busy, slots },
+	});
+});
+
 async function getPatientProfileByUid(
 	firestore: FirebaseFirestore.Firestore,
 	uid: string
@@ -79,15 +162,25 @@ async function getPatientProfileByUid(
 		.collection('patients')
 		.where('linkedUid', '==', uid)
 		.limit(1)
-		.get();
+	.get();
 
 	if (snap.empty) {
-		throw Object.assign(new Error('Patient profile not linked'), {
-			statusCode: 403,
-		});
+		throw Object.assign(
+			new Error(
+				'Patient profile not linked to this user. Create and link a patient before requesting appointments.'
+			),
+			{
+				statusCode: 403,
+			}
+		);
 	}
 
-	const doc = snap.docs[0]!;
+	const doc = snap.docs.at(0);
+	if (!doc) {
+		throw Object.assign(new Error('Patient profile lookup failed'), {
+			statusCode: 500,
+		});
+	}
 	const data = doc.data() as { clinicId?: unknown };
 
 	if (typeof data.clinicId !== 'string' || !data.clinicId) {
@@ -97,6 +190,21 @@ async function getPatientProfileByUid(
 	}
 
 	return { patientId: doc.id, clinicId: data.clinicId };
+}
+
+function buildFreeBusySlots(
+	startMs: number,
+	endMs: number,
+	occupiedIso: Set<string>,
+	stepMinutes = 30
+) {
+	const slots: Array<{ iso: string; status: 'free' | 'busy' }> = [];
+	const stepMs = stepMinutes * 60 * 1000;
+	for (let ts = startMs; ts <= endMs; ts += stepMs) {
+		const iso = new Date(ts).toISOString();
+		slots.push({ iso, status: occupiedIso.has(iso) ? 'busy' : 'free' });
+	}
+	return slots;
 }
 
 function canCancelWith24hRule(
@@ -149,6 +257,8 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 
+		// Frenamos explícitamente si el usuario no está vinculado a un perfil de paciente.
+		// Esto evita que se intente crear/usar perfiles "self-service" sin linkedUid.
 		const parsed = requestBodySchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({
@@ -183,12 +293,19 @@ router.post(
 			.get();
 
 		if (!existing.empty) {
+			const doc = existing.docs.at(0);
+			if (!doc) {
+				return res.status(500).json({
+					success: false,
+					message: 'Failed to resolve existing appointment',
+				});
+			}
 			return res.status(200).json({
 				success: true,
 				message: 'Already requested',
 				data: {
-					id: existing.docs[0].id,
-					...(existing.docs[0].data() as AppointmentDoc),
+					id: doc.id,
+					...(doc.data() as AppointmentDoc),
 				},
 			});
 		}
@@ -197,16 +314,15 @@ router.post(
 		try {
 			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
 		} catch (err) {
-			// Si no está linkeado, seguimos creando el turno pero marcamos el origen.
-			if ((err as any)?.message !== 'Patient profile not linked') {
-				const statusCode =
-					typeof (err as any)?.statusCode === 'number'
-						? (err as any).statusCode
-						: 500;
-				const message =
-					err instanceof Error ? err.message : 'Unknown error resolving patient';
-				return res.status(statusCode).json({ success: false, message });
-			}
+			const statusCode =
+				typeof (err as any)?.statusCode === 'number'
+					? (err as any).statusCode
+					: 500;
+			const message =
+				err instanceof Error
+					? err.message
+					: 'Unknown error resolving patient profile';
+			return res.status(statusCode).json({ success: false, message });
 		}
 		const patientId = patientProfile?.patientId ?? `unlinked:${ctx.uid}`;
 		const clinicId =

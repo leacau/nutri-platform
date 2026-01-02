@@ -7,6 +7,14 @@ Currently, two official plugins are available:
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
 - [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
+## Scripts útiles
+
+Ejecutá los scripts desde la raíz del monorepo usando workspaces:
+
+- `npm --workspace apps/qa-console run dev` para levantar el entorno local.
+- `npm --workspace apps/qa-console run build` para compilar TypeScript y generar el bundle de Vite.
+- `npm --workspace apps/qa-console run lint` para correr ESLint.
+
 ## React Compiler
 
 The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
