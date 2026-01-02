@@ -56,6 +56,18 @@ function toReadableDate(v: unknown): string {
 	return String(v);
 }
 
+function defaultSlotWindow() {
+	const start = new Date();
+	const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+	return { fromIso: start.toISOString(), toIso: end.toISOString() };
+}
+
+function formatSlotLabel(iso: string) {
+	const d = new Date(iso);
+	if (!Number.isFinite(d.getTime())) return iso;
+	return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 function ProtectedRoute({ user, children }: ProtectedProps) {
 	if (!user) return <Navigate to='/login' replace />;
 	return children;
@@ -84,9 +96,12 @@ export default function App() {
 	>({});
 	const [patients, setPatients] = useState<unknown[]>([]);
 
-	// Turnos
-	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-	const [apptRequestWhen, setApptRequestWhen] = useState('');
+		// Turnos
+		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+	const [apptRequestSlot, setApptRequestSlot] = useState('');
+	const [apptSlots, setApptSlots] = useState<string[]>([]);
+	const [apptBusySlots, setApptBusySlots] = useState<string[]>([]);
+	const [loadingSlots, setLoadingSlots] = useState(false);
 	const [scheduleSelections, setScheduleSelections] = useState<
 		Record<string, { when: string; nutri: string }>
 	>({});
@@ -167,6 +182,12 @@ export default function App() {
 			setApptRequestNutriUid(knownNutris[0]);
 		}
 	}, [knownNutris, apptRequestNutriUid]);
+
+	useEffect(() => {
+		if (!apptRequestNutriUid) return;
+		handleLoadSlots(apptRequestNutriUid);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [apptRequestNutriUid]);
 
 	function pushOk(endpoint: string, payload: unknown | undefined, data: unknown) {
 		setLogs((prev) => [
@@ -392,21 +413,63 @@ export default function App() {
 		}
 	}
 
+	async function handleLoadSlots(nutriUid?: string) {
+		if (!nutriUid) {
+			setApptSlots([]);
+			setApptBusySlots([]);
+			setApptRequestSlot('');
+			return;
+		}
+		if (!user) return;
+		setLoadingSlots(true);
+		try {
+			const window = defaultSlotWindow();
+			const query = `/appointments/slots?nutriUid=${encodeURIComponent(
+				nutriUid
+			)}&from=${encodeURIComponent(window.fromIso)}&to=${encodeURIComponent(
+				window.toIso
+			)}`;
+			const res = await authedFetch('GET', query);
+			if (
+				res.ok &&
+				res.data &&
+				typeof res.data === 'object' &&
+				'data' in (res.data as any)
+			) {
+				const free = ((res.data as any).data?.free ?? []) as string[];
+				const busy = ((res.data as any).data?.busy ?? []) as string[];
+				setApptSlots(free);
+				setApptBusySlots(busy);
+				setApptRequestSlot((prev) => prev || free[0] || '');
+			}
+		} finally {
+			setLoadingSlots(false);
+		}
+	}
+
 	async function handleRequestAppointment() {
 		setLoading(true);
 		try {
 			if (!apptRequestNutriUid) {
 				pushErr(
 					'/appointments/request',
-					{ apptRequestNutriUid, apptRequestWhen },
+					{ apptRequestNutriUid, apptRequestSlot },
 					'Falta nutriUid para pedir turno'
+				);
+				return;
+			}
+			if (!apptRequestSlot) {
+				pushErr(
+					'/appointments/request',
+					{ apptRequestNutriUid, apptRequestSlot },
+					'Seleccioná un horario disponible'
 				);
 				return;
 			}
 			const result = await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
 				clinicId: claims.clinicId ?? undefined,
-				scheduledForIso: toIsoFromDatetimeLocal(apptRequestWhen) ?? undefined,
+				scheduledForIso: apptRequestSlot,
 			});
 			if (result.ok) {
 				setLinkRequired({ active: false, reason: '' });
@@ -889,16 +952,38 @@ export default function App() {
 								</select>
 							</label>
 							<label className='field'>
-								<span>Fecha y hora (opcional)</span>
-								<input
-									type='datetime-local'
-									value={apptRequestWhen}
-									onChange={(e) => setApptRequestWhen(e.target.value)}
-								/>
+								<span>Slots disponibles (24h)</span>
+								<select
+									value={apptRequestSlot}
+									onChange={(e) => setApptRequestSlot(e.target.value)}
+									disabled={loadingSlots || apptSlots.length === 0}
+								>
+									{apptSlots.length === 0 && (
+										<option value=''>Sin slots libres</option>
+									)}
+									{apptSlots.map((slot) => (
+										<option key={slot} value={slot}>
+											{formatSlotLabel(slot)}
+										</option>
+									))}
+								</select>
 							</label>
 							<button
+								className='btn ghost'
+								disabled={loadingSlots || !apptRequestNutriUid}
+								onClick={() => handleLoadSlots(apptRequestNutriUid)}
+							>
+								Refrescar slots
+							</button>
+							<button
 								className='btn primary'
-								disabled={loading || linking || !isPatient || knownNutris.length === 0}
+								disabled={
+									loading ||
+									linking ||
+									!isPatient ||
+									knownNutris.length === 0 ||
+									!apptRequestSlot
+								}
 								onClick={handleRequestAppointment}
 							>
 								Solicitar turno (paciente)
@@ -1066,6 +1151,53 @@ export default function App() {
 							</div>
 						)}
 					</div>
+
+					{(role === 'clinic_admin' || role === 'nutri') && (
+						<div className='card'>
+							<h3>Disponibilidad de la clínica (beta)</h3>
+							<p className='muted'>
+								Vista rápida de slots libres/ocupados para el nutri seleccionado. Próximamente
+								podrás editar disponibilidad desde aquí.
+							</p>
+							<div className='actions wrap'>
+								<button
+									className='btn'
+									disabled={loadingSlots || !apptRequestNutriUid}
+									onClick={() => handleLoadSlots(apptRequestNutriUid)}
+								>
+									Actualizar slots del nutri
+								</button>
+								<span className='pill'>
+									Libres: {apptSlots.length} — Ocupados: {apptBusySlots.length}
+								</span>
+							</div>
+							{apptSlots.length === 0 && apptBusySlots.length === 0 ? (
+								<p className='muted'>Sin slots en el rango actual.</p>
+							) : (
+								<div className='list'>
+									{apptSlots.slice(0, 6).map((slot) => (
+										<div className='inline-info' key={`free-${slot}`}>
+											<div>
+												<small>Libre</small>
+												<div>{formatSlotLabel(slot)}</div>
+											</div>
+										</div>
+									))}
+									{apptBusySlots.slice(0, 6).map((slot) => (
+										<div className='inline-info' key={`busy-${slot}`}>
+											<div>
+												<small>Ocupado</small>
+												<div className='muted'>{formatSlotLabel(slot)}</div>
+											</div>
+										</div>
+									))}
+									{apptSlots.length + apptBusySlots.length > 12 && (
+										<p className='muted'>Mostrando solo los primeros slots.</p>
+									)}
+								</div>
+							)}
+						</div>
+					)}
 
 				<div className='card'>
 					<h3>Log</h3>
