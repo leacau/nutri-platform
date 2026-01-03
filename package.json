@@ -8,7 +8,8 @@
 		"dev": "concurrently -n EMU,API,QA -c auto \"npm:emulators\" \"npm:dev:api\" \"npm:dev:qa\"",
 		"emulators": "firebase emulators:start --only auth,firestore --project demo-nutri-platform --import ./_emu --export-on-exit",
 		"dev:api": "npm --workspace apps/api run dev",
-		"dev:qa": "npm --workspace apps/qa-console run dev"
+		"dev:qa": "npm --workspace apps/qa-console run dev",
+		"seed:emu": "npm --workspace apps/api run seed:emu"
 	},
 	"devDependencies": {
 		"concurrently": "^9.0.1",
@@ -495,4 +496,3 @@
 	"license": "ISC",
 	"description": ""
 }
-
