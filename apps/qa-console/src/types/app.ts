@@ -1,3 +1,4 @@
+import type { ApiLogEntry } from '../api';
 import type { RoleCopy } from '../i18n';
 
 export type Claims = { role: string | null; clinicId: string | null };
@@ -12,16 +13,11 @@ export type Toast = {
 
 export type ConfirmAction = { type: 'cancel' | 'complete'; apptId: string };
 
-export type LogEntry =
-	| { ts: string; endpoint: string; payload?: unknown; ok: true; data: unknown }
-	| {
-			ts: string;
-			endpoint: string;
-			payload?: unknown;
-			ok: false;
-			error: string;
-	  };
+export type LogEntry = ApiLogEntry;
 
 export type AuthedFetchResult =
-	| { ok: true; status: number; data: unknown }
-	| { ok: false; status: number; data: unknown; error: string };
+	| { ok: true; status: number; data: unknown; attempts: number; durationMs: number }
+	| { ok: false; status: number; data: unknown; error: string; attempts: number; durationMs: number };
+
+export type BackendStatusState = 'unknown' | 'online' | 'degraded' | 'offline';
+export type BackendStatus = { state: BackendStatusState; message: string; lastChecked?: string };

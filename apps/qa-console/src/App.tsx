@@ -1,5 +1,6 @@
 import {
 	useEffect,
+	useCallback,
 	useMemo,
 	useRef,
 	useState,
@@ -8,11 +9,13 @@ import {
 import type { User } from 'firebase/auth';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import './App.css';
+import { fetchJSON } from './api';
 import { getCopy, supportedLocales, type Locale } from './i18n';
 import { ConfirmModal, ToastStack, Topbar } from './components';
 import { AuthPage, Dashboard, Landing } from './pages';
 import type {
 	AuthedFetchResult,
+	BackendStatus,
 	ConfirmAction,
 	LogEntry,
 	RoleTab,
@@ -33,6 +36,11 @@ type ProtectedProps = {
 
 function nowIso() {
 	return new Date().toISOString();
+}
+
+function createLogId() {
+	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+	return Math.random().toString(36).slice(2, 12);
 }
 
 function isoToDatetimeLocal(iso: string): string {
@@ -151,6 +159,11 @@ export default function App() {
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
 
+	const [backendStatus, setBackendStatus] = useState<BackendStatus>({
+		state: 'unknown',
+		message: copy.dashboard.backend.unknown,
+	});
+	const [apiErrorCount, setApiErrorCount] = useState(0);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 
 	const roleTabs = useMemo<RoleTab[]>(() => copy.roleTabs, [copy]);
@@ -199,6 +212,53 @@ export default function App() {
 	});
 	const [linkFlowMessage, setLinkFlowMessage] = useState<string | null>(null);
 	const [linking, setLinking] = useState(false);
+
+	const getBackendMessage = useCallback(
+		(state: BackendStatus['state']) => {
+			if (state === 'online') return copy.dashboard.backend.online;
+			if (state === 'offline') return copy.dashboard.backend.offline;
+			if (state === 'degraded') return copy.dashboard.backend.degraded;
+			return copy.dashboard.backend.unknown;
+		},
+		[copy.dashboard.backend.degraded, copy.dashboard.backend.offline, copy.dashboard.backend.online, copy.dashboard.backend.unknown]
+	);
+
+	const setBackendState = (state: BackendStatus['state']) => {
+		setBackendStatus({
+			state,
+			message: getBackendMessage(state),
+			lastChecked: nowIso(),
+		});
+	};
+
+	const appendLog = (entry: LogEntry) => {
+		setLogs((prev) => [...prev.slice(-99), entry]);
+	};
+
+	const logManual = (input: {
+		endpoint: string;
+		method?: string;
+		ok: boolean;
+		status?: number;
+		payload?: unknown;
+		data?: unknown;
+		error?: string;
+	}) =>
+		appendLog({
+			id: createLogId(),
+			ts: nowIso(),
+			method: input.method ?? 'APP',
+			endpoint: input.endpoint,
+			url: `${API_BASE}${input.endpoint}`,
+			ok: input.ok,
+			status: input.status,
+			durationMs: 0,
+			attempt: 1,
+			retries: 0,
+			request: input.payload ? { body: input.payload } : undefined,
+			response: input.data !== undefined ? { body: input.data } : undefined,
+			error: input.error,
+		});
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 	const isDark = theme === 'dark';
@@ -291,6 +351,13 @@ export default function App() {
 	}, [locale]);
 
 	useEffect(() => {
+		setBackendStatus((prev) => ({
+			...prev,
+			message: getBackendMessage(prev.state),
+		}));
+	}, [getBackendMessage]);
+
+	useEffect(() => {
 		if (apptRequestSlot) setAppointmentFormError(null);
 	}, [apptRequestSlot]);
 
@@ -376,20 +443,6 @@ export default function App() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [apptRequestNutriUid]);
 
-	function pushOk(endpoint: string, payload: unknown | undefined, data: unknown) {
-		setLogs((prev) => [
-			...prev,
-			{ ts: nowIso(), endpoint, payload, ok: true, data },
-		]);
-	}
-
-	function pushErr(endpoint: string, payload: unknown | undefined, error: string) {
-		setLogs((prev) => [
-			...prev,
-			{ ts: nowIso(), endpoint, payload, ok: false, error },
-		]);
-	}
-
 	function pushToast(message: string, tone: Toast['tone'] = 'info') {
 		const id =
 			typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -408,44 +461,38 @@ export default function App() {
 	): Promise<AuthedFetchResult> {
 		if (!user) {
 			const error = copy.errors.unauthenticated;
-			pushErr(endpoint, body, error);
-			return { ok: false, status: 401, data: null, error };
+			logManual({ endpoint, payload: body, ok: false, status: 401, error });
+			return { ok: false, status: 401, data: null, error, attempts: 0, durationMs: 0 };
 		}
 		const token = await getValidIdToken();
 		if (!token) {
 			const error = sessionError ?? copy.errors.unauthenticated;
-			pushErr(endpoint, body, error);
-			return { ok: false, status: 401, data: null, error };
+			logManual({ endpoint, payload: body, ok: false, status: 401, error });
+			return { ok: false, status: 401, data: null, error, attempts: 0, durationMs: 0 };
 		}
 
-		let res: Response;
-		try {
-			res = await fetch(`${API_BASE}${endpoint}`, {
-				method,
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
-				body: body ? JSON.stringify(body) : undefined,
-			});
-		} catch (err) {
-			const error =
-				err instanceof Error ? err.message : copy.errors.network;
-			pushErr(endpoint, body, error);
-			return { ok: false, status: 0, data: null, error };
+		const result = await fetchJSON({
+			baseUrl: API_BASE,
+			endpoint,
+			method,
+			body,
+			headers: { Authorization: `Bearer ${token}` },
+			timeoutMs: 12_000,
+			retries: 2,
+			onLog: appendLog,
+		});
+
+		if (result.ok) {
+			setBackendState('online');
+			return result;
 		}
 
-		const data = await res.json().catch(() => null);
-		if (!res.ok) {
-			const errorMessage =
-				getStringField(data, 'message') ??
-				`HTTP ${res.status} ${res.statusText}`;
-			pushErr(endpoint, body, `${errorMessage} :: ${JSON.stringify(data)}`);
-			return { ok: false, status: res.status, data, error: errorMessage };
-		}
-	pushOk(endpoint, body, data);
-	return { ok: true, status: res.status, data };
-}
+		setApiErrorCount((prev) => prev + 1);
+		setBackendState(result.status === 0 ? 'offline' : 'degraded');
+		const fallbackError =
+			result.error ?? getStringField(result.data, 'message') ?? copy.errors.unknown;
+		return { ...result, error: fallbackError };
+	}
 
 function getEmailError(value: string) {
 	if (!value.trim()) return copy.auth.errors.emailRequired;
@@ -478,20 +525,20 @@ function getEmailError(value: string) {
 		try {
 			const result = await login(email, password);
 			if (result.ok && result.user) {
-				pushOk('auth/login', { email }, { uid: result.user.uid });
+				logManual({ endpoint: '/auth/login', method: 'AUTH', ok: true, payload: { email }, data: { uid: result.user.uid } });
 				pushToast(copy.toasts.sessionStarted, 'success');
 				navigate('/dashboard');
 			} else {
 				const msg = result.error ?? copy.errors.unknown;
 				setAuthActionError(msg);
-				pushErr('auth/login', { email }, msg);
+				logManual({ endpoint: '/auth/login', method: 'AUTH', ok: false, payload: { email }, error: msg });
 				pushToast(copy.toasts.loginError, 'error');
 				setStickyAuthField('email');
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : copy.errors.unknown;
 			setAuthActionError(msg);
-			pushErr('auth/login', { email }, msg);
+			logManual({ endpoint: '/auth/login', method: 'AUTH', ok: false, payload: { email }, error: msg });
 			pushToast(copy.toasts.loginError, 'error');
 			setStickyAuthField('email');
 		} finally {
@@ -509,20 +556,26 @@ function getEmailError(value: string) {
 		try {
 			const result = await register(email, password);
 			if (result.ok && result.user) {
-				pushOk('auth/register', { email }, { uid: result.user.uid });
+				logManual({
+					endpoint: '/auth/register',
+					method: 'AUTH',
+					ok: true,
+					payload: { email },
+					data: { uid: result.user.uid },
+				});
 				pushToast(copy.toasts.accountCreated, 'success');
 				navigate('/dashboard');
 			} else {
 				const msg = result.error ?? copy.errors.unknown;
 				setAuthActionError(msg);
-				pushErr('auth/register', { email }, msg);
+				logManual({ endpoint: '/auth/register', method: 'AUTH', ok: false, payload: { email }, error: msg });
 				pushToast(copy.toasts.registerError, 'error');
 				setStickyAuthField('email');
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : copy.errors.unknown;
 			setAuthActionError(msg);
-			pushErr('auth/register', { email }, msg);
+			logManual({ endpoint: '/auth/register', method: 'AUTH', ok: false, payload: { email }, error: msg });
 			pushToast(copy.toasts.registerError, 'error');
 			setStickyAuthField('email');
 		} finally {
@@ -536,21 +589,22 @@ function getEmailError(value: string) {
 		try {
 			const result = await logoutAndRevoke();
 			if (result.error) {
-				pushErr('auth/logout', undefined, result.error);
+				logManual({ endpoint: '/auth/logout', method: 'AUTH', ok: false, error: result.error });
 				pushToast(copy.errors.logoutRevoke, 'error');
 			} else {
-				pushOk('auth/logout', undefined, { ok: true });
+				logManual({ endpoint: '/auth/logout', method: 'AUTH', ok: true, data: { ok: true } });
 				pushToast(copy.toasts.logoutSuccess, 'info');
 			}
 			setPatients([]);
 			setAppointments([]);
 			navigate('/login');
 		} catch (err) {
-			pushErr(
-				'auth/logout',
-				undefined,
-				err instanceof Error ? err.message : copy.errors.unknown
-			);
+			logManual({
+				endpoint: '/auth/logout',
+				method: 'AUTH',
+				ok: false,
+				error: err instanceof Error ? err.message : copy.errors.unknown,
+			});
 			pushToast(copy.toasts.logoutError, 'error');
 		} finally {
 			setLoading(false);
@@ -561,24 +615,30 @@ function getEmailError(value: string) {
 		setLoading(true);
 		try {
 			if (!user) {
-				pushErr('auth/refresh', undefined, 'Sin usuario logueado');
+				logManual({ endpoint: '/auth/refresh', method: 'AUTH', ok: false, error: 'Sin usuario logueado' });
 				return;
 			}
 			const ok = await refreshClaims();
 			if (ok) {
-				pushOk('auth/refresh', undefined, { role: claims.role, clinicId: claims.clinicId });
+				logManual({
+					endpoint: '/auth/refresh',
+					method: 'AUTH',
+					ok: true,
+					data: { role: claims.role, clinicId: claims.clinicId },
+				});
 				pushToast(copy.toasts.claimsRefreshed, 'success');
 			} else {
 				const error = sessionError ?? copy.errors.refreshSession;
-				pushErr('auth/refresh', undefined, error);
+				logManual({ endpoint: '/auth/refresh', method: 'AUTH', ok: false, error });
 				pushToast(copy.toasts.claimsError, 'error');
 			}
 		} catch (err) {
-			pushErr(
-				'auth/refresh',
-				undefined,
-				err instanceof Error ? err.message : copy.errors.unknown
-			);
+			logManual({
+				endpoint: '/auth/refresh',
+				method: 'AUTH',
+				ok: false,
+				error: err instanceof Error ? err.message : copy.errors.unknown,
+			});
 			pushToast(copy.toasts.claimsError, 'error');
 		} finally {
 			setLoading(false);
@@ -640,11 +700,13 @@ function getEmailError(value: string) {
 		try {
 			const chosenNutri = patientAssignSelections[patientId];
 			if (!chosenNutri) {
-				pushErr(
-					'/patients/:id (assign)',
-					{ patientId },
-					copy.dashboard.patients.selectNutri
-				);
+				logManual({
+					endpoint: '/patients/:id (assign)',
+					method: 'VALIDATION',
+					ok: false,
+					payload: { patientId },
+					error: copy.dashboard.patients.selectNutri,
+				});
 				return;
 			}
 			const res = await authedFetch('PATCH', `/patients/${patientId}`, {
@@ -753,11 +815,13 @@ function getEmailError(value: string) {
 
 	async function handleRequestAppointment() {
 		if (!apptRequestNutriUid) {
-			pushErr(
-				'/appointments/request',
-				{ apptRequestNutriUid, apptRequestSlot },
-				'Falta nutriUid para pedir turno'
-			);
+			logManual({
+				endpoint: '/appointments/request',
+				method: 'VALIDATION',
+				ok: false,
+				payload: { apptRequestNutriUid, apptRequestSlot },
+				error: 'Falta nutriUid para pedir turno',
+			});
 			return;
 		}
 		const manualIso = apptManualSlot ? toIsoFromDatetimeLocal(apptManualSlot) : null;
@@ -768,11 +832,13 @@ function getEmailError(value: string) {
 		const scheduledIso = apptRequestSlot || manualIso;
 		if (!scheduledIso) {
 			setAppointmentFormError(copy.dashboard.appointments.form.slotRequired);
-			pushErr(
-				'/appointments/request',
-				{ apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
-				copy.dashboard.appointments.form.slotRequired
-			);
+			logManual({
+				endpoint: '/appointments/request',
+				method: 'VALIDATION',
+				ok: false,
+				payload: { apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
+				error: copy.dashboard.appointments.form.slotRequired,
+			});
 			return;
 		}
 		setAppointmentFormError(null);
@@ -803,11 +869,12 @@ function getEmailError(value: string) {
 
 	async function handleLinkPatientAndRetry() {
 		if (!user) {
-			pushErr(
-				'patients/link-and-retry',
-				undefined,
-				copy.dashboard.appointments.linking.needAuth
-			);
+			logManual({
+				endpoint: '/patients/link-and-retry',
+				method: 'VALIDATION',
+				ok: false,
+				error: copy.dashboard.appointments.linking.needAuth,
+			});
 			return;
 		}
 
@@ -1004,6 +1071,8 @@ function getEmailError(value: string) {
 		handleLogout,
 		handleGetMe,
 		authedFetch,
+		backendStatus,
+		apiErrorCount,
 		pName,
 		setPName,
 		pEmail,
