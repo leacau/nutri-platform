@@ -1,6 +1,5 @@
 import {
 	useEffect,
-	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -15,13 +14,12 @@ import {
 	signOut,
 	type User,
 } from 'firebase/auth';
-import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import './App.css';
 import { auth } from './firebase';
 import { getCopy, supportedLocales, type Locale } from './i18n';
-import AuthPage from './pages/AuthPage';
-import Dashboard from './pages/Dashboard';
-import Landing from './pages/Landing';
+import { ConfirmModal, ToastStack, Topbar } from './components';
+import { AuthPage, Dashboard, Landing } from './pages';
 import type {
 	AuthedFetchResult,
 	Claims,
@@ -195,7 +193,6 @@ export default function App() {
 	});
 	const [linkFlowMessage, setLinkFlowMessage] = useState<string | null>(null);
 	const [linking, setLinking] = useState(false);
-	const localeSelectId = useId();
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 	const isDark = theme === 'dark';
@@ -854,13 +851,6 @@ export default function App() {
 		[copy]
 	);
 
-	const toastIcons: Record<Toast['tone'], string> = {
-		success: '✅',
-		info: 'ℹ️',
-		warning: '⚠️',
-		error: '❌',
-	};
-
 	const authPageProps = {
 		copy,
 		authErrors,
@@ -955,82 +945,23 @@ export default function App() {
 
 	return (
 		<div>
-			<div className='toast-stack' aria-live='polite'>
-				{toasts.map((toast) => (
-					<div key={toast.id} className={`toast ${toast.tone}`}>
-						<span className='toast-icon' aria-hidden>
-								{toastIcons[toast.tone]}
-							</span>
-							<div>{toast.message}</div>
-						</div>
-					))}
-				</div>
-				{confirmAction && (
-					<div className='modal-backdrop' role='dialog' aria-modal='true'>
-						<div className='modal'>
-							<p className='eyebrow'>
-								{confirmAction.type === 'cancel'
-									? copy.confirm.cancel.title
-									: copy.confirm.complete.title}
-							</p>
-							<h3>{confirmCopy[confirmAction.type].title}</h3>
-							<p className='muted'>{confirmCopy[confirmAction.type].body}</p>
-							<div className='actions end'>
-								<button className='btn ghost' onClick={() => setConfirmAction(null)}>
-									{copy.confirm.back}
-								</button>
-								<button
-									className={`btn ${confirmCopy[confirmAction.type].tone === 'warning' ? 'danger' : 'success'}`}
-									onClick={handleConfirmAction}
-								>
-									{confirmCopy[confirmAction.type].confirmLabel}
-								</button>
-							</div>
-						</div>
-					</div>
-				)}
-				<nav className='topbar'>
-					<div className='actions'>
-						<Link to='/' className='brand'>
-							{copy.nav.brand}
-						</Link>
-						<span className='badge'>{copy.nav.badge}</span>
-					</div>
-					<div className='top-actions'>
-						<label className='field-inline' htmlFor={localeSelectId}>
-							<span className='muted small'>{copy.nav.languageLabel}</span>
-							<select
-								id={localeSelectId}
-								value={locale}
-								onChange={(e) => setLocale(e.target.value as Locale)}
-							>
-								{supportedLocales.map((loc) => {
-									const locCopy = getCopy(loc);
-									return (
-										<option key={loc} value={loc}>
-											{locCopy.languageName}
-										</option>
-									);
-								})}
-							</select>
-						</label>
-						<Link to='/' className='link'>
-							{copy.nav.home}
-					</Link>
-					<Link to='/dashboard' className='link'>
-						{copy.nav.dashboard}
-					</Link>
-					{user ? (
-						<button className='btn ghost sm' onClick={handleLogout} disabled={loading}>
-							{copy.nav.logout}
-						</button>
-					) : (
-						<Link to='/login' className='btn sm'>
-							{copy.nav.login}
-						</Link>
-					)}
-				</div>
-			</nav>
+			<ToastStack toasts={toasts} />
+			<ConfirmModal
+				confirmAction={confirmAction}
+				confirmCopy={confirmCopy}
+				copy={copy}
+				onCancel={() => setConfirmAction(null)}
+				onConfirm={handleConfirmAction}
+			/>
+			<Topbar
+				copy={copy}
+				locale={locale}
+				setLocale={setLocale}
+				supportedLocales={supportedLocales}
+				user={user}
+				loading={loading}
+				onLogout={handleLogout}
+			/>
 			<Routes>
 				<Route path='/' element={<Landing copy={copy} />} />
 				<Route path='/login' element={<AuthPage {...authPageProps} />} />
