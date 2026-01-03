@@ -5,6 +5,7 @@ import morgan from 'morgan';
 
 import { errorHandler } from './middlewares/errorHandler.js';
 import { apiRouter } from './routes/api.js';
+import { metricsMiddleware, metricsRegistry } from './middlewares/metrics.js';
 
 export function buildApp(): Express {
 	const app = express();
@@ -14,6 +15,9 @@ export function buildApp(): Express {
 
 	// Logging
 	app.use(morgan('dev'));
+
+	// Métricas / observabilidad
+	app.use(metricsMiddleware);
 
 	// JSON (limit bajo para reducir riesgo DoS)
 	app.use(express.json({ limit: '256kb' }));
@@ -30,6 +34,12 @@ export function buildApp(): Express {
 			credentials: false,
 		})
 	);
+
+	// Prometheus metrics
+	app.get('/metrics', async (_req: Request, res: Response) => {
+		res.setHeader('Content-Type', metricsRegistry.contentType);
+		res.send(await metricsRegistry.metrics());
+	});
 
 	// Health "root" (requisito)
 	app.get('/health', (_req: Request, res: Response) => {
