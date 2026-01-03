@@ -834,7 +834,9 @@ export default function App() {
 					<label className='field'>
 						<span>Email</span>
 						<input
-							ref={(el) => (authFieldRefs.current.email = el)}
+							ref={(el) => {
+								authFieldRefs.current.email = el;
+							}}
 							value={email}
 							onFocus={() => setStickyAuthField('email')}
 							onChange={(e) => {
@@ -851,7 +853,9 @@ export default function App() {
 						<span>Password</span>
 						<input
 							type={showPassword ? 'text' : 'password'}
-							ref={(el) => (authFieldRefs.current.password = el)}
+							ref={(el) => {
+								authFieldRefs.current.password = el;
+							}}
 							value={password}
 							onFocus={() => setStickyAuthField('password')}
 							onChange={(e) => {
