@@ -10,6 +10,7 @@ import { sanitizePatientForRole } from '../security/patientSanitizer.js';
 import { getDocInClinic } from '../security/getDocInClinic.js';
 import { Timestamp } from 'firebase-admin/firestore';
 import { denyAuthz } from '../security/authz.js';
+import { logEvent } from '../observability/eventLogger.js';
 
 export const patientsRouter = Router();
 
@@ -319,6 +320,12 @@ patientsRouter.patch(
 			const freshSnap = await db.collection('patients').doc(id).get();
 			const fresh = { ...(freshSnap.data() as PatientDoc), id: freshSnap.id };
 
+			logEvent('patient_link', {
+				req,
+				clinicId: fresh.clinicId,
+				data: { patientId: fresh.id, linkedUid: fresh.linkedUid },
+			});
+
 			return res.status(200).json({
 				success: true,
 				message: 'Patient linked',
@@ -379,6 +386,13 @@ patientsRouter.patch(
 
 		const freshSnap = await db.collection('patients').doc(id).get();
 		const fresh = { ...(freshSnap.data() as PatientDoc), id: freshSnap.id };
+
+		const eventName = linkedUid ? 'patient_link' : 'patient_unlink';
+		logEvent(eventName, {
+			req,
+			clinicId: fresh.clinicId,
+			data: { patientId: fresh.id, linkedUid },
+		});
 
 		return res.status(200).json({
 			success: true,

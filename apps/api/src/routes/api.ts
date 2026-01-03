@@ -5,6 +5,7 @@ import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { devRouter } from './dev.js';
 import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
+import { logEvent } from '../observability/eventLogger.js';
 
 export const apiRouter = Router();
 
@@ -23,6 +24,14 @@ apiRouter.get('/users/me', authMiddleware, (req: Request, res: Response) => {
 			message: 'Unauthenticated',
 		});
 	}
+
+	logEvent('login', {
+		req,
+		data: {
+			endpoint: '/api/users/me',
+			email: req.auth.email,
+		},
+	});
 
 	return res.status(200).json({
 		success: true,

@@ -8,6 +8,7 @@ import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { getFirebaseAdmin } from '../firebase/admin.js';
 import type { Role } from '../types/auth.js';
 import { denyAuthz, logAuthzDenied } from '../security/authz.js';
+import { logEvent } from '../observability/eventLogger.js';
 
 export type AppointmentStatus =
 	| 'requested'
@@ -208,6 +209,13 @@ function buildFreeBusySlots(
 	return slots;
 }
 
+function timestampToIso(
+	ts: FirebaseFirestore.Timestamp | null | undefined
+): string | null {
+	if (!ts) return null;
+	return new Date(ts.toMillis()).toISOString();
+}
+
 function canCancelWith24hRule(
 	status: AppointmentStatus,
 	scheduledFor: FirebaseFirestore.Timestamp | null,
@@ -364,6 +372,19 @@ router.post(
 		};
 
 		const ref = await firestore.collection('appointments').add(doc);
+
+		logEvent('appointment_requested', {
+			req,
+			clinicId,
+			data: {
+				appointmentId: ref.id,
+				patientId,
+				patientUid: ctx.uid,
+				nutriUid,
+				scheduledForIso: timestampToIso(scheduledTimestamp),
+				status: doc.status,
+			},
+		});
 
 		return res.status(201).json({
 			success: true,
@@ -557,6 +578,25 @@ router.post(
 			};
 		});
 
+		if (
+			result.http === 200 &&
+			result.body.success === true &&
+			result.body.message === 'Scheduled' &&
+			'data' in result.body
+		) {
+			const appt = result.body.data as AppointmentDoc & { id: string };
+			logEvent('appointment_scheduled', {
+				req,
+				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
+				data: {
+					appointmentId: appt.id,
+					patientUid: appt.patientUid,
+					nutriUid: appt.nutriUid,
+					scheduledForIso: timestampToIso(appt.scheduledFor),
+				},
+			});
+		}
+
 		return res.status(result.http).json(result.body);
 	}
 );
@@ -737,6 +777,26 @@ router.post(
 			};
 		});
 
+		if (
+			result.http === 200 &&
+			result.body.success === true &&
+			result.body.message === 'Cancelled' &&
+			'data' in result.body
+		) {
+			const appt = result.body.data as AppointmentDoc & { id: string };
+			logEvent('appointment_cancelled', {
+				req,
+				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
+				data: {
+					appointmentId: appt.id,
+					patientUid: appt.patientUid,
+					cancelledByUid: appt.cancelledByUid,
+					cancelledByRole: appt.cancelledByRole,
+					scheduledForIso: timestampToIso(appt.scheduledFor),
+				},
+			});
+		}
+
 		return res.status(result.http).json(result.body);
 	}
 );
@@ -849,6 +909,26 @@ router.post(
 				},
 			};
 		});
+
+		if (
+			result.http === 200 &&
+			result.body.success === true &&
+			result.body.message === 'Completed' &&
+			'data' in result.body
+		) {
+			const appt = result.body.data as AppointmentDoc & { id: string };
+			logEvent('appointment_completed', {
+				req,
+				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
+				data: {
+					appointmentId: appt.id,
+					patientUid: appt.patientUid,
+					completedByUid: appt.completedByUid,
+					completedByRole: appt.completedByRole,
+					scheduledForIso: timestampToIso(appt.scheduledFor),
+				},
+			});
+		}
 
 		return res.status(result.http).json(result.body);
 	}
