@@ -236,6 +236,8 @@ type Translation = {
 		unauthenticated: string;
 		network: string;
 		unknown: string;
+		refreshSession: string;
+		logoutRevoke: string;
 	};
 };
 
@@ -519,6 +521,8 @@ const translations: Record<Locale, Translation> = {
 			unauthenticated: 'Usuario no autenticado',
 			network: 'Error de red al llamar al backend',
 			unknown: 'Error desconocido',
+			refreshSession: 'No pudimos refrescar tu sesión. Volvé a iniciar sesión.',
+			logoutRevoke: 'No pudimos revocar la sesión. La cerramos localmente.',
 		},
 	},
 	en: {
@@ -800,6 +804,8 @@ const translations: Record<Locale, Translation> = {
 			unauthenticated: 'User not authenticated',
 			network: 'Network error while calling the backend',
 			unknown: 'Unknown error',
+			refreshSession: 'We could not refresh your session. Please sign in again.',
+			logoutRevoke: 'We could not revoke the session. It was closed locally.',
 		},
 	},
 };

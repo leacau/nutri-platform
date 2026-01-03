@@ -5,29 +5,20 @@ import {
 	useState,
 	type ReactElement,
 } from 'react';
-import {
-	createUserWithEmailAndPassword,
-	getIdToken,
-	getIdTokenResult,
-	onAuthStateChanged,
-	signInWithEmailAndPassword,
-	signOut,
-	type User,
-} from 'firebase/auth';
+import type { User } from 'firebase/auth';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import './App.css';
-import { auth } from './firebase';
 import { getCopy, supportedLocales, type Locale } from './i18n';
 import { ConfirmModal, ToastStack, Topbar } from './components';
 import { AuthPage, Dashboard, Landing } from './pages';
 import type {
 	AuthedFetchResult,
-	Claims,
 	ConfirmAction,
 	LogEntry,
 	RoleTab,
 	Toast,
 } from './types/app';
+import useAuthSession from './hooks/useAuthSession';
 
 type ProtectedProps = {
 	user: User | null;
@@ -115,8 +106,17 @@ export default function App() {
 
 	const navigate = useNavigate();
 
-	const [user, setUser] = useState<User | null>(null);
-	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
+	const {
+		user,
+		claims,
+		sessionError,
+		login,
+		register,
+		refreshClaims,
+		getValidIdToken,
+		logoutAndRevoke,
+		clearSessionError,
+	} = useAuthSession();
 	const [loading, setLoading] = useState(false);
 	const [theme, setTheme] = useState<'light' | 'dark'>(() => {
 		if (typeof window === 'undefined') return 'light';
@@ -148,6 +148,7 @@ export default function App() {
 	const [emailError, setEmailError] = useState<string | null>(null);
 	const [passwordError, setPasswordError] = useState<string | null>(null);
 	const [authErrors, setAuthErrors] = useState<string[]>([]);
+	const sessionErrorRef = useRef<string | null>(null);
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
 
@@ -208,8 +209,18 @@ export default function App() {
 		if (emailError) inlineErrors.push(emailError);
 		if (passwordError) inlineErrors.push(passwordError);
 		if (authActionError) inlineErrors.push(authActionError);
+		if (sessionError) inlineErrors.push(sessionError);
 		setAuthErrors(inlineErrors);
-	}, [emailError, passwordError, authActionError]);
+	}, [emailError, passwordError, authActionError, sessionError]);
+
+	useEffect(() => {
+		if (sessionError && sessionError !== sessionErrorRef.current) {
+			pushToast(sessionError, 'error');
+			sessionErrorRef.current = sessionError;
+		} else if (!sessionError) {
+			sessionErrorRef.current = null;
+		}
+	}, [sessionError]);
 
 	useEffect(() => {
 		document.documentElement.setAttribute('data-theme', theme);
@@ -268,30 +279,22 @@ export default function App() {
 	}, [claims.clinicId, patients, appointments]);
 
 	useEffect(() => {
-		const unsub = onAuthStateChanged(auth, async (u: User | null) => {
-			setUser(u);
-			if (!u) {
-				setClaims({ role: null, clinicId: null });
-				return;
-			}
-			const tokenRes = await getIdTokenResult(u, true);
-			const role =
-				typeof tokenRes.claims.role === 'string' ? tokenRes.claims.role : null;
-			const clinicId =
-				typeof tokenRes.claims.clinicId === 'string'
-					? tokenRes.claims.clinicId
-					: null;
-			setClaims({ role, clinicId });
-			setSelectedClinicForNewPatient((prev) => prev || clinicId || '');
-		});
-		return () => unsub();
-	}, []);
+		if (claims.clinicId) {
+			setSelectedClinicForNewPatient((prev) => prev || claims.clinicId || '');
+		}
+	}, [claims.clinicId]);
 
 	useEffect(() => {
 		setLinkRequired({ active: false, reason: '' });
 		setLinkFlowMessage(null);
 		setLinking(false);
 	}, [user?.uid]);
+
+	useEffect(() => {
+		if (!user) {
+			setSelectedClinicForNewPatient('');
+		}
+	}, [user]);
 
 	useEffect(() => {
 		if (!selectedClinicForNewPatient && clinicOptions.length > 0) {
@@ -346,7 +349,12 @@ export default function App() {
 			pushErr(endpoint, body, error);
 			return { ok: false, status: 401, data: null, error };
 		}
-		const token = await getIdToken(user, true);
+		const token = await getValidIdToken();
+		if (!token) {
+			const error = sessionError ?? copy.errors.unauthenticated;
+			pushErr(endpoint, body, error);
+			return { ok: false, status: 401, data: null, error };
+		}
 
 		let res: Response;
 		try {
@@ -405,11 +413,20 @@ export default function App() {
 		setLoading(true);
 		setAuthPending(true);
 		setAuthActionError(null);
+		clearSessionError();
 		try {
-			const cred = await signInWithEmailAndPassword(auth, email, password);
-			pushOk('auth/login', { email }, { uid: cred.user.uid });
-			pushToast(copy.toasts.sessionStarted, 'success');
-			navigate('/dashboard');
+			const result = await login(email, password);
+			if (result.ok && result.user) {
+				pushOk('auth/login', { email }, { uid: result.user.uid });
+				pushToast(copy.toasts.sessionStarted, 'success');
+				navigate('/dashboard');
+			} else {
+				const msg = result.error ?? copy.errors.unknown;
+				setAuthActionError(msg);
+				pushErr('auth/login', { email }, msg);
+				pushToast(copy.toasts.loginError, 'error');
+				setStickyAuthField('email');
+			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : copy.errors.unknown;
 			setAuthActionError(msg);
@@ -427,11 +444,20 @@ export default function App() {
 		setLoading(true);
 		setAuthPending(true);
 		setAuthActionError(null);
+		clearSessionError();
 		try {
-			const cred = await createUserWithEmailAndPassword(auth, email, password);
-			pushOk('auth/register', { email }, { uid: cred.user.uid });
-			pushToast(copy.toasts.accountCreated, 'success');
-			navigate('/dashboard');
+			const result = await register(email, password);
+			if (result.ok && result.user) {
+				pushOk('auth/register', { email }, { uid: result.user.uid });
+				pushToast(copy.toasts.accountCreated, 'success');
+				navigate('/dashboard');
+			} else {
+				const msg = result.error ?? copy.errors.unknown;
+				setAuthActionError(msg);
+				pushErr('auth/register', { email }, msg);
+				pushToast(copy.toasts.registerError, 'error');
+				setStickyAuthField('email');
+			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : copy.errors.unknown;
 			setAuthActionError(msg);
@@ -447,11 +473,16 @@ export default function App() {
 	async function handleLogout() {
 		setLoading(true);
 		try {
-			await signOut(auth);
-			pushOk('auth/logout', undefined, { ok: true });
+			const result = await logoutAndRevoke();
+			if (result.error) {
+				pushErr('auth/logout', undefined, result.error);
+				pushToast(copy.errors.logoutRevoke, 'error');
+			} else {
+				pushOk('auth/logout', undefined, { ok: true });
+				pushToast(copy.toasts.logoutSuccess, 'info');
+			}
 			setPatients([]);
 			setAppointments([]);
-			pushToast(copy.toasts.logoutSuccess, 'info');
 			navigate('/login');
 		} catch (err) {
 			pushErr(
@@ -472,16 +503,15 @@ export default function App() {
 				pushErr('auth/refresh', undefined, 'Sin usuario logueado');
 				return;
 			}
-			const tokenRes = await getIdTokenResult(user, true);
-			const role =
-				typeof tokenRes.claims.role === 'string' ? tokenRes.claims.role : null;
-			const clinicId =
-				typeof tokenRes.claims.clinicId === 'string'
-					? tokenRes.claims.clinicId
-					: null;
-			setClaims({ role, clinicId });
-			pushOk('auth/refresh', undefined, { role, clinicId });
-			pushToast(copy.toasts.claimsRefreshed, 'success');
+			const ok = await refreshClaims();
+			if (ok) {
+				pushOk('auth/refresh', undefined, { role: claims.role, clinicId: claims.clinicId });
+				pushToast(copy.toasts.claimsRefreshed, 'success');
+			} else {
+				const error = sessionError ?? copy.errors.refreshSession;
+				pushErr('auth/refresh', undefined, error);
+				pushToast(copy.toasts.claimsError, 'error');
+			}
 		} catch (err) {
 			pushErr(
 				'auth/refresh',

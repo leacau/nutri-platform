@@ -2,7 +2,7 @@ import { connectAuthEmulator, getAuth } from 'firebase/auth';
 
 import { initializeApp } from 'firebase/app';
 
-const firebaseConfig = {
+export const firebaseConfig = {
 	apiKey: 'fake-api-key',
 	authDomain: 'demo-nutri-platform.firebaseapp.com',
 	projectId: 'demo-nutri-platform',
