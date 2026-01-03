@@ -4,7 +4,8 @@
 
 body {
 	margin: 0;
-	background: #f6f7fb;
+	background: var(--bg);
+	color: var(--text);
 }
 
 a {

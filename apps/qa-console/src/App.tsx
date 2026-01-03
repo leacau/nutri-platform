@@ -14,6 +14,22 @@ import { auth } from './firebase';
 
 type Claims = { role: string | null; clinicId: string | null };
 
+type RoleTab = {
+	key: 'patient' | 'nutri' | 'clinic_admin' | 'platform_admin';
+	label: string;
+	icon: string;
+	description: string;
+	tips: string[];
+};
+
+type Toast = {
+	id: string;
+	message: string;
+	tone: 'success' | 'info' | 'warning' | 'error';
+};
+
+type ConfirmAction = { type: 'cancel' | 'complete'; apptId: string };
+
 type LogEntry =
 	| { ts: string; endpoint: string; payload?: unknown; ok: true; data: unknown }
 	| {
@@ -89,6 +105,12 @@ export default function App() {
 	const [user, setUser] = useState<User | null>(null);
 	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
 	const [loading, setLoading] = useState(false);
+	const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+		if (typeof window === 'undefined') return 'light';
+		const stored = window.localStorage.getItem('qa-console-theme');
+		if (stored === 'light' || stored === 'dark') return stored;
+		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+	});
 
 	const authFieldRefs = useRef<{ email: HTMLInputElement | null; password: HTMLInputElement | null }>(
 		{ email: null, password: null }
@@ -103,8 +125,61 @@ export default function App() {
 	const [emailError, setEmailError] = useState<string | null>(null);
 	const [passwordError, setPasswordError] = useState<string | null>(null);
 	const [authErrors, setAuthErrors] = useState<string[]>([]);
+	const [toasts, setToasts] = useState<Toast[]>([]);
+	const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
 
 	const [logs, setLogs] = useState<LogEntry[]>([]);
+
+	const roleTabs = useMemo<RoleTab[]>(
+		() => [
+			{
+				key: 'patient',
+				label: 'Paciente',
+				icon: '🧍‍♀️',
+				description: 'Solicitá turnos y seguí tu agenda vinculada.',
+				tips: [
+					'Elegí un nutri y pedí turno; si el perfil no está vinculado, crealo desde la alerta.',
+					'Podés reprogramar o cancelar turnos que solicitaste.',
+					'Usá el horario manual si no ves slots disponibles.',
+				],
+			},
+			{
+				key: 'nutri',
+				label: 'Nutri',
+				icon: '🥑',
+				description: 'Programá y completá consultas con tus pacientes.',
+				tips: [
+					'Traé los slots disponibles del nutri antes de programar.',
+					'Completá turnos finalizados para marcar el seguimiento.',
+					'Podés ver disponibilidad rápida de la clínica en el panel inferior.',
+				],
+			},
+			{
+				key: 'clinic_admin',
+				label: 'Clínica',
+				icon: '🏥',
+				description: 'Gestioná pacientes y agendas de toda la clínica.',
+				tips: [
+					'Cargá pacientes con clínica asignada y vinculá nutris.',
+					'Programá o reprogramá turnos y mantené la disponibilidad al día.',
+					'Usá la tarjeta de log para auditar llamados al backend.',
+				],
+			},
+			{
+				key: 'platform_admin',
+				label: 'Platform',
+				icon: '🛰️',
+				description: 'Visión cross-clínica para auditar y destrabar flujos.',
+				tips: [
+					'Podés ver y completar turnos de todas las clínicas.',
+					'Filtrá por clínica y nutri para validar aislamientos.',
+					'Refrescá claims si cambiás permisos desde el emulador.',
+				],
+			},
+		],
+		[]
+	);
+	const [activeRoleTab, setActiveRoleTab] = useState<RoleTab['key']>('patient');
 
 	// Pacientes
 	const [pName, setPName] = useState('Juan Perez');
@@ -145,6 +220,8 @@ export default function App() {
 	const [linking, setLinking] = useState(false);
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
+	const isDark = theme === 'dark';
+	const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
 
 	useEffect(() => {
 		const ref = stickyAuthField ? authFieldRefs.current[stickyAuthField] : null;
@@ -158,6 +235,23 @@ export default function App() {
 		if (authActionError) inlineErrors.push(authActionError);
 		setAuthErrors(inlineErrors);
 	}, [emailError, passwordError, authActionError]);
+
+	useEffect(() => {
+		document.documentElement.setAttribute('data-theme', theme);
+		window.localStorage.setItem('qa-console-theme', theme);
+	}, [theme]);
+
+	useEffect(() => {
+		if (claims.role === 'patient') setActiveRoleTab('patient');
+		else if (claims.role === 'nutri') setActiveRoleTab('nutri');
+		else if (claims.role === 'clinic_admin') setActiveRoleTab('clinic_admin');
+		else if (claims.role === 'platform_admin') setActiveRoleTab('platform_admin');
+	}, [claims.role]);
+
+	const activeRoleContent = useMemo(
+		() => roleTabs.find((t) => t.key === activeRoleTab) ?? roleTabs[0],
+		[activeRoleTab, roleTabs]
+	);
 
 	const knownNutris = useMemo(() => {
 		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
@@ -186,71 +280,15 @@ export default function App() {
 			const cid = (p as any).clinicId;
 			if (typeof cid === 'string' && cid) seed.add(cid);
 		});
-		appointments.forEach((a) => {
-			const cid = (a as any).clinicId;
-			if (typeof cid === 'string' && cid) seed.add(cid);
-		});
-		return Array.from(seed);
+	appointments.forEach((a) => {
+		const cid = (a as any).clinicId;
+		if (typeof cid === 'string' && cid) seed.add(cid);
+	});
+	return Array.from(seed);
 	}, [claims.clinicId, patients, appointments]);
 
-	const roleGuide = useMemo(() => {
-		switch (claims.role) {
-			case 'patient':
-				return {
-					title: 'Cómo usar si sos paciente',
-					items: [
-						'Elegí un nutri y solicitá el turno; si ya sabés día/hora, completalo en el paso 1.',
-						'Si recibís error de perfil no vinculado, creá tu paciente en “Pacientes” y pedile a un rol de clínica que te linkee.',
-						'Luego podés reprogramar o cancelar desde la tarjeta del turno.',
-					],
-				};
-			case 'clinic_admin':
-				return {
-					title: 'Cómo usar si sos clinic_admin',
-					items: [
-						'Creá pacientes y asigná el nutri. Luego programá o reprogramá turnos desde la tarjeta.',
-						'Mantené las claims al día: usá “Refrescar claims” tras cambiarlas en el emulador.',
-						'Podés completar o cancelar turnos de tu clínica respetando la ventana de 24h.',
-					],
-				};
-			case 'nutri':
-				return {
-					title: 'Cómo usar si sos nutri',
-					items: [
-						'Programá tus propios turnos y completalos cuando finalicen.',
-						'Si un turno fue pedido para otro nutri, no podrás reasignarlo: pedí ayuda a clinic_admin.',
-						'Mantené tus pacientes actualizados para que aparezcan en el selector.',
-					],
-				};
-			case 'staff':
-				return {
-					title: 'Cómo usar si sos staff',
-					items: [
-						'Podés crear pacientes y ver datos sanitizados de la clínica.',
-						'Para programar turnos necesitás subir a clinic_admin o nutri.',
-					],
-				};
-			case 'platform_admin':
-				return {
-					title: 'Cómo usar si sos platform_admin',
-					items: [
-						'Podés ver y completar turnos de todas las clínicas.',
-						'Usá los filtros de clínica y asignaciones para validar aislamientos.',
-					],
-				};
-			default:
-				return {
-					title: 'Seleccioná un rol para empezar',
-					items: [
-						'Configurá claims con el endpoint dev/set-claims en el emulador.',
-						'Luego refrescá claims y seguí la guía según tu rol.',
-					],
-				};
-		}
-	}, [claims.role]);
-
 	useEffect(() => {
-		const unsub = onAuthStateChanged(auth, async (u) => {
+		const unsub = onAuthStateChanged(auth, async (u: User | null) => {
 			setUser(u);
 			if (!u) {
 				setClaims({ role: null, clinicId: null });
@@ -305,6 +343,17 @@ export default function App() {
 			...prev,
 			{ ts: nowIso(), endpoint, payload, ok: false, error },
 		]);
+	}
+
+	function pushToast(message: string, tone: Toast['tone'] = 'info') {
+		const id =
+			typeof crypto !== 'undefined' && 'randomUUID' in crypto
+				? crypto.randomUUID()
+				: Math.random().toString(36).slice(2);
+		setToasts((prev) => [...prev, { id, message, tone }]);
+		window.setTimeout(() => {
+			setToasts((prev) => prev.filter((t) => t.id !== id));
+		}, 3800);
 	}
 
 	type AuthedFetchResult =
@@ -385,11 +434,13 @@ export default function App() {
 		try {
 			const cred = await signInWithEmailAndPassword(auth, email, password);
 			pushOk('auth/login', { email }, { uid: cred.user.uid });
+			pushToast('Sesión iniciada', 'success');
 			navigate('/dashboard');
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : 'Error desconocido';
 			setAuthActionError(msg);
 			pushErr('auth/login', { email }, msg);
+			pushToast('No pudimos iniciar sesión', 'error');
 			setStickyAuthField('email');
 		} finally {
 			setLoading(false);
@@ -405,11 +456,13 @@ export default function App() {
 		try {
 			const cred = await createUserWithEmailAndPassword(auth, email, password);
 			pushOk('auth/register', { email }, { uid: cred.user.uid });
+			pushToast('Cuenta creada', 'success');
 			navigate('/dashboard');
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : 'Error desconocido';
 			setAuthActionError(msg);
 			pushErr('auth/register', { email }, msg);
+			pushToast('No pudimos registrar el usuario', 'error');
 			setStickyAuthField('email');
 		} finally {
 			setLoading(false);
@@ -424,6 +477,7 @@ export default function App() {
 			pushOk('auth/logout', undefined, { ok: true });
 			setPatients([]);
 			setAppointments([]);
+			pushToast('Sesión cerrada', 'info');
 			navigate('/login');
 		} catch (err) {
 			pushErr(
@@ -431,6 +485,7 @@ export default function App() {
 				undefined,
 				err instanceof Error ? err.message : 'Error desconocido'
 			);
+			pushToast('No pudimos cerrar sesión', 'error');
 		} finally {
 			setLoading(false);
 		}
@@ -452,12 +507,14 @@ export default function App() {
 					: null;
 			setClaims({ role, clinicId });
 			pushOk('auth/refresh', undefined, { role, clinicId });
+			pushToast('Claims actualizadas', 'success');
 		} catch (err) {
 			pushErr(
 				'auth/refresh',
 				undefined,
 				err instanceof Error ? err.message : 'Error desconocido'
 			);
+			pushToast('No pudimos refrescar claims', 'error');
 		} finally {
 			setLoading(false);
 		}
@@ -483,6 +540,9 @@ export default function App() {
 			});
 			if (created.ok) {
 				await handleListPatients();
+				pushToast('Paciente creado', 'success');
+			} else {
+				pushToast('No se pudo crear el paciente', 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -523,6 +583,9 @@ export default function App() {
 			});
 			if (res.ok) {
 				await handleListPatients();
+				pushToast('Nutri asignado', 'success');
+			} else {
+				pushToast('No se pudo asignar el nutri', 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -540,6 +603,7 @@ export default function App() {
 				'data' in (data.data as any)
 			) {
 				setAppointments((data.data as any).data ?? []);
+				pushToast('Turnos actualizados', 'info');
 			}
 		} finally {
 			setLoading(false);
@@ -640,6 +704,7 @@ export default function App() {
 				setLinkRequired({ active: false, reason: '' });
 				setLinkFlowMessage(null);
 				await handleListAppointments();
+				pushToast('Turno solicitado', 'success');
 			} else if (result.status === 403 && claims.role === 'patient') {
 				const reason =
 					(typeof result.data === 'object' &&
@@ -647,8 +712,12 @@ export default function App() {
 						'message' in (result.data as any) &&
 						typeof (result.data as any).message === 'string'
 						? (result.data as any).message
-						: result.error) ?? 'Necesitás vincular tu perfil antes de pedir turno.';
+						: result.error) ??
+					'Necesitás vincular tu perfil antes de pedir turno.';
 				setLinkRequired({ active: true, reason });
+				pushToast('Necesitás vincular tu paciente', 'warning');
+			} else {
+				pushToast('No se pudo solicitar el turno', 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -723,6 +792,7 @@ export default function App() {
 
 			setLinkRequired({ active: false, reason: '' });
 			setLinkFlowMessage('Paciente vinculado. Reintentando solicitud de turno...');
+			pushToast('Paciente vinculado', 'success');
 			await handleRequestAppointment();
 		} finally {
 			setLinking(false);
@@ -749,6 +819,9 @@ export default function App() {
 			});
 			if (res.ok) {
 				await handleListAppointments();
+				pushToast('Turno programado', 'success');
+			} else {
+				pushToast('No se pudo programar el turno', 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -761,6 +834,9 @@ export default function App() {
 			const res = await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
 			if (res.ok) {
 				await handleListAppointments();
+				pushToast('Turno cancelado', 'info');
+			} else {
+				pushToast('No se pudo cancelar el turno', 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -773,11 +849,50 @@ export default function App() {
 			const res = await authedFetch('POST', `/appointments/${apptId}/complete`, {});
 			if (res.ok) {
 				await handleListAppointments();
+				pushToast('Turno completado', 'success');
+			} else {
+				pushToast('No se pudo completar el turno', 'error');
 			}
 		} finally {
 			setLoading(false);
 		}
 	}
+
+	async function handleConfirmAction() {
+		if (!confirmAction) return;
+		const { type, apptId } = confirmAction;
+		setConfirmAction(null);
+		if (type === 'cancel') {
+			await handleCancelAppointment(apptId);
+		} else if (type === 'complete') {
+			await handleCompleteAppointment(apptId);
+		}
+	}
+
+	const confirmCopy: Record<
+		ConfirmAction['type'],
+		{ title: string; body: string; confirmLabel: string; tone: 'warning' | 'success' }
+	> = {
+		cancel: {
+			title: 'Cancelar turno',
+			body: '¿Confirmás que querés cancelar este turno? Se notificará al paciente en la UI.',
+			confirmLabel: 'Sí, cancelar',
+			tone: 'warning',
+		},
+		complete: {
+			title: 'Completar turno',
+			body: 'Al completar, el turno quedará marcado como finalizado.',
+			confirmLabel: 'Marcar como completado',
+			tone: 'success',
+		},
+	};
+
+	const toastIcons: Record<Toast['tone'], string> = {
+		success: '✅',
+		info: 'ℹ️',
+		warning: '⚠️',
+		error: '❌',
+	};
 
 	function Landing() {
 		return (
@@ -929,13 +1044,21 @@ export default function App() {
 				<header className='subheader'>
 					<div>
 						<p className='eyebrow'>Sesión activa</p>
-						<h2>{user?.email ?? 'Sin email'}</h2>
+						<div className='inline-heading'>
+							<h2>{user?.email ?? 'Sin email'}</h2>
+							<span className='pill subtle'>
+								{activeRoleContent.icon} {activeRoleContent.label}
+							</span>
+						</div>
 						<p className='muted'>
 							Rol: <strong>{role ?? 'sin rol'}</strong> — Clínica:{' '}
 							<strong>{claims.clinicId ?? 'n/a'}</strong>
 						</p>
 					</div>
 					<div className='actions'>
+						<button className='btn ghost' onClick={toggleTheme}>
+							{isDark ? '🌙' : '☀️'} {isDark ? 'Modo oscuro' : 'Modo claro'}
+						</button>
 						<button className='btn ghost' disabled={loading} onClick={handleRefreshClaims}>
 							Refrescar claims
 						</button>
@@ -945,13 +1068,29 @@ export default function App() {
 					</div>
 				</header>
 
-				<div className='card'>
-					<h3>{roleGuide.title}</h3>
-					<ul className='muted' style={{ marginTop: 8, paddingLeft: 18 }}>
-						{roleGuide.items.map((tip, idx) => (
-							<li key={idx}>{tip}</li>
+				<div className='card tabs-card'>
+					<div className='tabs'>
+						{roleTabs.map((tab) => (
+							<button
+								key={tab.key}
+								className={`tab ${activeRoleTab === tab.key ? 'is-active' : ''}`}
+								onClick={() => setActiveRoleTab(tab.key)}
+							>
+								<span className='tab-icon' aria-hidden>
+									{tab.icon}
+								</span>
+								<span>{tab.label}</span>
+							</button>
 						))}
-					</ul>
+					</div>
+					<div className='tab-panel'>
+						<p className='muted'>{activeRoleContent.description}</p>
+						<ul className='muted'>
+							{activeRoleContent.tips.map((tip, idx) => (
+								<li key={idx}>{tip}</li>
+							))}
+						</ul>
+					</div>
 				</div>
 
 				<div className='grid two'>
@@ -1283,16 +1422,43 @@ export default function App() {
 										role === 'clinic_admin' ||
 										role === 'platform_admin';
 									const lockNutri = role === 'patient';
+									const status: string = appt.status ?? 'requested';
+									const statusTone =
+										status === 'completed'
+											? 'success'
+											: status === 'cancelled'
+											? 'danger'
+											: status === 'scheduled'
+											? 'warn'
+											: 'info';
+									const statusLabel: Record<string, string> = {
+										requested: 'Solicitado',
+										scheduled: 'Programado',
+										completed: 'Completado',
+										cancelled: 'Cancelado',
+									};
+									const statusIcon: Record<string, string> = {
+										requested: '⏳',
+										scheduled: '📅',
+										completed: '✅',
+										cancelled: '🚫',
+									};
 									return (
 										<div className='appt-card' key={appt.id ?? idx}>
 											<div className='appt-head'>
-												<div>
+												<div className='appt-headline'>
 													<p className='eyebrow'>Turno</p>
 													<strong>{appt.id ?? 'sin-id'}</strong>
 												</div>
-												<span className={`pill ${appt.status === 'completed' ? 'ok' : appt.status === 'cancelled' ? 'error' : ''}`}>
-													{appt.status ?? 'sin-status'}
-												</span>
+												<div className='appt-meta'>
+													<span className={`pill status status-${statusTone}`}>
+														<span aria-hidden>{statusIcon[status] ?? '📌'}</span>{' '}
+														{statusLabel[status] ?? status}
+													</span>
+													<span className='pill subtle'>
+														#{idx + 1}
+													</span>
+												</div>
 											</div>
 											<div className='appt-grid'>
 												<div>
@@ -1327,117 +1493,125 @@ export default function App() {
 														: 'Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.'}
 												</p>
 											)}
-											<div className='actions wrap'>
+											<div className='appt-actions'>
 												{canSchedule && (
-													<>
-														<select
-															value={sched.when}
-															disabled={
-																loadingSlots ||
-																!sched.nutri ||
-																currentSlotsNutri !== sched.nutri ||
-																apptSlots.length === 0
-															}
-															onChange={(e) =>
-																setScheduleSelections((prev) => ({
-																	...prev,
-																	[appt.id]: {
-																		...prev[appt.id],
-																		when: e.target.value,
-																		nutri: sched.nutri,
-																	},
-																}))
-															}
-														>
-															{currentSlotsNutri !== sched.nutri && (
-																<option value=''>Cargá slots para este nutri</option>
-															)}
-															{currentSlotsNutri === sched.nutri && apptSlots.length === 0 && (
-																<option value=''>Sin slots libres en el rango</option>
-															)}
-															{currentSlotsNutri === sched.nutri &&
-																apptSlots.map((slot) => (
-																	<option key={slot} value={slot}>
-																		{formatSlotLabel(slot)}
+													<div className='appt-action-block'>
+														<p className='muted small'>Programar o reprogramar</p>
+														<div className='appt-action-grid'>
+															<select
+																value={sched.nutri}
+																disabled={lockNutri}
+																onChange={(e) =>
+																	setScheduleSelections((prev) => ({
+																		...prev,
+																		[appt.id]: {
+																			...prev[appt.id],
+																			when: '',
+																			manualWhen: '',
+																			nutri: e.target.value,
+																		},
+																	}))
+																}
+															>
+																<option value=''>Elegí nutri</option>
+																{knownNutris.map((n) => (
+																	<option key={n} value={n}>
+																		{n}
 																	</option>
 																))}
-														</select>
-														<select
-															value={sched.nutri}
-															disabled={lockNutri}
-															onChange={(e) =>
-																setScheduleSelections((prev) => ({
-																	...prev,
-																	[appt.id]: {
-																		...prev[appt.id],
-																		when: '',
-																		manualWhen: '',
-																		nutri: e.target.value,
-																	},
-																}))
-															}
-														>
-															<option value=''>Elegí nutri</option>
-															{knownNutris.map((n) => (
-																<option key={n} value={n}>
-																	{n}
-																</option>
-															))}
-														</select>
-														<input
-															type='datetime-local'
-															value={sched.manualWhen ?? ''}
-															onChange={(e) =>
-																setScheduleSelections((prev) => ({
-																	...prev,
-																	[appt.id]: {
-																		...prev[appt.id],
-																		manualWhen: e.target.value,
-																		nutri: sched.nutri,
-																	},
-																}))
-															}
-															placeholder='Fallback manual'
-														/>
+															</select>
+															<select
+																value={sched.when}
+																disabled={
+																	loadingSlots ||
+																	!sched.nutri ||
+																	currentSlotsNutri !== sched.nutri ||
+																	apptSlots.length === 0
+																}
+																onChange={(e) =>
+																	setScheduleSelections((prev) => ({
+																		...prev,
+																		[appt.id]: {
+																			...prev[appt.id],
+																			when: e.target.value,
+																			nutri: sched.nutri,
+																		},
+																	}))
+																}
+															>
+																{currentSlotsNutri !== sched.nutri && (
+																	<option value=''>Cargá slots para este nutri</option>
+																)}
+																{currentSlotsNutri === sched.nutri && apptSlots.length === 0 && (
+																	<option value=''>Sin slots libres en el rango</option>
+																)}
+																{currentSlotsNutri === sched.nutri &&
+																	apptSlots.map((slot) => (
+																		<option key={slot} value={slot}>
+																			{formatSlotLabel(slot)}
+																		</option>
+																	))}
+															</select>
+															<input
+																type='datetime-local'
+																value={sched.manualWhen ?? ''}
+																onChange={(e) =>
+																	setScheduleSelections((prev) => ({
+																		...prev,
+																		[appt.id]: {
+																			...prev[appt.id],
+																			manualWhen: e.target.value,
+																			nutri: sched.nutri,
+																		},
+																	}))
+																}
+																placeholder='Fallback manual'
+															/>
+														</div>
+														<div className='actions wrap'>
+															<button
+																className='btn ghost'
+																disabled={loadingSlots || !sched.nutri}
+																onClick={() =>
+																	handleLoadSlots(sched.nutri || apptRequestNutriUid, {
+																		fromIso: toIsoFromDatetimeLocal(slotRangeFrom),
+																		toIso: toIsoFromDatetimeLocal(slotRangeTo),
+																	})
+																}
+															>
+																Slots de nutri
+															</button>
+															<button
+																className='btn'
+																disabled={loading || (!sched.when && !sched.manualWhen)}
+																onClick={() => handleScheduleAppointment(appt.id)}
+															>
+																Programar
+															</button>
+														</div>
+													</div>
+												)}
+												<div className='appt-action-block secondary'>
+													<p className='muted small'>Acciones rápidas</p>
+													<div className='actions wrap'>
 														<button
 															className='btn ghost'
-															disabled={loadingSlots || !sched.nutri}
-															onClick={() =>
-																handleLoadSlots(sched.nutri || apptRequestNutriUid, {
-																	fromIso: toIsoFromDatetimeLocal(slotRangeFrom),
-																	toIso: toIsoFromDatetimeLocal(slotRangeTo),
-																})
-															}
+															disabled={loading}
+															onClick={() => setConfirmAction({ type: 'cancel', apptId: appt.id })}
 														>
-															Slots de nutri
+															Cancelar
 														</button>
-														<button
-															className='btn'
-															disabled={
-																loading || (!sched.when && !sched.manualWhen)
-															}
-															onClick={() => handleScheduleAppointment(appt.id)}
-														>
-															Programar
-														</button>
-													</>
-												)}
-												<button
-													className='btn ghost'
-													disabled={loading}
-													onClick={() => handleCancelAppointment(appt.id)}
-												>
-													Cancelar
-												</button>
-												{canComplete && (
-													<button
-														className='btn'
-														disabled={loading}
-														onClick={() => handleCompleteAppointment(appt.id)}
-													>
-														Completar
-													</button>
-												)}
+														{canComplete && (
+															<button
+																className='btn success'
+																disabled={loading}
+																onClick={() => setConfirmAction({ type: 'complete', apptId: appt.id })}
+															>
+																Completar
+															</button>
+														)}
+													</div>
+												</div>
 											</div>
 										</div>
 									);
@@ -1529,6 +1703,36 @@ export default function App() {
 
 		return (
 			<div>
+				<div className='toast-stack' aria-live='polite'>
+					{toasts.map((toast) => (
+						<div key={toast.id} className={`toast ${toast.tone}`}>
+							<span className='toast-icon' aria-hidden>
+								{toastIcons[toast.tone]}
+							</span>
+							<div>{toast.message}</div>
+						</div>
+					))}
+				</div>
+				{confirmAction && (
+					<div className='modal-backdrop' role='dialog' aria-modal='true'>
+						<div className='modal'>
+							<p className='eyebrow'>{confirmCopy[confirmAction.type].tone === 'warning' ? 'Confirmación' : 'Listo para cerrar'}</p>
+							<h3>{confirmCopy[confirmAction.type].title}</h3>
+							<p className='muted'>{confirmCopy[confirmAction.type].body}</p>
+							<div className='actions end'>
+								<button className='btn ghost' onClick={() => setConfirmAction(null)}>
+									Volver
+								</button>
+								<button
+									className={`btn ${confirmCopy[confirmAction.type].tone === 'warning' ? 'danger' : 'success'}`}
+									onClick={handleConfirmAction}
+								>
+									{confirmCopy[confirmAction.type].confirmLabel}
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
 				<nav className='topbar'>
 					<div className='actions'>
 						<Link to='/' className='brand'>
