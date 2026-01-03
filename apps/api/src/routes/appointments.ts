@@ -7,6 +7,7 @@ import { requireRole } from '../middlewares/requireRole.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { getFirebaseAdmin } from '../firebase/admin.js';
 import type { Role } from '../types/auth.js';
+import { denyAuthz, logAuthzDenied } from '../security/authz.js';
 
 export type AppointmentStatus =
 	| 'requested'
@@ -385,19 +386,22 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 		const role = (ctx.role as Role | null) ?? null;
+		const forbidden = (reason: string) => {
+			logAuthzDenied(req, 403, reason);
+			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
+		};
 
 		if (!role) {
-			return res
-				.status(403)
-				.json({ success: false, message: 'Missing role claim' });
+			return denyAuthz(req, res, 'Missing role claim for scheduling');
 		}
 
 		const allowedRoles: Role[] = ['clinic_admin', 'nutri', 'patient'];
 		if (!allowedRoles.includes(role)) {
-			return res.status(403).json({
-				success: false,
-				message: 'Only clinic or patient roles can schedule appointments',
-			});
+			return denyAuthz(
+				req,
+				res,
+				`Role ${role} not allowed to schedule appointments`
+			);
 		}
 
 		const parsedParams = scheduleParamsSchema.safeParse(req.params);
@@ -420,17 +424,16 @@ router.post(
 
 		const clinicId = ctx.clinicId;
 		if (!clinicId && role !== 'patient') {
-			return res
-				.status(403)
-				.json({ success: false, message: 'Missing clinicId claim' });
+			return denyAuthz(req, res, 'Missing clinicId claim for scheduling');
 		}
 
 		// guard: si schedule lo hace un nutri, solo puede schedule para sí mismo
 		if (role === 'nutri' && parsedBody.data.nutriUid !== ctx.uid) {
-			return res.status(403).json({
-				success: false,
-				message: 'nutri can only schedule appointments for own uid',
-			});
+			return denyAuthz(
+				req,
+				res,
+				'Nutri attempting to schedule for different nutriUid'
+			);
 		}
 
 		const scheduledMs = Date.parse(parsedBody.data.scheduledForIso);
@@ -458,19 +461,14 @@ router.post(
 			// clinic isolation (paciente no requiere clinicId en claim)
 			if (role !== 'patient') {
 				if (appt.clinicId !== clinicId) {
-					return {
-						http: 403 as const,
-						body: { success: false, message: 'Forbidden' },
-					};
+					return forbidden(
+						`Clinic isolation failed scheduling appt ${snap.id}`
+					);
 				}
 			} else if (appt.patientUid !== ctx.uid) {
-				return {
-					http: 403 as const,
-					body: {
-						success: false,
-						message: 'Patients can only schedule own appointments',
-					},
-				};
+				return forbidden(
+					`Patient ${ctx.uid} tried to schedule other patient appt ${snap.id}`
+				);
 			}
 
 			if (appt.status === 'cancelled') {
@@ -523,13 +521,9 @@ router.post(
 			// Regla: si el request ya tiene nutriUid, un nutri NO puede cambiarlo
 			if (role === 'nutri') {
 				if (appt.nutriUid !== ctx.uid) {
-					return {
-						http: 403 as const,
-						body: {
-							success: false,
-							message: 'This appointment was requested for another nutri',
-						},
-					};
+					return forbidden(
+						`Nutri ${ctx.uid} tried to schedule appt for ${appt.nutriUid}`
+					);
 				}
 			}
 			if (
@@ -537,13 +531,9 @@ router.post(
 				appt.nutriUid &&
 				appt.nutriUid !== parsedBody.data.nutriUid
 			) {
-				return {
-					http: 403 as const,
-					body: {
-						success: false,
-						message: 'Patients cannot change the assigned nutri when scheduling',
-					},
-				};
+				return forbidden(
+					`Patient ${ctx.uid} tried to change assigned nutri on scheduling`
+				);
 			}
 
 			// clinic_admin puede reasignar (si querés bloquearlo, lo cambiamos después)
@@ -582,9 +572,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	const role = ctx.role ?? null;
 
 	if (!role) {
-		return res
-			.status(403)
-			.json({ success: false, message: 'Missing role claim' });
+		return denyAuthz(req, res, 'Missing role claim for listing appointments');
 	}
 
 	const { firestore } = getFirebaseAdmin();
@@ -621,9 +609,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	return requireClinicContext(req, res, async () => {
 		const clinicId = req.auth?.clinicId;
 		if (!clinicId) {
-			return res
-				.status(403)
-				.json({ success: false, message: 'Missing clinicId claim' });
+			return denyAuthz(req, res, 'Missing clinicId claim for clinic listing');
 		}
 
 		const snap = await firestore
@@ -650,11 +636,13 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 		const role = ctx.role ?? null;
+		const forbidden = (reason: string) => {
+			logAuthzDenied(req, 403, reason);
+			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
+		};
 
 		if (!role) {
-			return res
-				.status(403)
-				.json({ success: false, message: 'Missing role claim' });
+			return denyAuthz(req, res, 'Missing role claim on cancel');
 		}
 
 		const parsedParams = cancelParamsSchema.safeParse(req.params);
@@ -685,26 +673,23 @@ router.post(
 			// AuthZ
 			if (role === 'patient') {
 				if (appt.patientUid !== ctx.uid) {
-					return {
-						http: 403 as const,
-						body: { success: false, message: 'Forbidden' },
-					};
+					return forbidden(
+						`Patient ${ctx.uid} tried to cancel appointment ${id} from ${appt.patientUid}`
+					);
 				}
 			} else if (role === 'platform_admin') {
 				// ok
 			} else {
 				const clinicId = ctx.clinicId;
 				if (!clinicId) {
-					return {
-						http: 403 as const,
-						body: { success: false, message: 'Missing clinicId claim' },
-					};
+					return forbidden(
+						`Missing clinicId claim for ${role} cancelling appointment ${id}`
+					);
 				}
 				if (appt.clinicId !== clinicId) {
-					return {
-						http: 403 as const,
-						body: { success: false, message: 'Forbidden' },
-					};
+					return forbidden(
+						`Clinic isolation failed cancelling appointment ${id} for clinic ${clinicId}`
+					);
 				}
 			}
 
@@ -769,6 +754,10 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 		const role = ctx.role!;
+		const forbidden = (reason: string) => {
+			logAuthzDenied(req, 403, reason);
+			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
+		};
 
 		const parsedParams = scheduleParamsSchema.safeParse(req.params);
 		if (!parsedParams.success) {
@@ -797,16 +786,14 @@ router.post(
 			if (role !== 'platform_admin') {
 				const clinicId = ctx.clinicId;
 				if (!clinicId) {
-					return {
-						http: 403 as const,
-						body: { success: false, message: 'Missing clinicId claim' },
-					};
+					return forbidden(
+						`Missing clinicId claim when completing appointment ${parsedParams.data.id}`
+					);
 				}
 				if (appt.clinicId !== clinicId) {
-					return {
-						http: 403 as const,
-						body: { success: false, message: 'Forbidden' },
-					};
+					return forbidden(
+						`Clinic isolation failed completing appointment ${parsedParams.data.id}`
+					);
 				}
 			}
 
@@ -837,10 +824,9 @@ router.post(
 
 			// Nutri solo completa si es el asignado
 			if (role === 'nutri' && appt.nutriUid !== ctx.uid) {
-				return {
-					http: 403 as const,
-					body: { success: false, message: 'nutri can only complete own appointments' },
-				};
+				return forbidden(
+					`Nutri ${ctx.uid} tried to complete appointment assigned to ${appt.nutriUid}`
+				);
 			}
 
 			const now = Timestamp.now();

@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { denyAuthz } from '../security/authz.js';
 
 /**
  * Aplica SOLO a roles de equipo.
@@ -12,10 +13,7 @@ export function requireClinicContext(
 	const auth = req.auth;
 
 	if (!auth) {
-		return res.status(403).json({
-			success: false,
-			message: 'Unauthenticated',
-		});
+		return denyAuthz(req, res, 'Unauthenticated access to clinic scoped route');
 	}
 
 	if (auth.role === 'platform_admin') {
@@ -23,10 +21,11 @@ export function requireClinicContext(
 	}
 
 	if (!auth.clinicId) {
-		return res.status(403).json({
-			success: false,
-			message: 'clinicId is required for this role',
-		});
+		return denyAuthz(
+			req,
+			res,
+			'clinicId claim missing for clinic-scoped role access'
+		);
 	}
 
 	next();
