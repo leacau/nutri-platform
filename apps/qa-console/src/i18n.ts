@@ -2,6 +2,8 @@ export type Locale = 'es' | 'en';
 
 export type RoleKey = 'patient' | 'nutri' | 'clinic_admin' | 'platform_admin';
 
+type BackendStateKey = 'unknown' | 'online' | 'degraded' | 'offline';
+
 export type RoleCopy = {
 	key: RoleKey;
 	label: string;
@@ -73,6 +75,18 @@ type Translation = {
 		themeDark: string;
 		roleTabsLabel: string;
 		roleTabsHelp: string;
+		backend: {
+			eyebrow: string;
+			title: string;
+			unknown: string;
+			online: string;
+			degraded: string;
+			offline: string;
+			errors: string;
+			lastChecked: string;
+			notChecked: string;
+			stateLabel: Record<BackendStateKey, string>;
+		};
 		profile: {
 			title: string;
 			description: string;
@@ -198,6 +212,12 @@ type Translation = {
 			error: string;
 			payloadLabel: string;
 			dataLabel: string;
+			requestLabel: string;
+			responseLabel: string;
+			statusLabel: string;
+			durationLabel: string;
+			attemptLabel: string;
+			emptyPayload: string;
 		};
 	};
 	confirm: {
@@ -358,6 +378,23 @@ const translations: Record<Locale, Translation> = {
 			themeDark: 'Modo oscuro',
 			roleTabsLabel: 'Tips por rol',
 			roleTabsHelp: 'Navegá para ver ejemplos y recordatorios rápidos.',
+			backend: {
+				eyebrow: 'Estado backend',
+				title: 'API QA',
+				unknown: 'Aún no hicimos requests. Probá con health o ver perfil.',
+				online: 'Backend respondiendo OK.',
+				degraded: 'Detectamos errores recientes. Reintentá o revisá el log.',
+				offline: 'Sin respuesta del backend (timeout/red).',
+				errors: 'Errores acumulados: {{count}}',
+				lastChecked: 'Último check: {{time}}',
+				notChecked: 'Sin checks previos',
+				stateLabel: {
+					unknown: 'Sin datos',
+					online: 'Operativo',
+					degraded: 'Degradado',
+					offline: 'Caído',
+				},
+			},
 			profile: {
 				title: 'Perfil',
 				description: 'Consultá tu perfil o hacé un ping al backend.',
@@ -489,6 +526,12 @@ const translations: Record<Locale, Translation> = {
 				error: 'ERROR',
 				payloadLabel: 'payload',
 				dataLabel: 'data',
+				requestLabel: 'request',
+				responseLabel: 'response',
+				statusLabel: 'Status',
+				durationLabel: 'Duración: {{ms}}ms',
+				attemptLabel: 'Intento {{attempt}} de {{total}}',
+				emptyPayload: '—',
 			},
 		},
 		confirm: {
@@ -647,6 +690,23 @@ const translations: Record<Locale, Translation> = {
 			themeDark: 'Dark mode',
 			roleTabsLabel: 'Role tips',
 			roleTabsHelp: 'Navigate to see quick examples and reminders.',
+			backend: {
+				eyebrow: 'Backend status',
+				title: 'QA backend',
+				unknown: 'No calls yet. Try health or profile.',
+				online: 'Backend responding OK.',
+				degraded: 'Recent errors detected. Retry or check the log.',
+				offline: 'Backend unreachable (timeout/network).',
+				errors: 'Error count: {{count}}',
+				lastChecked: 'Last check: {{time}}',
+				notChecked: 'No checks yet',
+				stateLabel: {
+					unknown: 'Unknown',
+					online: 'Online',
+					degraded: 'Degraded',
+					offline: 'Offline',
+				},
+			},
 			profile: {
 				title: 'Profile',
 				description: 'Check your profile or ping the backend.',
@@ -778,6 +838,12 @@ const translations: Record<Locale, Translation> = {
 				error: 'ERROR',
 				payloadLabel: 'payload',
 				dataLabel: 'data',
+				requestLabel: 'request',
+				responseLabel: 'response',
+				statusLabel: 'Status',
+				durationLabel: 'Duration: {{ms}}ms',
+				attemptLabel: 'Attempt {{attempt}} of {{total}}',
+				emptyPayload: '—',
 			},
 		},
 		confirm: {

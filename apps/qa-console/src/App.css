@@ -115,6 +115,31 @@
 	box-shadow: var(--shadow);
 }
 
+.status-banner {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 12px 14px;
+	background: var(--panel);
+	box-shadow: var(--shadow);
+	margin-bottom: 16px;
+}
+
+.status-banner__head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.status-banner__meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
 .subheader {
 	display: flex;
 	justify-content: space-between;
@@ -408,9 +433,25 @@ pre {
 
 .log-head {
 	display: flex;
+	justify-content: space-between;
 	gap: 12px;
-	align-items: baseline;
+	align-items: center;
 	flex-wrap: wrap;
+}
+
+.log-head__main {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.log-meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
 }
 
 .log-body {

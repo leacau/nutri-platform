@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { getCopy } from '../i18n';
 import type {
 	AuthedFetchResult,
+	BackendStatus,
 	Claims,
 	ConfirmAction,
 	LogEntry,
@@ -36,6 +37,8 @@ type DashboardProps = {
 		endpoint: string,
 		body?: unknown
 	) => Promise<AuthedFetchResult>;
+	backendStatus: BackendStatus;
+	apiErrorCount: number;
 	pName: string;
 	setPName: Dispatch<SetStateAction<string>>;
 	pEmail: string;
@@ -107,6 +110,8 @@ export default function Dashboard({
 	handleLogout,
 	handleGetMe,
 	authedFetch,
+	backendStatus,
+	apiErrorCount,
 	pName,
 	setPName,
 	pEmail,
@@ -171,6 +176,17 @@ export default function Dashboard({
 	const patientEmailErrorId = useId();
 	const slotRangeErrorId = useId();
 	const manualSlotErrorId = useId();
+	const backendStateClass: Record<BackendStatus['state'], string> = {
+		online: 'status-success',
+		degraded: 'status-warn',
+		offline: 'status-danger',
+		unknown: 'status-info',
+	};
+	const backendStateLabel = copy.dashboard.backend.stateLabel[backendStatus.state];
+	const backendErrorLabel = copy.dashboard.backend.errors.replace('{{count}}', String(apiErrorCount));
+	const backendLastChecked = backendStatus.lastChecked
+		? copy.dashboard.backend.lastChecked.replace('{{time}}', toReadableDate(backendStatus.lastChecked))
+		: copy.dashboard.backend.notChecked;
 	const handleRoleTabKeyDown = (
 		event: React.KeyboardEvent<HTMLButtonElement>,
 		index: number
@@ -210,6 +226,25 @@ export default function Dashboard({
 					</button>
 				</div>
 			</header>
+
+			<div className='status-banner'>
+				<div className='status-banner__head'>
+					<div>
+						<p className='eyebrow'>{copy.dashboard.backend.eyebrow}</p>
+						<div className='inline-heading'>
+							<h3>{copy.dashboard.backend.title}</h3>
+							<span className={`pill status ${backendStateClass[backendStatus.state]}`}>
+								{backendStateLabel}
+							</span>
+						</div>
+						<p className='muted'>{backendStatus.message}</p>
+					</div>
+					<div className='status-banner__meta'>
+						<span className='pill subtle'>{backendErrorLabel}</span>
+						<span className='pill subtle'>{backendLastChecked}</span>
+					</div>
+				</div>
+			</div>
 
 			<div className='card tabs-card'>
 				<div className='inline-heading'>
@@ -842,26 +877,58 @@ export default function Dashboard({
 					<p className='muted'>{copy.dashboard.log.empty}</p>
 				) : (
 					<ul className='log'>
-						{reversedLogs.map((l, idx) => (
-							<li key={idx}>
-								<div className='log-head'>
-									<code>{l.ts}</code>
-									<strong>{l.endpoint}</strong>
-									<span className={l.ok ? 'pill ok' : 'pill error'}>
-										{l.ok ? copy.dashboard.log.ok : copy.dashboard.log.error}
-									</span>
-								</div>
-								{l.payload !== undefined && (
-									<div className='log-body'>
-										<small>{copy.dashboard.log.payloadLabel}</small> <code>{JSON.stringify(l.payload)}</code>
+						{reversedLogs.map((l) => {
+							const attemptTotal = Math.max(l.retries + 1, l.attempt);
+							const statusPillClass = l.ok ? 'pill ok' : 'pill error';
+							const requestContent = l.request ? JSON.stringify(l.request) : copy.dashboard.log.emptyPayload;
+							const responseContent =
+								l.response?.body !== undefined
+									? JSON.stringify(l.response.body)
+									: copy.dashboard.log.emptyPayload;
+							return (
+								<li key={l.id}>
+									<div className='log-head'>
+										<div className='log-head__main'>
+											<code>{l.ts}</code>
+											<strong>
+												{l.method} {l.endpoint}
+											</strong>
+										</div>
+										<div className='log-meta'>
+											<span className={statusPillClass}>
+												{l.ok ? copy.dashboard.log.ok : copy.dashboard.log.error}
+											</span>
+											{l.status !== undefined && (
+												<span className='pill subtle'>
+													{copy.dashboard.log.statusLabel}: {l.status}
+												</span>
+											)}
+											<span className='pill subtle'>
+												{copy.dashboard.log.durationLabel.replace('{{ms}}', String(l.durationMs))}
+											</span>
+											<span className='pill subtle'>
+												{copy.dashboard.log.attemptLabel
+													.replace('{{attempt}}', String(l.attempt))
+													.replace('{{total}}', String(attemptTotal))}
+											</span>
+										</div>
 									</div>
-								)}
-								<div className='log-body'>
-									<small>{l.ok ? copy.dashboard.log.dataLabel : copy.dashboard.log.error}</small>{' '}
-									<code>{l.ok ? JSON.stringify(l.data) : l.error}</code>
-								</div>
-							</li>
-						))}
+									<div className='log-body'>
+										<small>{copy.dashboard.log.requestLabel}</small>{' '}
+										<code>{requestContent}</code>
+									</div>
+									<div className='log-body'>
+										<small>{copy.dashboard.log.responseLabel}</small>{' '}
+										<code>{responseContent}</code>
+									</div>
+									{!l.ok && l.error && (
+										<div className='log-body'>
+											<small>{copy.dashboard.log.error}</small> <code>{l.error}</code>
+										</div>
+									)}
+								</li>
+							);
+						})}
 					</ul>
 				)}
 			</div>
