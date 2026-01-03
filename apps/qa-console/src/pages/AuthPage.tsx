@@ -2,6 +2,7 @@ import { useId } from 'react';
 import type { User } from 'firebase/auth';
 import type { Dispatch, SetStateAction } from 'react';
 import type { getCopy } from '../i18n';
+import { EMAIL_PATTERN } from '../utils/validation';
 
 type Copy = ReturnType<typeof getCopy>;
 
@@ -92,6 +93,9 @@ export default function AuthPage({
 					<span>{copy.auth.emailLabel}</span>
 					<input
 						id={emailInputId}
+						type='email'
+						inputMode='email'
+						pattern={EMAIL_PATTERN.source}
 						ref={(el) => setAuthFieldRef('email', el)}
 						value={email}
 						onFocus={() => setStickyAuthField('email')}
