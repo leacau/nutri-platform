@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { getFirebaseAdmin } from '../firebase/admin.js';
+import { denyAuthz } from '../security/authz.js';
 
 const router = Router();
 
@@ -29,10 +30,7 @@ router.post('/set-claims', async (req: Request, res: Response) => {
 	const { uid, role, clinicId, secret } = parsed.data;
 
 	if (secret !== process.env.DEV_ADMIN_SECRET) {
-		return res.status(403).json({
-			success: false,
-			message: 'Invalid dev secret',
-		});
+		return denyAuthz(req, res, 'Invalid dev secret');
 	}
 
 	// Reglas duras de claims

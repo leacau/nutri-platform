@@ -9,6 +9,7 @@ import type { PatientDoc } from '../types/patients.js';
 import { sanitizePatientForRole } from '../security/patientSanitizer.js';
 import { getDocInClinic } from '../security/getDocInClinic.js';
 import { Timestamp } from 'firebase-admin/firestore';
+import { denyAuthz } from '../security/authz.js';
 
 export const patientsRouter = Router();
 
@@ -159,11 +160,11 @@ patientsRouter.post(
 		} else if (role === 'patient') {
 			clinicId = req.auth!.clinicId ?? null;
 			if (!clinicId) {
-				return res.status(403).json({
-					success: false,
-					message:
-						'Patients must have a clinicId claim to create their own profile',
-				});
+				return denyAuthz(
+					req,
+					res,
+					'Patient tried to create profile without clinicId claim'
+				);
 			}
 
 			// Evitamos duplicados si ya hay un paciente vinculado a este uid
@@ -191,10 +192,7 @@ patientsRouter.post(
 		}
 
 		if (!clinicId) {
-			return res.status(403).json({
-				success: false,
-				message: 'clinicId is required',
-			});
+			return denyAuthz(req, res, 'Missing clinicId claim on patient creation');
 		}
 
 		const now = new Date();
@@ -272,16 +270,14 @@ patientsRouter.patch(
 		// Flujo self-service: un paciente solo puede linkearse a sí mismo y nunca deslinkear.
 		if (role === 'patient') {
 			if (parsed.data.linkedUid === null) {
-				return res.status(403).json({
-					success: false,
-					message: 'Patients cannot unlink themselves',
-				});
+				return denyAuthz(req, res, 'Patient attempted to unlink self');
 			}
 			if (parsed.data.linkedUid !== uid) {
-				return res.status(403).json({
-					success: false,
-					message: 'Patients can only link their own uid',
-				});
+				return denyAuthz(
+					req,
+					res,
+					`Patient ${uid} tried to link different uid ${parsed.data.linkedUid}`
+				);
 			}
 
 			const snap = await db.collection('patients').doc(id).get();
@@ -293,10 +289,11 @@ patientsRouter.patch(
 			const claimClinicId = req.auth!.clinicId ?? null;
 
 			if (claimClinicId && current.clinicId !== claimClinicId) {
-				return res.status(403).json({
-					success: false,
-					message: 'Patients can only link profiles from their clinic',
-				});
+				return denyAuthz(
+					req,
+					res,
+					`Patient ${uid} tried to link profile from clinic ${current.clinicId}`
+				);
 			}
 
 			if (current.linkedUid && current.linkedUid !== uid) {
@@ -342,9 +339,11 @@ patientsRouter.patch(
 			// requiere contexto de clínica
 			const clinicIdClaim = req.auth!.clinicId;
 			if (!clinicIdClaim) {
-				return res
-					.status(403)
-					.json({ success: false, message: 'Missing clinicId claim' });
+				return denyAuthz(
+					req,
+					res,
+					'Missing clinicId claim when linking patient in clinic scope'
+				);
 			}
 
 			current = await getDocInClinic<PatientDoc>(
@@ -443,9 +442,11 @@ patientsRouter.patch(
 			// requiere contexto de clínica
 			const clinicIdClaim = req.auth!.clinicId;
 			if (!clinicIdClaim) {
-				return res
-					.status(403)
-					.json({ success: false, message: 'Missing clinicId claim' });
+				return denyAuthz(
+					req,
+					res,
+					'Missing clinicId claim when updating patient'
+				);
 			}
 
 			current = await getDocInClinic<PatientDoc>(
@@ -479,10 +480,11 @@ patientsRouter.patch(
 				update.phone = parsed.data.phone ?? null;
 			if (parsed.data.assignedNutriUid !== undefined) {
 				if (role === 'nutri') {
-					return res.status(403).json({
-						success: false,
-						message: 'nutri cannot assign patients',
-					});
+					return denyAuthz(
+						req,
+						res,
+						`Nutri ${req.auth!.uid} tried to assign patient ${id}`
+					);
 				}
 				// clinic_admin o platform_admin
 				update.assignedNutriUid = parsed.data.assignedNutriUid ?? null;
