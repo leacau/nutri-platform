@@ -94,6 +94,10 @@ type Translation = {
 				phone: string;
 				email: string;
 			};
+			errors: {
+				emailInvalid: string;
+				phoneInvalid: string;
+			};
 			assignedNutri: string;
 			missingName: string;
 			missingEmail: string;
@@ -135,6 +139,7 @@ type Translation = {
 				list: string;
 				manualLabel: string;
 				manualHelp: string;
+				manualInvalid: string;
 				rangeErrors: {
 					invalidRange: string;
 					endBeforeStart: string;
@@ -156,19 +161,20 @@ type Translation = {
 			statusIconLabel: {
 				fallback: string;
 			};
-				schedule: {
-					title: string;
-					loadSlots: string;
-					program: string;
-					lockNotice: string;
-					permissionHint: string;
-					noSlots: string;
-					loadForNutri: string;
-					selectNutri: string;
-					selectSlot: string;
-					manualFallback: string;
-					validDateRequired: string;
-				};
+			schedule: {
+				title: string;
+				loadSlots: string;
+				program: string;
+				lockNotice: string;
+				permissionHint: string;
+				noSlots: string;
+				loadForNutri: string;
+				selectNutri: string;
+				selectSlot: string;
+				manualFallback: string;
+				manualInvalid: string;
+				validDateRequired: string;
+			};
 			quickActions: {
 				title: string;
 				cancel: string;
@@ -373,6 +379,10 @@ const translations: Record<Locale, Translation> = {
 					phone: '+54...',
 					email: 'correo opcional',
 				},
+				errors: {
+					emailInvalid: 'Ingresá un email válido o dejá el campo vacío.',
+					phoneInvalid: 'Ingresá un teléfono válido (solo dígitos, espacios o +).',
+				},
 				assignedNutri: 'Nutri asignado',
 				missingName: 'Sin nombre',
 				missingEmail: 'Sin email',
@@ -414,6 +424,7 @@ const translations: Record<Locale, Translation> = {
 					list: 'Listar turnos',
 					manualLabel: 'Horario manual',
 					manualHelp: 'No hay slots libres en el rango seleccionado. Ingresá horario manual como fallback.',
+					manualInvalid: 'Ingresá fecha y hora válidas (AAAA-MM-DD HH:MM).',
 					rangeErrors: {
 						invalidRange: 'Ingresá un rango válido para buscar slots.',
 						endBeforeStart: 'La fecha “hasta” debe ser mayor a “desde”.',
@@ -452,6 +463,7 @@ const translations: Record<Locale, Translation> = {
 					selectNutri: 'Elegí nutri',
 					selectSlot: 'Cargá slots para este nutri',
 					manualFallback: 'Fallback manual',
+					manualInvalid: 'Ingresá fecha y hora válidas (AAAA-MM-DD HH:MM).',
 					validDateRequired: 'Falta fecha válida para programar',
 				},
 				quickActions: {
@@ -656,6 +668,10 @@ const translations: Record<Locale, Translation> = {
 					phone: '+1...',
 					email: 'optional email',
 				},
+				errors: {
+					emailInvalid: 'Enter a valid email or leave the field empty.',
+					phoneInvalid: 'Enter a valid phone (digits, spaces, or +).',
+				},
 				assignedNutri: 'Assigned nutri',
 				missingName: 'No name',
 				missingEmail: 'No email',
@@ -697,6 +713,7 @@ const translations: Record<Locale, Translation> = {
 					list: 'List appointments',
 					manualLabel: 'Manual time',
 					manualHelp: 'No free slots in the selected range. Enter a manual time as fallback.',
+					manualInvalid: 'Enter a valid date and time (YYYY-MM-DD HH:MM).',
 					rangeErrors: {
 						invalidRange: 'Enter a valid range to search for slots.',
 						endBeforeStart: 'The "to" date must be later than "from".',
@@ -735,6 +752,7 @@ const translations: Record<Locale, Translation> = {
 					selectNutri: 'Choose nutri',
 					selectSlot: 'Load slots for this nutri',
 					manualFallback: 'Manual fallback',
+					manualInvalid: 'Enter a valid date and time (YYYY-MM-DD HH:MM).',
 					validDateRequired: 'A valid date is required to schedule',
 				},
 				quickActions: {

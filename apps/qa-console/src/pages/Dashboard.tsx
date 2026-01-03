@@ -9,10 +9,12 @@ import type {
 	LogEntry,
 	RoleTab,
 } from '../types/app';
+import { DATETIME_LOCAL_PATTERN, EMAIL_PATTERN, PHONE_PATTERN } from '../utils/validation';
 
 type Copy = ReturnType<typeof getCopy>;
 
 type ScheduleSelection = { when: string; manualWhen?: string; nutri: string };
+type PatientFieldErrors = { email: string | null; phone: string | null };
 
 type DashboardProps = {
 	copy: Copy;
@@ -40,6 +42,7 @@ type DashboardProps = {
 	setPEmail: Dispatch<SetStateAction<string>>;
 	pPhone: string;
 	setPPhone: Dispatch<SetStateAction<string>>;
+	patientErrors: PatientFieldErrors;
 	selectedClinicForNewPatient: string;
 	setSelectedClinicForNewPatient: Dispatch<SetStateAction<string>>;
 	clinicOptions: string[];
@@ -69,6 +72,7 @@ type DashboardProps = {
 	handleRequestAppointment: () => Promise<void>;
 	handleListAppointments: () => Promise<void>;
 	slotRangeError: string | null;
+	appointmentFormError: string | null;
 	apptSlots: string[];
 	apptBusySlots: string[];
 	linkRequired: { active: boolean; reason?: string };
@@ -77,6 +81,8 @@ type DashboardProps = {
 	handleLinkPatientAndRetry: () => Promise<void>;
 	scheduleSelections: Record<string, ScheduleSelection>;
 	setScheduleSelections: Dispatch<SetStateAction<Record<string, ScheduleSelection>>>;
+	scheduleErrors: Record<string, string | null>;
+	setScheduleErrors: Dispatch<SetStateAction<Record<string, string | null>>>;
 	currentSlotsNutri: string;
 	formatSlotLabel: (iso: string) => string;
 	toReadableDate: (value: unknown) => string;
@@ -107,6 +113,7 @@ export default function Dashboard({
 	setPEmail,
 	pPhone,
 	setPPhone,
+	patientErrors,
 	selectedClinicForNewPatient,
 	setSelectedClinicForNewPatient,
 	clinicOptions,
@@ -133,6 +140,7 @@ export default function Dashboard({
 	handleRequestAppointment,
 	handleListAppointments,
 	slotRangeError,
+	appointmentFormError,
 	apptSlots,
 	apptBusySlots,
 	linkRequired,
@@ -141,6 +149,8 @@ export default function Dashboard({
 	handleLinkPatientAndRetry,
 	scheduleSelections,
 	setScheduleSelections,
+	scheduleErrors,
+	setScheduleErrors,
 	currentSlotsNutri,
 	formatSlotLabel,
 	toReadableDate,
@@ -157,6 +167,10 @@ export default function Dashboard({
 	const clinicLabelValue = claims.clinicId ?? copy.dashboard.noClinic;
 	const roleTabListId = useId();
 	const tabPanelId = useId();
+	const patientPhoneErrorId = useId();
+	const patientEmailErrorId = useId();
+	const slotRangeErrorId = useId();
+	const manualSlotErrorId = useId();
 	const handleRoleTabKeyDown = (
 		event: React.KeyboardEvent<HTMLButtonElement>,
 		index: number
@@ -262,20 +276,40 @@ export default function Dashboard({
 								<label className='field'>
 									<span>{copy.dashboard.patients.fields.phone}</span>
 									<input
+										type='tel'
+										inputMode='tel'
+										pattern={PHONE_PATTERN.source}
 										value={pPhone}
 										onChange={(e) => setPPhone(e.target.value)}
 										placeholder={copy.dashboard.patients.placeholders.phone}
+										aria-invalid={!!patientErrors.phone}
+										aria-describedby={patientErrors.phone ? patientPhoneErrorId : undefined}
 									/>
+									{patientErrors.phone && (
+										<p className='error-text' id={patientPhoneErrorId} role='status' aria-live='polite'>
+											{patientErrors.phone}
+										</p>
+									)}
 								</label>
 							</div>
 							<div className='grid two'>
 								<label className='field'>
 									<span>{copy.dashboard.patients.fields.email}</span>
 									<input
+										type='email'
+										inputMode='email'
+										pattern={EMAIL_PATTERN.source}
 										value={pEmail}
 										onChange={(e) => setPEmail(e.target.value)}
 										placeholder={copy.dashboard.patients.placeholders.email}
+										aria-invalid={!!patientErrors.email}
+										aria-describedby={patientErrors.email ? patientEmailErrorId : undefined}
 									/>
+									{patientErrors.email && (
+										<p className='error-text' id={patientEmailErrorId} role='status' aria-live='polite'>
+											{patientErrors.email}
+										</p>
+									)}
 								</label>
 								<label className='field'>
 									<span>{copy.dashboard.patients.fields.clinic}</span>
@@ -417,11 +451,27 @@ export default function Dashboard({
 					</label>
 					<label className='field'>
 						<span>{copy.dashboard.appointments.form.from}</span>
-						<input type='datetime-local' value={slotRangeFrom} onChange={(e) => setSlotRangeFrom(e.target.value)} />
+						<input
+							type='datetime-local'
+							inputMode='numeric'
+							pattern={DATETIME_LOCAL_PATTERN.source}
+							value={slotRangeFrom}
+							onChange={(e) => setSlotRangeFrom(e.target.value)}
+							aria-invalid={!!slotRangeError}
+							aria-describedby={slotRangeError ? slotRangeErrorId : undefined}
+						/>
 					</label>
 					<label className='field'>
 						<span>{copy.dashboard.appointments.form.to}</span>
-						<input type='datetime-local' value={slotRangeTo} onChange={(e) => setSlotRangeTo(e.target.value)} />
+						<input
+							type='datetime-local'
+							inputMode='numeric'
+							pattern={DATETIME_LOCAL_PATTERN.source}
+							value={slotRangeTo}
+							onChange={(e) => setSlotRangeTo(e.target.value)}
+							aria-invalid={!!slotRangeError}
+							aria-describedby={slotRangeError ? slotRangeErrorId : undefined}
+						/>
 					</label>
 					<label className='field'>
 						<span>{copy.dashboard.appointments.form.slotLabel}</span>
@@ -460,7 +510,7 @@ export default function Dashboard({
 				</div>
 
 				{slotRangeError && (
-					<p className='muted' role='status' aria-live='assertive'>
+					<p className='muted' role='status' aria-live='assertive' id={slotRangeErrorId}>
 						{slotRangeError}
 					</p>
 				)}
@@ -470,7 +520,20 @@ export default function Dashboard({
 						<p className='muted'>{copy.dashboard.appointments.form.manualHelp}</p>
 						<label className='field'>
 							<span>{copy.dashboard.appointments.form.manualLabel}</span>
-							<input type='datetime-local' value={apptManualSlot} onChange={(e) => setApptManualSlot(e.target.value)} />
+							<input
+								type='datetime-local'
+								inputMode='numeric'
+								pattern={DATETIME_LOCAL_PATTERN.source}
+								value={apptManualSlot}
+								onChange={(e) => setApptManualSlot(e.target.value)}
+								aria-invalid={!!appointmentFormError}
+								aria-describedby={appointmentFormError ? manualSlotErrorId : undefined}
+							/>
+							{appointmentFormError && (
+								<p className='error-text' id={manualSlotErrorId} role='status' aria-live='assertive'>
+									{appointmentFormError}
+								</p>
+							)}
 						</label>
 					</div>
 				)}
@@ -534,6 +597,8 @@ export default function Dashboard({
 								completed: '✅',
 								cancelled: '🚫',
 							};
+							const scheduleErrorMessage = scheduleErrors[appointmentKey] ?? null;
+							const scheduleErrorId = `schedule-error-${appointmentKey}`;
 							return (
 								<div className='appt-card' key={appointmentKey}>
 									<div className='appt-head'>
@@ -594,7 +659,8 @@ export default function Dashboard({
 													<select
 														value={sched.nutri}
 														disabled={lockNutri}
-														onChange={(e) =>
+														onChange={(e) => {
+															setScheduleErrors((prev) => ({ ...prev, [appointmentKey]: null }));
 															setScheduleSelections((prev) => ({
 																...prev,
 																[appointmentKey]: {
@@ -603,8 +669,8 @@ export default function Dashboard({
 																	manualWhen: '',
 																	nutri: e.target.value,
 																},
-															}))
-														}
+															}));
+														}}
 													>
 														<option value=''>{copy.dashboard.appointments.schedule.selectNutri}</option>
 														{knownNutris.map((n) => (
@@ -621,7 +687,8 @@ export default function Dashboard({
 															currentSlotsNutri !== sched.nutri ||
 															apptSlots.length === 0
 														}
-														onChange={(e) =>
+														onChange={(e) => {
+															setScheduleErrors((prev) => ({ ...prev, [appointmentKey]: null }));
 															setScheduleSelections((prev) => ({
 																...prev,
 																[appointmentKey]: {
@@ -629,8 +696,8 @@ export default function Dashboard({
 																	when: e.target.value,
 																	nutri: sched.nutri,
 																},
-															}))
-														}
+															}));
+														}}
 													>
 														{currentSlotsNutri !== sched.nutri && (
 															<option value=''>{copy.dashboard.appointments.schedule.selectSlot}</option>
@@ -647,8 +714,11 @@ export default function Dashboard({
 													</select>
 													<input
 														type='datetime-local'
+														inputMode='numeric'
+														pattern={DATETIME_LOCAL_PATTERN.source}
 														value={sched.manualWhen ?? ''}
-														onChange={(e) =>
+														onChange={(e) => {
+															setScheduleErrors((prev) => ({ ...prev, [appointmentKey]: null }));
 															setScheduleSelections((prev) => ({
 																...prev,
 																[appointmentKey]: {
@@ -656,10 +726,17 @@ export default function Dashboard({
 																	manualWhen: e.target.value,
 																	nutri: sched.nutri,
 																},
-															}))
-														}
+															}));
+														}}
 														placeholder={copy.dashboard.appointments.schedule.manualFallback}
+														aria-invalid={!!scheduleErrorMessage}
+														aria-describedby={scheduleErrorMessage ? scheduleErrorId : undefined}
 													/>
+													{scheduleErrorMessage && (
+														<p className='error-text' id={scheduleErrorId} role='status' aria-live='assertive'>
+															{scheduleErrorMessage}
+														</p>
+													)}
 												</div>
 												<div className='actions wrap'>
 													<button

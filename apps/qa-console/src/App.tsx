@@ -19,6 +19,12 @@ import type {
 	Toast,
 } from './types/app';
 import useAuthSession from './hooks/useAuthSession';
+import {
+	isValidDatetimeLocal,
+	isValidEmail,
+	isValidPhone,
+	toIsoFromDatetimeLocal,
+} from './utils/validation';
 
 type ProtectedProps = {
 	user: User | null;
@@ -35,13 +41,6 @@ function isoToDatetimeLocal(iso: string): string {
 	const tzOffsetMinutes = d.getTimezoneOffset();
 	const localDate = new Date(d.getTime() - tzOffsetMinutes * 60 * 1000);
 	return localDate.toISOString().slice(0, 16);
-}
-
-function toIsoFromDatetimeLocal(v: string): string | null {
-	if (!v || !v.includes('T')) return null;
-	const d = new Date(v);
-	if (!Number.isFinite(d.getTime())) return null;
-	return d.toISOString();
 }
 
 function toReadableDate(v: unknown): string {
@@ -161,6 +160,10 @@ export default function App() {
 	const [pName, setPName] = useState('Juan Perez');
 	const [pEmail, setPEmail] = useState('juan@test.com');
 	const [pPhone, setPPhone] = useState('+549341000000');
+	const [patientErrors, setPatientErrors] = useState<{ email: string | null; phone: string | null }>({
+		email: null,
+		phone: null,
+	});
 	const [patientAssignSelections, setPatientAssignSelections] = useState<
 		Record<string, string>
 	>({});
@@ -182,9 +185,11 @@ export default function App() {
 	const [loadingSlots, setLoadingSlots] = useState(false);
 	const [currentSlotsNutri, setCurrentSlotsNutri] = useState<string>('');
 	const [slotRangeError, setSlotRangeError] = useState<string | null>(null);
+	const [appointmentFormError, setAppointmentFormError] = useState<string | null>(null);
 	const [scheduleSelections, setScheduleSelections] = useState<
 		Record<string, { when: string; manualWhen?: string; nutri: string }>
 	>({});
+	const [scheduleErrors, setScheduleErrors] = useState<Record<string, string | null>>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
 	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
 		useState<string>('');
@@ -198,6 +203,59 @@ export default function App() {
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 	const isDark = theme === 'dark';
 	const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+
+	const setValidatedPEmail: typeof setPEmail = (value) =>
+		setPEmail((prev) => {
+			const next = typeof value === 'function' ? value(prev) : value;
+			setPatientErrors((prevErrors) => ({
+				...prevErrors,
+				email: next && !isValidEmail(next) ? copy.dashboard.patients.errors.emailInvalid : null,
+			}));
+			return next;
+		});
+
+	const setValidatedPPhone: typeof setPPhone = (value) =>
+		setPPhone((prev) => {
+			const next = typeof value === 'function' ? value(prev) : value;
+			setPatientErrors((prevErrors) => ({
+				...prevErrors,
+				phone: next && !isValidPhone(next) ? copy.dashboard.patients.errors.phoneInvalid : null,
+			}));
+			return next;
+		});
+
+	const setSlotRangeFromInput: typeof setSlotRangeFrom = (value) =>
+		setSlotRangeFrom((prev) => {
+			const next = typeof value === 'function' ? value(prev) : value;
+			setSlotRangeError(null);
+			return next;
+		});
+
+	const setSlotRangeToInput: typeof setSlotRangeTo = (value) =>
+		setSlotRangeTo((prev) => {
+			const next = typeof value === 'function' ? value(prev) : value;
+			setSlotRangeError(null);
+			return next;
+		});
+
+	const setValidatedApptManualSlot: typeof setApptManualSlot = (value) =>
+		setApptManualSlot((prev) => {
+			const next = typeof value === 'function' ? value(prev) : value;
+			const manualIssue = next
+				? isValidDatetimeLocal(next)
+					? null
+					: copy.dashboard.appointments.form.manualInvalid
+				: null;
+			setAppointmentFormError(manualIssue);
+			return next;
+		});
+
+	useEffect(() => {
+		setPatientErrors({
+			email: pEmail && !isValidEmail(pEmail) ? copy.dashboard.patients.errors.emailInvalid : null,
+			phone: pPhone && !isValidPhone(pPhone) ? copy.dashboard.patients.errors.phoneInvalid : null,
+		});
+	}, [copy, pEmail, pPhone]);
 
 	useEffect(() => {
 		const ref = stickyAuthField ? authFieldRefs.current[stickyAuthField] : null;
@@ -231,6 +289,10 @@ export default function App() {
 		document.documentElement.setAttribute('lang', locale);
 		window.localStorage.setItem('qa-console-locale', locale);
 	}, [locale]);
+
+	useEffect(() => {
+		if (apptRequestSlot) setAppointmentFormError(null);
+	}, [apptRequestSlot]);
 
 	useEffect(() => {
 		if (claims.role === 'patient') setActiveRoleTab('patient');
@@ -381,16 +443,15 @@ export default function App() {
 			pushErr(endpoint, body, `${errorMessage} :: ${JSON.stringify(data)}`);
 			return { ok: false, status: res.status, data, error: errorMessage };
 		}
-		pushOk(endpoint, body, data);
-		return { ok: true, status: res.status, data };
-	}
+	pushOk(endpoint, body, data);
+	return { ok: true, status: res.status, data };
+}
 
-	function getEmailError(value: string) {
-		if (!value.trim()) return copy.auth.errors.emailRequired;
-		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-		if (!emailRegex.test(value.trim())) return copy.auth.errors.emailInvalid;
-		return null;
-	}
+function getEmailError(value: string) {
+	if (!value.trim()) return copy.auth.errors.emailRequired;
+	if (!isValidEmail(value)) return copy.auth.errors.emailInvalid;
+	return null;
+}
 
 	function getPasswordError(value: string) {
 		if (!value) return copy.auth.errors.passwordRequired;
@@ -534,6 +595,10 @@ export default function App() {
 	}
 
 	async function handleCreatePatient() {
+		const emailIssue = pEmail ? (!isValidEmail(pEmail) ? copy.dashboard.patients.errors.emailInvalid : null) : null;
+		const phoneIssue = pPhone ? (!isValidPhone(pPhone) ? copy.dashboard.patients.errors.phoneInvalid : null) : null;
+		setPatientErrors({ email: emailIssue, phone: phoneIssue });
+		if (emailIssue || phoneIssue) return;
 		setLoading(true);
 		try {
 			const created = await authedFetch('POST', '/patients', {
@@ -687,26 +752,32 @@ export default function App() {
 	}, [apptRequestNutriUid, slotRangeFrom, slotRangeTo]);
 
 	async function handleRequestAppointment() {
+		if (!apptRequestNutriUid) {
+			pushErr(
+				'/appointments/request',
+				{ apptRequestNutriUid, apptRequestSlot },
+				'Falta nutriUid para pedir turno'
+			);
+			return;
+		}
+		const manualIso = apptManualSlot ? toIsoFromDatetimeLocal(apptManualSlot) : null;
+		if (!apptRequestSlot && apptManualSlot && !manualIso) {
+			setAppointmentFormError(copy.dashboard.appointments.form.manualInvalid);
+			return;
+		}
+		const scheduledIso = apptRequestSlot || manualIso;
+		if (!scheduledIso) {
+			setAppointmentFormError(copy.dashboard.appointments.form.slotRequired);
+			pushErr(
+				'/appointments/request',
+				{ apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
+				copy.dashboard.appointments.form.slotRequired
+			);
+			return;
+		}
+		setAppointmentFormError(null);
 		setLoading(true);
 		try {
-			if (!apptRequestNutriUid) {
-				pushErr(
-					'/appointments/request',
-					{ apptRequestNutriUid, apptRequestSlot },
-					'Falta nutriUid para pedir turno'
-				);
-				return;
-			}
-			const manualIso = toIsoFromDatetimeLocal(apptManualSlot);
-			const scheduledIso = apptRequestSlot || manualIso;
-			if (!scheduledIso) {
-				pushErr(
-					'/appointments/request',
-					{ apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
-					copy.dashboard.appointments.form.slotRequired
-				);
-				return;
-			}
 			const result = await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
 				clinicId: claims.clinicId ?? undefined,
@@ -789,19 +860,27 @@ export default function App() {
 	}
 
 	async function handleScheduleAppointment(apptId: string) {
+		const sched = scheduleSelections[apptId];
+		const hasSelectedSlot = !!sched?.when;
+		const manualIso = sched?.manualWhen ? toIsoFromDatetimeLocal(sched.manualWhen) : null;
+		if (!hasSelectedSlot && sched?.manualWhen && !manualIso) {
+			setScheduleErrors((prev) => ({
+				...prev,
+				[apptId]: copy.dashboard.appointments.schedule.manualInvalid,
+			}));
+			return;
+		}
+		const iso = sched?.when || manualIso || '';
+		if (!iso) {
+			setScheduleErrors((prev) => ({
+				...prev,
+				[apptId]: copy.dashboard.appointments.schedule.validDateRequired,
+			}));
+			return;
+		}
+		setScheduleErrors((prev) => ({ ...prev, [apptId]: null }));
 		setLoading(true);
 		try {
-			const sched = scheduleSelections[apptId];
-			const iso =
-				sched?.when || toIsoFromDatetimeLocal(sched?.manualWhen ?? '') || '';
-			if (!iso) {
-				pushErr(
-					'/appointments/:id/schedule',
-					{ apptId, when: sched?.when },
-					copy.dashboard.appointments.schedule.validDateRequired
-				);
-				return;
-			}
 			const res = await authedFetch('POST', `/appointments/${apptId}/schedule`, {
 				scheduledForIso: iso,
 				nutriUid: sched?.nutri || apptRequestNutriUid || '',
@@ -928,9 +1007,10 @@ export default function App() {
 		pName,
 		setPName,
 		pEmail,
-		setPEmail,
+		setPEmail: setValidatedPEmail,
 		pPhone,
-		setPPhone,
+		setPPhone: setValidatedPPhone,
+		patientErrors,
 		selectedClinicForNewPatient,
 		setSelectedClinicForNewPatient,
 		clinicOptions,
@@ -946,17 +1026,18 @@ export default function App() {
 		apptRequestNutriUid,
 		setApptRequestNutriUid,
 		slotRangeFrom,
-		setSlotRangeFrom,
+		setSlotRangeFrom: setSlotRangeFromInput,
 		slotRangeTo,
-		setSlotRangeTo,
+		setSlotRangeTo: setSlotRangeToInput,
 		apptRequestSlot,
 		setApptRequestSlot,
 		apptManualSlot,
-		setApptManualSlot,
+		setApptManualSlot: setValidatedApptManualSlot,
 		handleLoadSlots,
 		handleRequestAppointment,
 		handleListAppointments,
 		slotRangeError,
+		appointmentFormError,
 		apptSlots,
 		apptBusySlots,
 		linkRequired,
@@ -965,6 +1046,8 @@ export default function App() {
 		handleLinkPatientAndRetry,
 		scheduleSelections,
 		setScheduleSelections,
+		scheduleErrors,
+		setScheduleErrors,
 		currentSlotsNutri,
 		formatSlotLabel,
 		toReadableDate,
