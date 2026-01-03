@@ -4,7 +4,6 @@ import {
 	useMemo,
 	useRef,
 	useState,
-	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactElement,
 } from 'react';
 import {
@@ -19,29 +18,18 @@ import {
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import './App.css';
 import { auth } from './firebase';
-import { getCopy, supportedLocales, type Locale, type RoleCopy } from './i18n';
-
-type Claims = { role: string | null; clinicId: string | null };
-
-type RoleTab = RoleCopy;
-
-type Toast = {
-	id: string;
-	message: string;
-	tone: 'success' | 'info' | 'warning' | 'error';
-};
-
-type ConfirmAction = { type: 'cancel' | 'complete'; apptId: string };
-
-type LogEntry =
-	| { ts: string; endpoint: string; payload?: unknown; ok: true; data: unknown }
-	| {
-			ts: string;
-			endpoint: string;
-			payload?: unknown;
-			ok: false;
-			error: string;
-	  };
+import { getCopy, supportedLocales, type Locale } from './i18n';
+import AuthPage from './pages/AuthPage';
+import Dashboard from './pages/Dashboard';
+import Landing from './pages/Landing';
+import type {
+	AuthedFetchResult,
+	Claims,
+	ConfirmAction,
+	LogEntry,
+	RoleTab,
+	Toast,
+} from './types/app';
 
 type ProtectedProps = {
 	user: User | null;
@@ -149,6 +137,9 @@ export default function App() {
 	const authFieldRefs = useRef<{ email: HTMLInputElement | null; password: HTMLInputElement | null }>(
 		{ email: null, password: null }
 	);
+	const setAuthFieldRef = (field: 'email' | 'password', ref: HTMLInputElement | null) => {
+		authFieldRefs.current[field] = ref;
+	};
 	const [stickyAuthField, setStickyAuthField] = useState<'email' | 'password' | null>(null);
 
 	const [email, setEmail] = useState('qa1@test.com');
@@ -347,10 +338,6 @@ export default function App() {
 			setToasts((prev) => prev.filter((t) => t.id !== id));
 		}, 3800);
 	}
-
-	type AuthedFetchResult =
-		| { ok: true; status: number; data: unknown }
-		| { ok: false; status: number; data: unknown; error: string };
 
 	async function authedFetch(
 		method: 'GET' | 'POST' | 'PATCH',
@@ -874,869 +861,104 @@ export default function App() {
 		error: '❌',
 	};
 
-	function Landing() {
-		return (
-			<div className='page'>
-				<section className='hero'>
-					<div>
-						<p className='eyebrow'>{copy.landing.eyebrow}</p>
-						<h1>{copy.landing.title}</h1>
-						<p className='lead'>{copy.landing.lead}</p>
-						<div className='actions'>
-							<Link className='btn primary' to='/login'>
-								{copy.landing.actions.auth}
-							</Link>
-							<Link className='btn ghost' to='/dashboard'>
-								{copy.landing.actions.dashboard}
-							</Link>
-						</div>
-					</div>
-					<div className='panel'>
-						<h3>{copy.landing.howTo.title}</h3>
-						<ol>
-							{copy.landing.howTo.steps.map((step, idx) => (
-								<li key={idx}>{step}</li>
-							))}
-						</ol>
-					</div>
-				</section>
-			</div>
-		);
-	}
+	const authPageProps = {
+		copy,
+		authErrors,
+		email,
+		password,
+		emailError,
+		passwordError,
+		showPassword,
+		authPending,
+		loading,
+		user,
+		claims,
+		setAuthFieldRef,
+		setEmail,
+		setPassword,
+		setShowPassword,
+		setAuthActionError,
+		setEmailError,
+		setPasswordError,
+		setStickyAuthField,
+		getEmailError,
+		getPasswordError,
+		handleLogin,
+		handleRegister,
+		handleLogout,
+		handleRefreshClaims,
+	};
 
-	function AuthPage() {
-		const emailInputId = useId();
-		const passwordInputId = useId();
-		const emailErrorId = useId();
-		const passwordErrorId = useId();
-		const authErrorsId = useId();
+	const dashboardProps = {
+		copy,
+		user,
+		claims,
+		roleTabs,
+		activeRoleTab,
+		activeRoleContent,
+		setActiveRoleTab,
+		toggleTheme,
+		isDark,
+		loading,
+		loadingSlots,
+		handleRefreshClaims,
+		handleLogout,
+		handleGetMe,
+		authedFetch,
+		pName,
+		setPName,
+		pEmail,
+		setPEmail,
+		pPhone,
+		setPPhone,
+		selectedClinicForNewPatient,
+		setSelectedClinicForNewPatient,
+		clinicOptions,
+		handleCreatePatient,
+		patients,
+		patientAssignSelections,
+		setPatientAssignSelections,
+		knownNutris,
+		handleAssignNutri,
+		handleListPatients,
+		appointments,
+		handleScheduleAppointment,
+		apptRequestNutriUid,
+		setApptRequestNutriUid,
+		slotRangeFrom,
+		setSlotRangeFrom,
+		slotRangeTo,
+		setSlotRangeTo,
+		apptRequestSlot,
+		setApptRequestSlot,
+		apptManualSlot,
+		setApptManualSlot,
+		handleLoadSlots,
+		handleRequestAppointment,
+		handleListAppointments,
+		slotRangeError,
+		apptSlots,
+		apptBusySlots,
+		linkRequired,
+		linkFlowMessage,
+		linking,
+		handleLinkPatientAndRetry,
+		scheduleSelections,
+		setScheduleSelections,
+		currentSlotsNutri,
+		formatSlotLabel,
+		toReadableDate,
+		toIsoFromDatetimeLocal,
+		setConfirmAction,
+		reversedLogs,
+	};
 
-		return (
-			<div className='page narrow'>
-				<h2>{copy.auth.title}</h2>
-				<p className='muted'>{copy.auth.intro}</p>
-				<div className='card'>
-					{authErrors.length > 0 && (
-						<div
-							className='error-summary'
-							role='alert'
-							aria-live='assertive'
-							id={authErrorsId}
-						>
-							<p>
-								<strong>{copy.auth.errorSummaryTitle}</strong>
-							</p>
-							<ul>
-								{authErrors.map((err, idx) => (
-									<li key={idx}>{err}</li>
-								))}
-							</ul>
-						</div>
-					)}
-					<label className='field'>
-						<span>{copy.auth.emailLabel}</span>
-						<input
-							id={emailInputId}
-							ref={(el) => {
-								authFieldRefs.current.email = el;
-							}}
-							value={email}
-							onFocus={() => setStickyAuthField('email')}
-							onChange={(e) => {
-								setStickyAuthField('email');
-								setEmail(e.target.value);
-								setAuthActionError(null);
-								setEmailError(getEmailError(e.target.value));
-							}}
-							placeholder={copy.auth.emailPlaceholder}
-							aria-describedby={emailError ? emailErrorId : authErrors.length > 0 ? authErrorsId : undefined}
-							aria-invalid={!!emailError}
-						/>
-						{emailError && (
-							<p className='error-text' id={emailErrorId} role='status' aria-live='polite'>
-								{emailError}
-							</p>
-						)}
-					</label>
-					<label className='field'>
-						<span>{copy.auth.passwordLabel}</span>
-						<input
-							id={passwordInputId}
-							type={showPassword ? 'text' : 'password'}
-							ref={(el) => {
-								authFieldRefs.current.password = el;
-							}}
-							value={password}
-							onFocus={() => setStickyAuthField('password')}
-							onChange={(e) => {
-								setStickyAuthField('password');
-								setPassword(e.target.value);
-								setAuthActionError(null);
-								setPasswordError(getPasswordError(e.target.value));
-							}}
-							placeholder={copy.auth.passwordPlaceholder}
-							aria-describedby={
-								passwordError ? passwordErrorId : authErrors.length > 0 ? authErrorsId : undefined
-							}
-							aria-invalid={!!passwordError}
-						/>
-						<div className='field-inline'>
-							<label className='toggle'>
-								<input
-									type='checkbox'
-									checked={showPassword}
-									onChange={(e) => setShowPassword(e.target.checked)}
-								/>
-								<span>{copy.auth.passwordToggle}</span>
-							</label>
-						</div>
-						{passwordError && (
-							<p className='error-text' id={passwordErrorId} role='status' aria-live='polite'>
-								{passwordError}
-							</p>
-						)}
-					</label>
-					<div className='actions'>
-						<button
-							className={`btn primary ${authPending ? 'is-loading' : ''}`}
-							disabled={loading || authPending}
-							onClick={handleLogin}
-						>
-							{authPending ? copy.auth.loginPending : copy.auth.login}
-						</button>
-						<button
-							className={`btn ${authPending ? 'is-loading' : ''}`}
-							disabled={loading || authPending}
-							onClick={handleRegister}
-						>
-							{authPending ? copy.auth.registerPending : copy.auth.register}
-						</button>
-						{user && (
-							<button className='btn ghost' disabled={loading || authPending} onClick={handleLogout}>
-								{copy.auth.logout}
-							</button>
-						)}
-					</div>
-					<div className='inline-info'>
-						<div>
-							<strong>{copy.auth.infoUid}</strong>{' '}
-							<code>{user ? user.uid : copy.auth.notLogged}</code>
-						</div>
-						<div>
-							<strong>{copy.auth.infoClaims}</strong>{' '}
-							<code>{JSON.stringify(claims)}</code>
-						</div>
-					</div>
-					<button className='link' disabled={loading} onClick={handleRefreshClaims}>
-						{copy.auth.refreshClaims}
-					</button>
-				</div>
-			</div>
-		);
-	}
-
-		function Dashboard() {
-			const role = claims.role;
-			const canClinic =
-				role === 'clinic_admin' || role === 'nutri' || role === 'staff';
-			const isPlatform = role === 'platform_admin';
-			const isPatient = role === 'patient';
-			const displayEmail = user?.email ?? copy.dashboard.unknownEmail;
-			const roleLabelValue = role ?? copy.dashboard.noRole;
-			const clinicLabelValue = claims.clinicId ?? copy.dashboard.noClinic;
-			const roleTabListId = useId();
-			const tabPanelId = useId();
-			const handleRoleTabKeyDown = (
-				event: ReactKeyboardEvent<HTMLButtonElement>,
-				index: number
-			) => {
-				if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
-				event.preventDefault();
-				const offset = event.key === 'ArrowRight' ? 1 : -1;
-				const nextIndex = (index + offset + roleTabs.length) % roleTabs.length;
-				setActiveRoleTab(roleTabs[nextIndex]?.key ?? activeRoleTab);
-			};
-
-		return (
-			<div className='page'>
-				<header className='subheader'>
-					<div>
-						<p className='eyebrow'>{copy.dashboard.sessionEyebrow}</p>
-						<div className='inline-heading'>
-							<h2>{displayEmail}</h2>
-							<span className='pill subtle'>
-								{activeRoleContent.icon} {activeRoleContent.label}
-							</span>
-						</div>
-						<p className='muted'>
-							{copy.dashboard.roleLabel}:{' '}
-							<strong>{roleLabelValue}</strong> — {copy.dashboard.clinicLabel}:{' '}
-							<strong>{clinicLabelValue}</strong>
-						</p>
-					</div>
-					<div className='actions'>
-						<button className='btn ghost' onClick={toggleTheme}>
-							{isDark ? '🌙' : '☀️'} {isDark ? copy.dashboard.themeDark : copy.dashboard.themeLight}
-						</button>
-						<button className='btn ghost' disabled={loading} onClick={handleRefreshClaims}>
-							{copy.auth.refreshClaims}
-						</button>
-						<button className='btn' disabled={loading} onClick={handleLogout}>
-							{copy.nav.logout}
-						</button>
-					</div>
-				</header>
-
-				<div className='card tabs-card'>
-					<div className='inline-heading'>
-						<h3>{copy.dashboard.roleTabsLabel}</h3>
-						<span className='pill subtle'>{copy.dashboard.roleTabsHelp}</span>
-					</div>
-					<div className='tabs' role='tablist' aria-label={copy.dashboard.roleTabsLabel} id={roleTabListId}>
-						{roleTabs.map((tab, idx) => (
-							<button
-								key={tab.key}
-								id={`${roleTabListId}-${tab.key}`}
-								className={`tab ${activeRoleTab === tab.key ? 'is-active' : ''}`}
-								onClick={() => setActiveRoleTab(tab.key)}
-								onKeyDown={(event) => handleRoleTabKeyDown(event, idx)}
-								role='tab'
-								aria-selected={activeRoleTab === tab.key}
-								tabIndex={activeRoleTab === tab.key ? 0 : -1}
-								aria-controls={tabPanelId}
-							>
-								<span className='tab-icon' aria-hidden>
-									{tab.icon}
-								</span>
-								<span>{tab.label}</span>
-							</button>
-						))}
-					</div>
-					<div className='tab-panel' role='tabpanel' id={tabPanelId} aria-labelledby={`${roleTabListId}-${activeRoleTab}`}>
-						<p className='muted'>{activeRoleContent.description}</p>
-						<ul className='muted'>
-							{activeRoleContent.tips.map((tip, idx) => (
-								<li key={idx}>{tip}</li>
-							))}
-						</ul>
-					</div>
-				</div>
-
-				<div className='grid two'>
-					<div className='card'>
-						<h3>{copy.dashboard.profile.title}</h3>
-						<p className='muted'>{copy.dashboard.profile.description}</p>
-						<div className='actions'>
-								<button
-									className='btn primary'
-									disabled={loading}
-									onClick={() => handleGetMe()}
-								>
-									{copy.dashboard.profile.view}
-								</button>
-								<button
-									className='btn'
-									disabled={loading}
-									onClick={() => authedFetch('GET', '/health')}
-								>
-									{copy.dashboard.profile.ping}
-								</button>
-							</div>
-						</div>
-
-						<div className='card'>
-							<h3>{copy.dashboard.patients.title}</h3>
-							{canClinic || isPlatform ? (
-								<>
-									<div className='grid two'>
-										<label className='field'>
-											<span>{copy.dashboard.patients.fields.name}</span>
-											<input
-												value={pName}
-												onChange={(e) => setPName(e.target.value)}
-												placeholder={copy.dashboard.patients.placeholders.name}
-											/>
-										</label>
-										<label className='field'>
-											<span>{copy.dashboard.patients.fields.phone}</span>
-											<input
-												value={pPhone}
-												onChange={(e) => setPPhone(e.target.value)}
-												placeholder={copy.dashboard.patients.placeholders.phone}
-											/>
-										</label>
-									</div>
-									<div className='grid two'>
-										<label className='field'>
-											<span>{copy.dashboard.patients.fields.email}</span>
-											<input
-												value={pEmail}
-												onChange={(e) => setPEmail(e.target.value)}
-												placeholder={copy.dashboard.patients.placeholders.email}
-											/>
-										</label>
-										<label className='field'>
-											<span>{copy.dashboard.patients.fields.clinic}</span>
-											<select
-												value={selectedClinicForNewPatient}
-												onChange={(e) => setSelectedClinicForNewPatient(e.target.value)}
-												disabled={clinicOptions.length === 0}
-											>
-												{clinicOptions.map((cid) => (
-													<option key={cid} value={cid}>
-														{cid}
-													</option>
-												))}
-												{clinicOptions.length === 0 && (
-													<option value=''>{copy.dashboard.patients.fields.clinicEmpty}</option>
-												)}
-											</select>
-										</label>
-										<div className='actions end'>
-											<button
-												className='btn primary'
-												disabled={loading}
-												onClick={handleCreatePatient}
-										>
-											{copy.dashboard.patients.create}
-										</button>
-									</div>
-								</div>
-
-									<div className='divider' />
-
-									{patients.length > 0 && (
-										<div className='list'>
-											{patients.map((p, idx) => {
-												const patientRecord = p as Record<string, unknown>;
-												const patientId = getStringField(patientRecord, 'id') ?? String(idx);
-												const patientName =
-													getStringField(patientRecord, 'name') ?? copy.dashboard.patients.missingName;
-												const patientEmail =
-													getStringField(patientRecord, 'email') ?? copy.dashboard.patients.missingEmail;
-												const patientClinic =
-													getStringField(patientRecord, 'clinicId') ?? copy.dashboard.noClinic;
-												const patientPhone =
-													getStringField(patientRecord, 'phone') ?? copy.dashboard.patients.missingPhone;
-												const assignedNutri =
-													getStringField(patientRecord, 'assignedNutriUid') ?? '';
-												const selectedNutri = patientAssignSelections[patientId] ?? assignedNutri;
-												return (
-													<div className='card' key={patientId}>
-														<div className='inline-info'>
-															<div>
-																<strong>{patientName}</strong>
-																<div className='muted'>{patientEmail}</div>
-															</div>
-															<div>
-																<small>{copy.dashboard.patients.fields.clinic}</small>
-																<div className='muted'>{patientClinic}</div>
-															</div>
-														</div>
-														<div className='inline-info'>
-															<div>
-																<small>{copy.dashboard.patients.fields.phone}</small>
-																<div className='muted'>{patientPhone}</div>
-															</div>
-															<div>
-																<small>{copy.dashboard.patients.assignedNutri}</small>
-																<div className='muted'>{assignedNutri || copy.dashboard.patients.missingNutri}</div>
-															</div>
-														</div>
-														<div className='actions'>
-															<select
-																value={selectedNutri}
-																onChange={(e) =>
-																	setPatientAssignSelections((prev) => ({
-																		...prev,
-																		[patient.id]: e.target.value,
-																		}))
-																}
-															>
-																<option value=''>{copy.dashboard.patients.selectNutri}</option>
-																{knownNutris.map((n) => (
-																	<option key={n} value={n}>
-																		{n}
-																	</option>
-																))}
-															</select>
-															<button
-																className='btn'
-																disabled={loading || !selectedNutri}
-																onClick={() => handleAssignNutri(patientId)}
-															>
-																{copy.dashboard.patients.assignNutri}
-															</button>
-														</div>
-													</div>
-												);
-											})}
-										</div>
-									)}
-									<button className='btn ghost' disabled={loading} onClick={handleListPatients}>
-										{copy.dashboard.patients.refresh}
-									</button>
-								</>
-							) : (
-								<p className='muted'>{copy.dashboard.patients.onlyClinic}</p>
-							)}
-						</div>
-					</div>
-
-					<div className='card'>
-						<h3>{copy.dashboard.appointments.title}</h3>
-						<p className='muted'>{copy.dashboard.appointments.description}</p>
-						{!isPatient && <p className='muted'>{copy.dashboard.appointments.patientRoleReminder}</p>}
-						<p className='muted'>{copy.dashboard.appointments.tip}</p>
-						<div
-							className='muted'
-							style={{
-								padding: 12,
-								borderRadius: 8,
-								border: '1px solid #f3c96b',
-								background: '#fff7e0',
-								marginBottom: 16,
-							}}
-						>
-							{copy.dashboard.appointments.reminder}
-						</div>
-						{appointments.length === 0 && (
-							<p className='muted'>{copy.dashboard.appointments.noAppointments}</p>
-						)}
-						<div className='grid three'>
-							<label className='field'>
-								<span>{copy.dashboard.appointments.form.selectNutri}</span>
-								<select
-									value={apptRequestNutriUid}
-									onChange={(e) => setApptRequestNutriUid(e.target.value)}
-								>
-									{knownNutris.map((n) => (
-										<option key={n} value={n}>
-											{n}
-										</option>
-									))}
-									{knownNutris.length === 0 && (
-										<option value=''>{copy.dashboard.appointments.form.noNutriOptions}</option>
-									)}
-								</select>
-							</label>
-							<label className='field'>
-								<span>{copy.dashboard.appointments.form.from}</span>
-								<input
-									type='datetime-local'
-									value={slotRangeFrom}
-									onChange={(e) => setSlotRangeFrom(e.target.value)}
-								/>
-							</label>
-							<label className='field'>
-								<span>{copy.dashboard.appointments.form.to}</span>
-								<input
-									type='datetime-local'
-									value={slotRangeTo}
-									onChange={(e) => setSlotRangeTo(e.target.value)}
-								/>
-							</label>
-							<label className='field'>
-								<span>{copy.dashboard.appointments.form.slotLabel}</span>
-								<select
-									value={apptRequestSlot}
-									onChange={(e) => setApptRequestSlot(e.target.value)}
-									disabled={loadingSlots || apptSlots.length === 0}
-								>
-									{apptSlots.length === 0 && (
-										<option value=''>{copy.dashboard.appointments.form.noSlots}</option>
-									)}
-									{apptSlots.map((slot) => (
-										<option key={slot} value={slot}>
-											{formatSlotLabel(slot)}
-										</option>
-									))}
-								</select>
-							</label>
-							<button
-								className='btn ghost'
-								disabled={loadingSlots || !apptRequestNutriUid}
-								onClick={() => handleLoadSlots(apptRequestNutriUid)}
-							>
-								{copy.dashboard.appointments.form.refreshSlots}
-							</button>
-							<button
-								className='btn primary'
-								disabled={
-									loading ||
-									linking ||
-									!isPatient ||
-									knownNutris.length === 0 ||
-									!apptRequestSlot
-								}
-								onClick={handleRequestAppointment}
-							>
-								{copy.dashboard.appointments.form.request}
-							</button>
-							<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
-								{copy.dashboard.appointments.form.list}
-							</button>
-						</div>
-
-						{slotRangeError && (
-							<p className='muted' role='status' aria-live='assertive'>
-								{slotRangeError}
-							</p>
-						)}
-
-						{apptSlots.length === 0 && (
-							<div className='card' style={{ background: '#f7f7f7', border: '1px dashed #ccc' }}>
-								<p className='muted'>{copy.dashboard.appointments.form.manualHelp}</p>
-								<label className='field'>
-									<span>{copy.dashboard.appointments.form.manualLabel}</span>
-									<input
-										type='datetime-local'
-										value={apptManualSlot}
-										onChange={(e) => setApptManualSlot(e.target.value)}
-									/>
-								</label>
-							</div>
-						)}
-
-						{linkRequired.active && (
-							<div
-								className='card'
-								style={{ background: '#fff7e0', border: '1px solid #f3c96b' }}
-							>
-								<h4>{copy.dashboard.appointments.linking.title}</h4>
-								<p className='muted'>
-									{linkRequired.reason ??
-										copy.dashboard.appointments.linking.description}
-								</p>
-								<div className='actions'>
-									<button
-										className='btn primary'
-										disabled={loading || linking}
-										onClick={handleLinkPatientAndRetry}
-									>
-										{copy.dashboard.appointments.linking.createAndLink}
-									</button>
-									<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
-										{copy.dashboard.appointments.linking.refresh}
-									</button>
-								</div>
-								{linkFlowMessage && (
-									<p className='muted' role='status' aria-live='polite'>
-										{linkFlowMessage}
-									</p>
-								)}
-							</div>
-						)}
-
-						{appointments.length > 0 && (
-							<div className='appointments'>
-								{appointments.map((a, idx) => {
-									const appt = a as Record<string, unknown>;
-									const appointmentId = getStringField(appt, 'id');
-									const appointmentKey = appointmentId ?? String(idx);
-									const appointmentNutri = getStringField(appt, 'nutriUid') ?? '';
-									const appointmentPatientUid = getStringField(appt, 'patientUid');
-									const appointmentPatientId =
-										getStringField(appt, 'patientId') ?? appointmentPatientUid ?? '—';
-									const appointmentClinic = getStringField(appt, 'clinicId') ?? copy.dashboard.noClinic;
-									const appointmentStatus = getStringField(appt, 'status') ?? 'requested';
-									const sched =
-										scheduleSelections[appointmentKey] ?? {
-											when: '',
-											manualWhen: '',
-											nutri: appointmentNutri || apptRequestNutriUid || '',
-										};
-									const canSchedule =
-										role === 'nutri' ||
-										role === 'clinic_admin' ||
-										(role === 'patient' && appointmentPatientUid === user?.uid);
-									const canComplete =
-										role === 'nutri' ||
-										role === 'clinic_admin' ||
-										role === 'platform_admin';
-									const lockNutri = role === 'patient';
-									const status: string = appointmentStatus;
-									const statusTone =
-										status === 'completed'
-											? 'success'
-											: status === 'cancelled'
-											? 'danger'
-											: status === 'scheduled'
-											? 'warn'
-											: 'info';
-									const statusIcon: Record<string, string> = {
-										requested: '⏳',
-										scheduled: '📅',
-										completed: '✅',
-										cancelled: '🚫',
-									};
-									return (
-										<div className='appt-card' key={appointmentKey}>
-											<div className='appt-head'>
-												<div className='appt-headline'>
-													<p className='eyebrow'>{copy.dashboard.appointments.cardLabel}</p>
-													<strong>{appointmentId ?? copy.dashboard.appointments.noId}</strong>
-												</div>
-												<div className='appt-meta'>
-													<span className={`pill status status-${statusTone}`}>
-														<span aria-hidden>{statusIcon[status] ?? '📌'}</span>{' '}
-														{copy.dashboard.appointments.statusLabel[status as keyof typeof copy.dashboard.appointments.statusLabel] ??
-															status}
-													</span>
-													<span
-														className='pill subtle'
-														aria-label={`${copy.dashboard.appointments.detailLabels.positionLabel} ${idx + 1}`}
-													>
-														#{idx + 1}
-													</span>
-												</div>
-											</div>
-											<div className='appt-grid'>
-												<div>
-													<small>{copy.dashboard.appointments.detailLabels.clinic}</small>
-													<div className='muted'>{appointmentClinic}</div>
-												</div>
-												<div>
-													<small>{copy.dashboard.appointments.detailLabels.patient}</small>
-													<div className='muted'>{appointmentPatientId}</div>
-												</div>
-												<div>
-													<small>{copy.dashboard.appointments.detailLabels.nutri}</small>
-													<div className='muted'>{appointmentNutri || copy.dashboard.patients.missingNutri}</div>
-												</div>
-												<div>
-													<small>{copy.dashboard.appointments.detailLabels.requested}</small>
-													<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
-												</div>
-												<div>
-													<small>{copy.dashboard.appointments.detailLabels.scheduled}</small>
-													<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
-												</div>
-												<div>
-													<small>{copy.dashboard.appointments.detailLabels.updated}</small>
-													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
-												</div>
-											</div>
-											{!canSchedule && (
-												<p className='muted' style={{ marginTop: 8 }}>
-													{role === 'patient'
-														? copy.dashboard.appointments.schedule.lockNotice
-														: copy.dashboard.appointments.schedule.permissionHint}
-												</p>
-											)}
-											<div className='appt-actions'>
-												{canSchedule && (
-													<div className='appt-action-block'>
-														<p className='muted small'>{copy.dashboard.appointments.schedule.title}</p>
-														<div className='appt-action-grid'>
-															<select
-																value={sched.nutri}
-																disabled={lockNutri}
-																onChange={(e) =>
-																	setScheduleSelections((prev) => ({
-																		...prev,
-																		[appointmentKey]: {
-																			...prev[appointmentKey],
-																			when: '',
-																			manualWhen: '',
-																			nutri: e.target.value,
-																		},
-																	}))
-																}
-															>
-																<option value=''>{copy.dashboard.appointments.schedule.selectNutri}</option>
-																{knownNutris.map((n) => (
-																	<option key={n} value={n}>
-																		{n}
-																	</option>
-																))}
-															</select>
-															<select
-																value={sched.when}
-																disabled={
-																	loadingSlots ||
-																	!sched.nutri ||
-																	currentSlotsNutri !== sched.nutri ||
-																	apptSlots.length === 0
-																}
-																onChange={(e) =>
-																	setScheduleSelections((prev) => ({
-																		...prev,
-																		[appointmentKey]: {
-																			...prev[appointmentKey],
-																			when: e.target.value,
-																			nutri: sched.nutri,
-																		},
-																	}))
-																}
-																>
-																	{currentSlotsNutri !== sched.nutri && (
-																	<option value=''>{copy.dashboard.appointments.schedule.selectSlot}</option>
-																)}
-																{currentSlotsNutri === sched.nutri && apptSlots.length === 0 && (
-																	<option value=''>{copy.dashboard.appointments.schedule.noSlots}</option>
-																)}
-																{currentSlotsNutri === sched.nutri &&
-																	apptSlots.map((slot) => (
-																		<option key={slot} value={slot}>
-																			{formatSlotLabel(slot)}
-																		</option>
-																	))}
-															</select>
-															<input
-																type='datetime-local'
-																value={sched.manualWhen ?? ''}
-																onChange={(e) =>
-																	setScheduleSelections((prev) => ({
-																		...prev,
-																		[appointmentKey]: {
-																			...prev[appointmentKey],
-																			manualWhen: e.target.value,
-																			nutri: sched.nutri,
-																		},
-																	}))
-																}
-																placeholder={copy.dashboard.appointments.schedule.manualFallback}
-															/>
-														</div>
-														<div className='actions wrap'>
-															<button
-																className='btn ghost'
-																disabled={loadingSlots || !sched.nutri}
-																onClick={() =>
-																	handleLoadSlots(sched.nutri || apptRequestNutriUid, {
-																		fromIso: toIsoFromDatetimeLocal(slotRangeFrom),
-																		toIso: toIsoFromDatetimeLocal(slotRangeTo),
-																	})
-																}
-															>
-																{copy.dashboard.appointments.schedule.loadSlots}
-															</button>
-															<button
-																className='btn'
-																disabled={loading || (!sched.when && !sched.manualWhen)}
-																onClick={() => handleScheduleAppointment(appointmentKey)}
-															>
-																{copy.dashboard.appointments.schedule.program}
-															</button>
-														</div>
-													</div>
-												)}
-												<div className='appt-action-block secondary'>
-													<p className='muted small'>{copy.dashboard.appointments.quickActions.title}</p>
-													<div className='actions wrap'>
-														<button
-															className='btn ghost'
-															disabled={loading}
-															onClick={() => setConfirmAction({ type: 'cancel', apptId: appointmentKey })}
-														>
-															{copy.dashboard.appointments.quickActions.cancel}
-														</button>
-														{canComplete && (
-															<button
-																className='btn success'
-																disabled={loading}
-																onClick={() => setConfirmAction({ type: 'complete', apptId: appointmentKey })}
-															>
-																{copy.dashboard.appointments.quickActions.complete}
-															</button>
-														)}
-													</div>
-												</div>
-											</div>
-										</div>
-									);
-								})}
-							</div>
-						)}
-					</div>
-
-					{(role === 'clinic_admin' || role === 'nutri') && (
-						<div className='card'>
-							<h3>{copy.dashboard.clinicAvailability.title}</h3>
-							<p className='muted'>{copy.dashboard.clinicAvailability.description}</p>
-							<div className='actions wrap'>
-								<button
-									className='btn'
-									disabled={loadingSlots || !apptRequestNutriUid}
-									onClick={() => handleLoadSlots(apptRequestNutriUid)}
-								>
-									{copy.dashboard.clinicAvailability.refresh}
-								</button>
-								<span className='pill'>
-									{copy.dashboard.clinicAvailability.counts
-										.replace('{{free}}', String(apptSlots.length))
-										.replace('{{busy}}', String(apptBusySlots.length))}
-								</span>
-							</div>
-							{apptSlots.length === 0 && apptBusySlots.length === 0 ? (
-								<p className='muted'>{copy.dashboard.clinicAvailability.empty}</p>
-							) : (
-								<div className='list'>
-									{apptSlots.slice(0, 6).map((slot) => (
-										<div className='inline-info' key={`free-${slot}`}>
-											<div>
-												<small>{copy.dashboard.clinicAvailability.freeLabel}</small>
-												<div>{formatSlotLabel(slot)}</div>
-											</div>
-										</div>
-									))}
-									{apptBusySlots.slice(0, 6).map((slot) => (
-										<div className='inline-info' key={`busy-${slot}`}>
-											<div>
-												<small>{copy.dashboard.clinicAvailability.busyLabel}</small>
-												<div className='muted'>{formatSlotLabel(slot)}</div>
-											</div>
-										</div>
-									))}
-									{apptSlots.length + apptBusySlots.length > 12 && (
-										<p className='muted'>{copy.dashboard.clinicAvailability.limited}</p>
-									)}
-								</div>
-							)}
-						</div>
-					)}
-
-				<div className='card'>
-					<h3>{copy.dashboard.log.title}</h3>
-					{reversedLogs.length === 0 ? (
-						<p className='muted'>{copy.dashboard.log.empty}</p>
-					) : (
-						<ul className='log'>
-							{reversedLogs.map((l, idx) => (
-								<li key={idx}>
-									<div className='log-head'>
-										<code>{l.ts}</code>
-										<strong>{l.endpoint}</strong>
-										<span className={l.ok ? 'pill ok' : 'pill error'}>
-											{l.ok ? copy.dashboard.log.ok : copy.dashboard.log.error}
-										</span>
-									</div>
-									{l.payload !== undefined && (
-										<div className='log-body'>
-											<small>{copy.dashboard.log.payloadLabel}</small>{' '}
-											<code>{JSON.stringify(l.payload)}</code>
-										</div>
-									)}
-									<div className='log-body'>
-										<small>{l.ok ? copy.dashboard.log.dataLabel : copy.dashboard.log.error}</small>{' '}
-										<code>{l.ok ? JSON.stringify(l.data) : l.error}</code>
-									</div>
-								</li>
-							))}
-						</ul>
-					)}
-				</div>
-			</div>
-		);
-	}
-
-		return (
-			<div>
-				<div className='toast-stack' aria-live='polite'>
-					{toasts.map((toast) => (
-						<div key={toast.id} className={`toast ${toast.tone}`}>
-							<span className='toast-icon' aria-hidden>
+	return (
+		<div>
+			<div className='toast-stack' aria-live='polite'>
+				{toasts.map((toast) => (
+					<div key={toast.id} className={`toast ${toast.tone}`}>
+						<span className='toast-icon' aria-hidden>
 								{toastIcons[toast.tone]}
 							</span>
 							<div>{toast.message}</div>
@@ -1810,13 +1032,13 @@ export default function App() {
 				</div>
 			</nav>
 			<Routes>
-				<Route path='/' element={<Landing />} />
-				<Route path='/login' element={<AuthPage />} />
+				<Route path='/' element={<Landing copy={copy} />} />
+				<Route path='/login' element={<AuthPage {...authPageProps} />} />
 				<Route
 					path='/dashboard'
 					element={
 						<ProtectedRoute user={user}>
-							<Dashboard />
+							<Dashboard {...dashboardProps} />
 						</ProtectedRoute>
 					}
 				/>
