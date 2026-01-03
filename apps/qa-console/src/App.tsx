@@ -1,4 +1,12 @@
-import { useRef, useEffect, useMemo, useState, type ReactElement } from 'react';
+import {
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type ReactElement,
+} from 'react';
 import {
 	createUserWithEmailAndPassword,
 	getIdToken,
@@ -11,16 +19,11 @@ import {
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import './App.css';
 import { auth } from './firebase';
+import { getCopy, supportedLocales, type Locale, type RoleCopy } from './i18n';
 
 type Claims = { role: string | null; clinicId: string | null };
 
-type RoleTab = {
-	key: 'patient' | 'nutri' | 'clinic_admin' | 'platform_admin';
-	label: string;
-	icon: string;
-	description: string;
-	tips: string[];
-};
+type RoleTab = RoleCopy;
 
 type Toast = {
 	id: string;
@@ -80,6 +83,30 @@ function toReadableDate(v: unknown): string {
 	return String(v);
 }
 
+function getStringField(source: unknown, key: string): string | null {
+	if (source && typeof source === 'object' && key in source) {
+		const value = (source as Record<string, unknown>)[key];
+		return typeof value === 'string' ? value : null;
+	}
+	return null;
+}
+
+function getArrayField(source: unknown, key: string): unknown[] | null {
+	if (source && typeof source === 'object' && key in source) {
+		const value = (source as Record<string, unknown>)[key];
+		return Array.isArray(value) ? value : null;
+	}
+	return null;
+}
+
+function getObjectField(source: unknown, key: string): Record<string, unknown> | null {
+	if (source && typeof source === 'object' && key in source) {
+		const value = (source as Record<string, unknown>)[key];
+		return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+	}
+	return null;
+}
+
 function defaultSlotWindow() {
 	const start = new Date();
 	const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
@@ -111,6 +138,13 @@ export default function App() {
 		if (stored === 'light' || stored === 'dark') return stored;
 		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 	});
+	const [locale, setLocale] = useState<Locale>(() => {
+		if (typeof window === 'undefined') return 'es';
+		const stored = window.localStorage.getItem('qa-console-locale');
+		if (stored && supportedLocales.includes(stored as Locale)) return stored as Locale;
+		return 'es';
+	});
+	const copy = useMemo(() => getCopy(locale), [locale]);
 
 	const authFieldRefs = useRef<{ email: HTMLInputElement | null; password: HTMLInputElement | null }>(
 		{ email: null, password: null }
@@ -130,55 +164,7 @@ export default function App() {
 
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 
-	const roleTabs = useMemo<RoleTab[]>(
-		() => [
-			{
-				key: 'patient',
-				label: 'Paciente',
-				icon: '🧍‍♀️',
-				description: 'Solicitá turnos y seguí tu agenda vinculada.',
-				tips: [
-					'Elegí un nutri y pedí turno; si el perfil no está vinculado, crealo desde la alerta.',
-					'Podés reprogramar o cancelar turnos que solicitaste.',
-					'Usá el horario manual si no ves slots disponibles.',
-				],
-			},
-			{
-				key: 'nutri',
-				label: 'Nutri',
-				icon: '🥑',
-				description: 'Programá y completá consultas con tus pacientes.',
-				tips: [
-					'Traé los slots disponibles del nutri antes de programar.',
-					'Completá turnos finalizados para marcar el seguimiento.',
-					'Podés ver disponibilidad rápida de la clínica en el panel inferior.',
-				],
-			},
-			{
-				key: 'clinic_admin',
-				label: 'Clínica',
-				icon: '🏥',
-				description: 'Gestioná pacientes y agendas de toda la clínica.',
-				tips: [
-					'Cargá pacientes con clínica asignada y vinculá nutris.',
-					'Programá o reprogramá turnos y mantené la disponibilidad al día.',
-					'Usá la tarjeta de log para auditar llamados al backend.',
-				],
-			},
-			{
-				key: 'platform_admin',
-				label: 'Platform',
-				icon: '🛰️',
-				description: 'Visión cross-clínica para auditar y destrabar flujos.',
-				tips: [
-					'Podés ver y completar turnos de todas las clínicas.',
-					'Filtrá por clínica y nutri para validar aislamientos.',
-					'Refrescá claims si cambiás permisos desde el emulador.',
-				],
-			},
-		],
-		[]
-	);
+	const roleTabs = useMemo<RoleTab[]>(() => copy.roleTabs, [copy]);
 	const [activeRoleTab, setActiveRoleTab] = useState<RoleTab['key']>('patient');
 
 	// Pacientes
@@ -218,6 +204,7 @@ export default function App() {
 	});
 	const [linkFlowMessage, setLinkFlowMessage] = useState<string | null>(null);
 	const [linking, setLinking] = useState(false);
+	const localeSelectId = useId();
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 	const isDark = theme === 'dark';
@@ -242,6 +229,11 @@ export default function App() {
 	}, [theme]);
 
 	useEffect(() => {
+		document.documentElement.setAttribute('lang', locale);
+		window.localStorage.setItem('qa-console-locale', locale);
+	}, [locale]);
+
+	useEffect(() => {
 		if (claims.role === 'patient') setActiveRoleTab('patient');
 		else if (claims.role === 'nutri') setActiveRoleTab('nutri');
 		else if (claims.role === 'clinic_admin') setActiveRoleTab('clinic_admin');
@@ -257,11 +249,11 @@ export default function App() {
 		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
 		if (claims.role === 'nutri' && user?.uid) seed.add(user.uid);
 		patients.forEach((p) => {
-			const n = (p as any).assignedNutriUid;
+			const n = getStringField(p, 'assignedNutriUid');
 			if (typeof n === 'string' && n) seed.add(n);
 		});
 		appointments.forEach((a) => {
-			const n = (a as any).nutriUid;
+			const n = getStringField(a, 'nutriUid');
 			if (typeof n === 'string' && n) seed.add(n);
 		});
 		return Array.from(seed);
@@ -277,14 +269,14 @@ export default function App() {
 		const seed = new Set<string>();
 		if (claims.clinicId) seed.add(claims.clinicId);
 		patients.forEach((p) => {
-			const cid = (p as any).clinicId;
+			const cid = getStringField(p, 'clinicId');
 			if (typeof cid === 'string' && cid) seed.add(cid);
 		});
-	appointments.forEach((a) => {
-		const cid = (a as any).clinicId;
-		if (typeof cid === 'string' && cid) seed.add(cid);
-	});
-	return Array.from(seed);
+		appointments.forEach((a) => {
+			const cid = getStringField(a, 'clinicId');
+			if (typeof cid === 'string' && cid) seed.add(cid);
+		});
+		return Array.from(seed);
 	}, [claims.clinicId, patients, appointments]);
 
 	useEffect(() => {
@@ -366,7 +358,7 @@ export default function App() {
 		body?: unknown
 	): Promise<AuthedFetchResult> {
 		if (!user) {
-			const error = 'Usuario no autenticado';
+			const error = copy.errors.unauthenticated;
 			pushErr(endpoint, body, error);
 			return { ok: false, status: 401, data: null, error };
 		}
@@ -384,7 +376,7 @@ export default function App() {
 			});
 		} catch (err) {
 			const error =
-				err instanceof Error ? err.message : 'Error de red al llamar al backend';
+				err instanceof Error ? err.message : copy.errors.network;
 			pushErr(endpoint, body, error);
 			return { ok: false, status: 0, data: null, error };
 		}
@@ -392,9 +384,7 @@ export default function App() {
 		const data = await res.json().catch(() => null);
 		if (!res.ok) {
 			const errorMessage =
-				(typeof data === 'object' && data && 'message' in data
-					? (data as any).message
-					: null) ??
+				getStringField(data, 'message') ??
 				`HTTP ${res.status} ${res.statusText}`;
 			pushErr(endpoint, body, `${errorMessage} :: ${JSON.stringify(data)}`);
 			return { ok: false, status: res.status, data, error: errorMessage };
@@ -404,15 +394,15 @@ export default function App() {
 	}
 
 	function getEmailError(value: string) {
-		if (!value.trim()) return 'Ingresá un email';
+		if (!value.trim()) return copy.auth.errors.emailRequired;
 		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-		if (!emailRegex.test(value.trim())) return 'Ingresá un email válido';
+		if (!emailRegex.test(value.trim())) return copy.auth.errors.emailInvalid;
 		return null;
 	}
 
 	function getPasswordError(value: string) {
-		if (!value) return 'Ingresá una contraseña';
-		if (value.length < 6) return 'La contraseña debe tener al menos 6 caracteres';
+		if (!value) return copy.auth.errors.passwordRequired;
+		if (value.length < 6) return copy.auth.errors.passwordLength;
 		return null;
 	}
 
@@ -434,13 +424,13 @@ export default function App() {
 		try {
 			const cred = await signInWithEmailAndPassword(auth, email, password);
 			pushOk('auth/login', { email }, { uid: cred.user.uid });
-			pushToast('Sesión iniciada', 'success');
+			pushToast(copy.toasts.sessionStarted, 'success');
 			navigate('/dashboard');
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : 'Error desconocido';
+			const msg = err instanceof Error ? err.message : copy.errors.unknown;
 			setAuthActionError(msg);
 			pushErr('auth/login', { email }, msg);
-			pushToast('No pudimos iniciar sesión', 'error');
+			pushToast(copy.toasts.loginError, 'error');
 			setStickyAuthField('email');
 		} finally {
 			setLoading(false);
@@ -456,13 +446,13 @@ export default function App() {
 		try {
 			const cred = await createUserWithEmailAndPassword(auth, email, password);
 			pushOk('auth/register', { email }, { uid: cred.user.uid });
-			pushToast('Cuenta creada', 'success');
+			pushToast(copy.toasts.accountCreated, 'success');
 			navigate('/dashboard');
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : 'Error desconocido';
+			const msg = err instanceof Error ? err.message : copy.errors.unknown;
 			setAuthActionError(msg);
 			pushErr('auth/register', { email }, msg);
-			pushToast('No pudimos registrar el usuario', 'error');
+			pushToast(copy.toasts.registerError, 'error');
 			setStickyAuthField('email');
 		} finally {
 			setLoading(false);
@@ -477,15 +467,15 @@ export default function App() {
 			pushOk('auth/logout', undefined, { ok: true });
 			setPatients([]);
 			setAppointments([]);
-			pushToast('Sesión cerrada', 'info');
+			pushToast(copy.toasts.logoutSuccess, 'info');
 			navigate('/login');
 		} catch (err) {
 			pushErr(
 				'auth/logout',
 				undefined,
-				err instanceof Error ? err.message : 'Error desconocido'
+				err instanceof Error ? err.message : copy.errors.unknown
 			);
-			pushToast('No pudimos cerrar sesión', 'error');
+			pushToast(copy.toasts.logoutError, 'error');
 		} finally {
 			setLoading(false);
 		}
@@ -507,14 +497,14 @@ export default function App() {
 					: null;
 			setClaims({ role, clinicId });
 			pushOk('auth/refresh', undefined, { role, clinicId });
-			pushToast('Claims actualizadas', 'success');
+			pushToast(copy.toasts.claimsRefreshed, 'success');
 		} catch (err) {
 			pushErr(
 				'auth/refresh',
 				undefined,
-				err instanceof Error ? err.message : 'Error desconocido'
+				err instanceof Error ? err.message : copy.errors.unknown
 			);
-			pushToast('No pudimos refrescar claims', 'error');
+			pushToast(copy.toasts.claimsError, 'error');
 		} finally {
 			setLoading(false);
 		}
@@ -540,9 +530,9 @@ export default function App() {
 			});
 			if (created.ok) {
 				await handleListPatients();
-				pushToast('Paciente creado', 'success');
+				pushToast(copy.toasts.patientCreated, 'success');
 			} else {
-				pushToast('No se pudo crear el paciente', 'error');
+				pushToast(copy.toasts.patientError, 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -556,10 +546,10 @@ export default function App() {
 			if (
 				data.ok &&
 				data.data &&
-				typeof data.data === 'object' &&
-				'data' in (data.data as any)
+				typeof data.data === 'object'
 			) {
-				setPatients((data.data as any).data ?? []);
+				const patientsList = getArrayField(data.data, 'data');
+				if (patientsList) setPatients(patientsList);
 			}
 		} finally {
 			setLoading(false);
@@ -574,7 +564,7 @@ export default function App() {
 				pushErr(
 					'/patients/:id (assign)',
 					{ patientId },
-					'Seleccioná un nutri para asignar'
+					copy.dashboard.patients.selectNutri
 				);
 				return;
 			}
@@ -583,9 +573,9 @@ export default function App() {
 			});
 			if (res.ok) {
 				await handleListPatients();
-				pushToast('Nutri asignado', 'success');
+				pushToast(copy.toasts.assignSuccess, 'success');
 			} else {
-				pushToast('No se pudo asignar el nutri', 'error');
+				pushToast(copy.toasts.assignError, 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -599,11 +589,11 @@ export default function App() {
 			if (
 				data.ok &&
 				data.data &&
-				typeof data.data === 'object' &&
-				'data' in (data.data as any)
+				typeof data.data === 'object'
 			) {
-				setAppointments((data.data as any).data ?? []);
-				pushToast('Turnos actualizados', 'info');
+				const appointmentList = getArrayField(data.data, 'data');
+				if (appointmentList) setAppointments(appointmentList);
+				pushToast(copy.toasts.appointmentsRefreshed, 'info');
 			}
 		} finally {
 			setLoading(false);
@@ -627,12 +617,12 @@ export default function App() {
 		const toIso = range?.toIso ?? toIsoFromDatetimeLocal(slotRangeTo);
 
 		if (!fromIso || !toIso) {
-			setSlotRangeError('Ingresá un rango válido para buscar slots.');
+			setSlotRangeError(copy.dashboard.appointments.form.rangeErrors.invalidRange);
 			return;
 		}
 
 		if (Date.parse(toIso) <= Date.parse(fromIso)) {
-			setSlotRangeError('La fecha “hasta” debe ser mayor a “desde”.');
+			setSlotRangeError(copy.dashboard.appointments.form.rangeErrors.endBeforeStart);
 			return;
 		}
 
@@ -646,11 +636,17 @@ export default function App() {
 			if (
 				res.ok &&
 				res.data &&
-				typeof res.data === 'object' &&
-				'data' in (res.data as any)
+				typeof res.data === 'object'
 			) {
-				const free = ((res.data as any).data?.free ?? []) as string[];
-				const busy = ((res.data as any).data?.busy ?? []) as string[];
+				const dataPayload = getObjectField(res.data, 'data');
+				const free =
+					getArrayField(dataPayload, 'free')?.filter(
+						(slot): slot is string => typeof slot === 'string'
+					) ?? [];
+				const busy =
+					getArrayField(dataPayload, 'busy')?.filter(
+						(slot): slot is string => typeof slot === 'string'
+					) ?? [];
 				setApptSlots(free);
 				setApptBusySlots(busy);
 				setCurrentSlotsNutri(nutriUid);
@@ -672,6 +668,8 @@ export default function App() {
 		const toIso = toIsoFromDatetimeLocal(slotRangeTo);
 		if (!fromIso || !toIso) return;
 		handleLoadSlots(apptRequestNutriUid, { fromIso, toIso });
+		// handleLoadSlots depends on stateful values; avoid adding it to prevent infinite loops
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [apptRequestNutriUid, slotRangeFrom, slotRangeTo]);
 
 	async function handleRequestAppointment() {
@@ -691,7 +689,7 @@ export default function App() {
 				pushErr(
 					'/appointments/request',
 					{ apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
-					'Seleccioná un horario disponible o ingresá uno manual'
+					copy.dashboard.appointments.form.slotRequired
 				);
 				return;
 			}
@@ -704,20 +702,14 @@ export default function App() {
 				setLinkRequired({ active: false, reason: '' });
 				setLinkFlowMessage(null);
 				await handleListAppointments();
-				pushToast('Turno solicitado', 'success');
+				pushToast(copy.toasts.appointmentRequested, 'success');
 			} else if (result.status === 403 && claims.role === 'patient') {
 				const reason =
-					(typeof result.data === 'object' &&
-						result.data &&
-						'message' in (result.data as any) &&
-						typeof (result.data as any).message === 'string'
-						? (result.data as any).message
-						: result.error) ??
-					'Necesitás vincular tu perfil antes de pedir turno.';
+					getStringField(result.data, 'message') ?? result.error ?? copy.dashboard.appointments.linking.description;
 				setLinkRequired({ active: true, reason });
-				pushToast('Necesitás vincular tu paciente', 'warning');
+				pushToast(copy.toasts.linkRequired, 'warning');
 			} else {
-				pushToast('No se pudo solicitar el turno', 'error');
+				pushToast(copy.toasts.appointmentRequestError, 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -729,16 +721,14 @@ export default function App() {
 			pushErr(
 				'patients/link-and-retry',
 				undefined,
-				'Necesitás iniciar sesión para vincular tu paciente.'
+				copy.dashboard.appointments.linking.needAuth
 			);
 			return;
 		}
 
 		const clinicIdForPatient = claims.clinicId || selectedClinicForNewPatient;
 		if (!clinicIdForPatient) {
-			setLinkFlowMessage(
-				'Asigná un clinicId en los claims para poder crear y vincular tu paciente.'
-			);
+			setLinkFlowMessage(copy.dashboard.appointments.linking.needClinic);
 			return;
 		}
 
@@ -754,29 +744,16 @@ export default function App() {
 				phone: pPhone || null,
 				clinicId: clinicIdForPatient,
 			});
-			if (
-				created.ok &&
-				created.data &&
-				typeof created.data === 'object' &&
-				'data' in (created.data as any) &&
-				(created.data as any).data?.id
-			) {
-				patientId = (created.data as any).data.id as string;
-			} else if (
-				!created.ok &&
-				created.status === 409 &&
-				typeof created.data === 'object' &&
-				created.data &&
-				'data' in (created.data as any) &&
-				(created.data as any).data?.id
-			) {
-				patientId = (created.data as any).data.id as string;
+			const createdData = getObjectField(created.data, 'data');
+			const createdId = getStringField(createdData, 'id');
+			if (created.ok && createdId) {
+				patientId = createdId;
+			} else if (!created.ok && created.status === 409 && createdId) {
+				patientId = createdId;
 			}
 
 			if (!patientId) {
-				setLinkFlowMessage(
-					'No se pudo crear ni ubicar un paciente para vincular. Revisá los datos e intentá de nuevo.'
-				);
+				setLinkFlowMessage(copy.dashboard.appointments.linking.createError);
 				return;
 			}
 
@@ -784,15 +761,13 @@ export default function App() {
 				linkedUid: user.uid,
 			});
 			if (!linkRes.ok) {
-				setLinkFlowMessage(
-					'No se pudo vincular el paciente. Revisá los claims y reintentá.'
-				);
+				setLinkFlowMessage(copy.dashboard.appointments.linking.linkError);
 				return;
 			}
 
 			setLinkRequired({ active: false, reason: '' });
-			setLinkFlowMessage('Paciente vinculado. Reintentando solicitud de turno...');
-			pushToast('Paciente vinculado', 'success');
+			setLinkFlowMessage(copy.dashboard.appointments.linking.success);
+			pushToast(copy.toasts.patientLinked, 'success');
 			await handleRequestAppointment();
 		} finally {
 			setLinking(false);
@@ -809,7 +784,7 @@ export default function App() {
 				pushErr(
 					'/appointments/:id/schedule',
 					{ apptId, when: sched?.when },
-					'Falta fecha válida para programar'
+					copy.dashboard.appointments.schedule.validDateRequired
 				);
 				return;
 			}
@@ -819,9 +794,9 @@ export default function App() {
 			});
 			if (res.ok) {
 				await handleListAppointments();
-				pushToast('Turno programado', 'success');
+				pushToast(copy.toasts.appointmentScheduled, 'success');
 			} else {
-				pushToast('No se pudo programar el turno', 'error');
+				pushToast(copy.toasts.appointmentScheduleError, 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -834,9 +809,9 @@ export default function App() {
 			const res = await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
 			if (res.ok) {
 				await handleListAppointments();
-				pushToast('Turno cancelado', 'info');
+				pushToast(copy.toasts.appointmentCancelled, 'info');
 			} else {
-				pushToast('No se pudo cancelar el turno', 'error');
+				pushToast(copy.toasts.appointmentCancelError, 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -849,9 +824,9 @@ export default function App() {
 			const res = await authedFetch('POST', `/appointments/${apptId}/complete`, {});
 			if (res.ok) {
 				await handleListAppointments();
-				pushToast('Turno completado', 'success');
+				pushToast(copy.toasts.appointmentCompleted, 'success');
 			} else {
-				pushToast('No se pudo completar el turno', 'error');
+				pushToast(copy.toasts.appointmentCompleteError, 'error');
 			}
 		} finally {
 			setLoading(false);
@@ -869,23 +844,28 @@ export default function App() {
 		}
 	}
 
-	const confirmCopy: Record<
-		ConfirmAction['type'],
-		{ title: string; body: string; confirmLabel: string; tone: 'warning' | 'success' }
-	> = {
-		cancel: {
-			title: 'Cancelar turno',
-			body: '¿Confirmás que querés cancelar este turno? Se notificará al paciente en la UI.',
-			confirmLabel: 'Sí, cancelar',
-			tone: 'warning',
-		},
-		complete: {
-			title: 'Completar turno',
-			body: 'Al completar, el turno quedará marcado como finalizado.',
-			confirmLabel: 'Marcar como completado',
-			tone: 'success',
-		},
-	};
+	const confirmCopy = useMemo<
+		Record<
+			ConfirmAction['type'],
+			{ title: string; body: string; confirmLabel: string; tone: 'warning' | 'success' }
+		>
+	>(
+		() => ({
+			cancel: {
+				title: copy.confirm.cancel.title,
+				body: copy.confirm.cancel.body,
+				confirmLabel: copy.confirm.cancel.confirm,
+				tone: 'warning',
+			},
+			complete: {
+				title: copy.confirm.complete.title,
+				body: copy.confirm.complete.body,
+				confirmLabel: copy.confirm.complete.confirm,
+				tone: 'success',
+			},
+		}),
+		[copy]
+	);
 
 	const toastIcons: Record<Toast['tone'], string> = {
 		success: '✅',
@@ -899,27 +879,24 @@ export default function App() {
 			<div className='page'>
 				<section className='hero'>
 					<div>
-						<p className='eyebrow'>Modo tester</p>
-						<h1>Nutri Platform</h1>
-						<p className='lead'>
-							Pantalla real de onboarding con registro, login y navegación
-							guiada por rol. Seguimos conectando contra emuladores locales.
-						</p>
+						<p className='eyebrow'>{copy.landing.eyebrow}</p>
+						<h1>{copy.landing.title}</h1>
+						<p className='lead'>{copy.landing.lead}</p>
 						<div className='actions'>
 							<Link className='btn primary' to='/login'>
-								Ingresar / Crear cuenta
+								{copy.landing.actions.auth}
 							</Link>
 							<Link className='btn ghost' to='/dashboard'>
-								Ir al dashboard
+								{copy.landing.actions.dashboard}
 							</Link>
 						</div>
 					</div>
 					<div className='panel'>
-						<h3>Cómo probar rápido</h3>
+						<h3>{copy.landing.howTo.title}</h3>
 						<ol>
-							<li>Creá un usuario en el emulador o logueate si ya existe.</li>
-							<li>Usá el endpoint dev/set-claims con el secreto para setear rol y clinicId.</li>
-							<li>Refrescá claims desde el dashboard y probá flujos según tu rol.</li>
+							{copy.landing.howTo.steps.map((step, idx) => (
+								<li key={idx}>{step}</li>
+							))}
 						</ol>
 					</div>
 				</section>
@@ -928,17 +905,27 @@ export default function App() {
 	}
 
 	function AuthPage() {
+		const emailInputId = useId();
+		const passwordInputId = useId();
+		const emailErrorId = useId();
+		const passwordErrorId = useId();
+		const authErrorsId = useId();
+
 		return (
 			<div className='page narrow'>
-				<h2>Acceso</h2>
-				<p className='muted'>
-					Autenticamos contra el emulador de Firebase Auth. No se contacta
-					producción.
-				</p>
+				<h2>{copy.auth.title}</h2>
+				<p className='muted'>{copy.auth.intro}</p>
 				<div className='card'>
 					{authErrors.length > 0 && (
-						<div className='error-summary' role='alert' aria-live='assertive'>
-							<p><strong>Revisá los siguientes puntos:</strong></p>
+						<div
+							className='error-summary'
+							role='alert'
+							aria-live='assertive'
+							id={authErrorsId}
+						>
+							<p>
+								<strong>{copy.auth.errorSummaryTitle}</strong>
+							</p>
 							<ul>
 								{authErrors.map((err, idx) => (
 									<li key={idx}>{err}</li>
@@ -947,8 +934,9 @@ export default function App() {
 						</div>
 					)}
 					<label className='field'>
-						<span>Email</span>
+						<span>{copy.auth.emailLabel}</span>
 						<input
+							id={emailInputId}
 							ref={(el) => {
 								authFieldRefs.current.email = el;
 							}}
@@ -960,13 +948,20 @@ export default function App() {
 								setAuthActionError(null);
 								setEmailError(getEmailError(e.target.value));
 							}}
-							placeholder='usuario@test.com'
+							placeholder={copy.auth.emailPlaceholder}
+							aria-describedby={emailError ? emailErrorId : authErrors.length > 0 ? authErrorsId : undefined}
+							aria-invalid={!!emailError}
 						/>
-						{emailError && <p className='error-text'>{emailError}</p>}
+						{emailError && (
+							<p className='error-text' id={emailErrorId} role='status' aria-live='polite'>
+								{emailError}
+							</p>
+						)}
 					</label>
 					<label className='field'>
-						<span>Password</span>
+						<span>{copy.auth.passwordLabel}</span>
 						<input
+							id={passwordInputId}
 							type={showPassword ? 'text' : 'password'}
 							ref={(el) => {
 								authFieldRefs.current.password = el;
@@ -979,7 +974,11 @@ export default function App() {
 								setAuthActionError(null);
 								setPasswordError(getPasswordError(e.target.value));
 							}}
-							placeholder='mínimo 6 caracteres'
+							placeholder={copy.auth.passwordPlaceholder}
+							aria-describedby={
+								passwordError ? passwordErrorId : authErrors.length > 0 ? authErrorsId : undefined
+							}
+							aria-invalid={!!passwordError}
 						/>
 						<div className='field-inline'>
 							<label className='toggle'>
@@ -988,10 +987,14 @@ export default function App() {
 									checked={showPassword}
 									onChange={(e) => setShowPassword(e.target.checked)}
 								/>
-								<span>Mostrar contraseña</span>
+								<span>{copy.auth.passwordToggle}</span>
 							</label>
 						</div>
-						{passwordError && <p className='error-text'>{passwordError}</p>}
+						{passwordError && (
+							<p className='error-text' id={passwordErrorId} role='status' aria-live='polite'>
+								{passwordError}
+							</p>
+						)}
 					</label>
 					<div className='actions'>
 						<button
@@ -999,33 +1002,33 @@ export default function App() {
 							disabled={loading || authPending}
 							onClick={handleLogin}
 						>
-							{authPending ? 'Ingresando…' : 'Login'}
+							{authPending ? copy.auth.loginPending : copy.auth.login}
 						</button>
 						<button
 							className={`btn ${authPending ? 'is-loading' : ''}`}
 							disabled={loading || authPending}
 							onClick={handleRegister}
 						>
-							{authPending ? 'Creando…' : 'Registrar'}
+							{authPending ? copy.auth.registerPending : copy.auth.register}
 						</button>
 						{user && (
 							<button className='btn ghost' disabled={loading || authPending} onClick={handleLogout}>
-								Logout
+								{copy.auth.logout}
 							</button>
 						)}
 					</div>
 					<div className='inline-info'>
 						<div>
-							<strong>UID:</strong>{' '}
-							<code>{user ? user.uid : 'no logueado'}</code>
+							<strong>{copy.auth.infoUid}</strong>{' '}
+							<code>{user ? user.uid : copy.auth.notLogged}</code>
 						</div>
 						<div>
-							<strong>Claims:</strong>{' '}
+							<strong>{copy.auth.infoClaims}</strong>{' '}
 							<code>{JSON.stringify(claims)}</code>
 						</div>
 					</div>
 					<button className='link' disabled={loading} onClick={handleRefreshClaims}>
-						Refrescar claims
+						{copy.auth.refreshClaims}
 					</button>
 				</div>
 			</div>
@@ -1038,43 +1041,69 @@ export default function App() {
 				role === 'clinic_admin' || role === 'nutri' || role === 'staff';
 			const isPlatform = role === 'platform_admin';
 			const isPatient = role === 'patient';
+			const displayEmail = user?.email ?? copy.dashboard.unknownEmail;
+			const roleLabelValue = role ?? copy.dashboard.noRole;
+			const clinicLabelValue = claims.clinicId ?? copy.dashboard.noClinic;
+			const roleTabListId = useId();
+			const tabPanelId = useId();
+			const handleRoleTabKeyDown = (
+				event: ReactKeyboardEvent<HTMLButtonElement>,
+				index: number
+			) => {
+				if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+				event.preventDefault();
+				const offset = event.key === 'ArrowRight' ? 1 : -1;
+				const nextIndex = (index + offset + roleTabs.length) % roleTabs.length;
+				setActiveRoleTab(roleTabs[nextIndex]?.key ?? activeRoleTab);
+			};
 
 		return (
 			<div className='page'>
 				<header className='subheader'>
 					<div>
-						<p className='eyebrow'>Sesión activa</p>
+						<p className='eyebrow'>{copy.dashboard.sessionEyebrow}</p>
 						<div className='inline-heading'>
-							<h2>{user?.email ?? 'Sin email'}</h2>
+							<h2>{displayEmail}</h2>
 							<span className='pill subtle'>
 								{activeRoleContent.icon} {activeRoleContent.label}
 							</span>
 						</div>
 						<p className='muted'>
-							Rol: <strong>{role ?? 'sin rol'}</strong> — Clínica:{' '}
-							<strong>{claims.clinicId ?? 'n/a'}</strong>
+							{copy.dashboard.roleLabel}:{' '}
+							<strong>{roleLabelValue}</strong> — {copy.dashboard.clinicLabel}:{' '}
+							<strong>{clinicLabelValue}</strong>
 						</p>
 					</div>
 					<div className='actions'>
 						<button className='btn ghost' onClick={toggleTheme}>
-							{isDark ? '🌙' : '☀️'} {isDark ? 'Modo oscuro' : 'Modo claro'}
+							{isDark ? '🌙' : '☀️'} {isDark ? copy.dashboard.themeDark : copy.dashboard.themeLight}
 						</button>
 						<button className='btn ghost' disabled={loading} onClick={handleRefreshClaims}>
-							Refrescar claims
+							{copy.auth.refreshClaims}
 						</button>
 						<button className='btn' disabled={loading} onClick={handleLogout}>
-							Cerrar sesión
+							{copy.nav.logout}
 						</button>
 					</div>
 				</header>
 
 				<div className='card tabs-card'>
-					<div className='tabs'>
-						{roleTabs.map((tab) => (
+					<div className='inline-heading'>
+						<h3>{copy.dashboard.roleTabsLabel}</h3>
+						<span className='pill subtle'>{copy.dashboard.roleTabsHelp}</span>
+					</div>
+					<div className='tabs' role='tablist' aria-label={copy.dashboard.roleTabsLabel} id={roleTabListId}>
+						{roleTabs.map((tab, idx) => (
 							<button
 								key={tab.key}
+								id={`${roleTabListId}-${tab.key}`}
 								className={`tab ${activeRoleTab === tab.key ? 'is-active' : ''}`}
 								onClick={() => setActiveRoleTab(tab.key)}
+								onKeyDown={(event) => handleRoleTabKeyDown(event, idx)}
+								role='tab'
+								aria-selected={activeRoleTab === tab.key}
+								tabIndex={activeRoleTab === tab.key ? 0 : -1}
+								aria-controls={tabPanelId}
 							>
 								<span className='tab-icon' aria-hidden>
 									{tab.icon}
@@ -1083,7 +1112,7 @@ export default function App() {
 							</button>
 						))}
 					</div>
-					<div className='tab-panel'>
+					<div className='tab-panel' role='tabpanel' id={tabPanelId} aria-labelledby={`${roleTabListId}-${activeRoleTab}`}>
 						<p className='muted'>{activeRoleContent.description}</p>
 						<ul className='muted'>
 							{activeRoleContent.tips.map((tip, idx) => (
@@ -1095,61 +1124,59 @@ export default function App() {
 
 				<div className='grid two'>
 					<div className='card'>
-						<h3>Perfil</h3>
-						<p className='muted'>
-							Consultá tu perfil o hacé un ping al backend.
-						</p>
+						<h3>{copy.dashboard.profile.title}</h3>
+						<p className='muted'>{copy.dashboard.profile.description}</p>
 						<div className='actions'>
 								<button
 									className='btn primary'
 									disabled={loading}
 									onClick={() => handleGetMe()}
 								>
-									Ver mi perfil
+									{copy.dashboard.profile.view}
 								</button>
 								<button
 									className='btn'
 									disabled={loading}
 									onClick={() => authedFetch('GET', '/health')}
 								>
-									Ping health
+									{copy.dashboard.profile.ping}
 								</button>
 							</div>
 						</div>
 
 						<div className='card'>
-							<h3>Pacientes</h3>
+							<h3>{copy.dashboard.patients.title}</h3>
 							{canClinic || isPlatform ? (
 								<>
 									<div className='grid two'>
 										<label className='field'>
-											<span>Nombre</span>
+											<span>{copy.dashboard.patients.fields.name}</span>
 											<input
 												value={pName}
 												onChange={(e) => setPName(e.target.value)}
-												placeholder='Nombre y apellido'
+												placeholder={copy.dashboard.patients.placeholders.name}
 											/>
 										</label>
 										<label className='field'>
-											<span>Teléfono</span>
+											<span>{copy.dashboard.patients.fields.phone}</span>
 											<input
 												value={pPhone}
 												onChange={(e) => setPPhone(e.target.value)}
-												placeholder='+54...'
+												placeholder={copy.dashboard.patients.placeholders.phone}
 											/>
 										</label>
 									</div>
 									<div className='grid two'>
 										<label className='field'>
-											<span>Email</span>
+											<span>{copy.dashboard.patients.fields.email}</span>
 											<input
 												value={pEmail}
 												onChange={(e) => setPEmail(e.target.value)}
-												placeholder='correo opcional'
+												placeholder={copy.dashboard.patients.placeholders.email}
 											/>
 										</label>
 										<label className='field'>
-											<span>Clínica</span>
+											<span>{copy.dashboard.patients.fields.clinic}</span>
 											<select
 												value={selectedClinicForNewPatient}
 												onChange={(e) => setSelectedClinicForNewPatient(e.target.value)}
@@ -1161,7 +1188,7 @@ export default function App() {
 													</option>
 												))}
 												{clinicOptions.length === 0 && (
-													<option value=''>Sin opciones cargadas</option>
+													<option value=''>{copy.dashboard.patients.fields.clinicEmpty}</option>
 												)}
 											</select>
 										</label>
@@ -1171,7 +1198,7 @@ export default function App() {
 												disabled={loading}
 												onClick={handleCreatePatient}
 										>
-											Crear paciente
+											{copy.dashboard.patients.create}
 										</button>
 									</div>
 								</div>
@@ -1181,30 +1208,39 @@ export default function App() {
 									{patients.length > 0 && (
 										<div className='list'>
 											{patients.map((p, idx) => {
-												const patient = p as Record<string, any>;
-												const selectedNutri =
-													patientAssignSelections[patient.id] ??
-													(patient.assignedNutriUid ?? '');
+												const patientRecord = p as Record<string, unknown>;
+												const patientId = getStringField(patientRecord, 'id') ?? String(idx);
+												const patientName =
+													getStringField(patientRecord, 'name') ?? copy.dashboard.patients.missingName;
+												const patientEmail =
+													getStringField(patientRecord, 'email') ?? copy.dashboard.patients.missingEmail;
+												const patientClinic =
+													getStringField(patientRecord, 'clinicId') ?? copy.dashboard.noClinic;
+												const patientPhone =
+													getStringField(patientRecord, 'phone') ?? copy.dashboard.patients.missingPhone;
+												const assignedNutri =
+													getStringField(patientRecord, 'assignedNutriUid') ?? '';
+												const selectedNutri = patientAssignSelections[patientId] ?? assignedNutri;
 												return (
-													<div className='card' key={patient.id ?? idx}>
+													<div className='card' key={patientId}>
 														<div className='inline-info'>
 															<div>
-																<strong>{patient.name ?? 'Sin nombre'}</strong>
-																<div className='muted'>{patient.email ?? 'Sin email'}</div>
+																<strong>{patientName}</strong>
+																<div className='muted'>{patientEmail}</div>
 															</div>
 															<div>
-																<small>Clínica</small>
-																<div className='muted'>{patient.clinicId ?? '—'}</div>
+																<small>{copy.dashboard.patients.fields.clinic}</small>
+																<div className='muted'>{patientClinic}</div>
 															</div>
 														</div>
 														<div className='inline-info'>
 															<div>
-																<small>Teléfono</small>
-																<div className='muted'>{patient.phone ?? '—'}</div>
+																<small>{copy.dashboard.patients.fields.phone}</small>
+																<div className='muted'>{patientPhone}</div>
 															</div>
 															<div>
-																<small>Nutri asignado</small>
-																<div className='muted'>{patient.assignedNutriUid ?? '—'}</div>
+																<small>{copy.dashboard.patients.assignedNutri}</small>
+																<div className='muted'>{assignedNutri || copy.dashboard.patients.missingNutri}</div>
 															</div>
 														</div>
 														<div className='actions'>
@@ -1214,10 +1250,10 @@ export default function App() {
 																	setPatientAssignSelections((prev) => ({
 																		...prev,
 																		[patient.id]: e.target.value,
-																	}))
+																		}))
 																}
 															>
-																<option value=''>Elegí un nutri</option>
+																<option value=''>{copy.dashboard.patients.selectNutri}</option>
 																{knownNutris.map((n) => (
 																	<option key={n} value={n}>
 																		{n}
@@ -1227,9 +1263,9 @@ export default function App() {
 															<button
 																className='btn'
 																disabled={loading || !selectedNutri}
-																onClick={() => handleAssignNutri(patient.id)}
+																onClick={() => handleAssignNutri(patientId)}
 															>
-																Asignar nutri
+																{copy.dashboard.patients.assignNutri}
 															</button>
 														</div>
 													</div>
@@ -1238,32 +1274,20 @@ export default function App() {
 										</div>
 									)}
 									<button className='btn ghost' disabled={loading} onClick={handleListPatients}>
-										Refrescar pacientes
+										{copy.dashboard.patients.refresh}
 									</button>
 								</>
 							) : (
-								<p className='muted'>Disponible para roles de clínica.</p>
+								<p className='muted'>{copy.dashboard.patients.onlyClinic}</p>
 							)}
 						</div>
 					</div>
 
 					<div className='card'>
-						<h3>Turnos</h3>
-						<p className='muted'>
-							Flujo completo: pedir como paciente, schedule como nutri/clinic_admin,
-							cancelar, completar.
-						</p>
-						{!isPatient && (
-							<p className='muted'>
-								Para solicitar turnos necesitás rol <strong>patient</strong>.
-								Aun así podés programar/cancelar/completar si tu rol lo permite.
-							</p>
-						)}
-						<p className='muted'>
-							Tip: el backend exige que tu usuario esté vinculado a un perfil de paciente en
-							el emulador (linkedUid). Si recibís un 403, creá o vinculá tu paciente antes de
-							volver a pedir turno.
-						</p>
+						<h3>{copy.dashboard.appointments.title}</h3>
+						<p className='muted'>{copy.dashboard.appointments.description}</p>
+						{!isPatient && <p className='muted'>{copy.dashboard.appointments.patientRoleReminder}</p>}
+						<p className='muted'>{copy.dashboard.appointments.tip}</p>
 						<div
 							className='muted'
 							style={{
@@ -1274,18 +1298,14 @@ export default function App() {
 								marginBottom: 16,
 							}}
 						>
-							<strong>Recordatorio:</strong> vinculá tu usuario a un paciente antes de
-							solicitar turnos para evitar errores.
+							{copy.dashboard.appointments.reminder}
 						</div>
 						{appointments.length === 0 && (
-							<p className='muted'>
-								No hay turnos aún. Solicitá uno como paciente (con perfil vinculado) y luego
-								podrás elegir fecha y horario en la tarjeta del turno.
-							</p>
+							<p className='muted'>{copy.dashboard.appointments.noAppointments}</p>
 						)}
 						<div className='grid three'>
 							<label className='field'>
-								<span>Seleccioná nutri</span>
+								<span>{copy.dashboard.appointments.form.selectNutri}</span>
 								<select
 									value={apptRequestNutriUid}
 									onChange={(e) => setApptRequestNutriUid(e.target.value)}
@@ -1296,12 +1316,12 @@ export default function App() {
 										</option>
 									))}
 									{knownNutris.length === 0 && (
-										<option value=''>Sin opciones</option>
+										<option value=''>{copy.dashboard.appointments.form.noNutriOptions}</option>
 									)}
 								</select>
 							</label>
 							<label className='field'>
-								<span>Desde</span>
+								<span>{copy.dashboard.appointments.form.from}</span>
 								<input
 									type='datetime-local'
 									value={slotRangeFrom}
@@ -1309,7 +1329,7 @@ export default function App() {
 								/>
 							</label>
 							<label className='field'>
-								<span>Hasta</span>
+								<span>{copy.dashboard.appointments.form.to}</span>
 								<input
 									type='datetime-local'
 									value={slotRangeTo}
@@ -1317,14 +1337,14 @@ export default function App() {
 								/>
 							</label>
 							<label className='field'>
-								<span>Slots disponibles (24h)</span>
+								<span>{copy.dashboard.appointments.form.slotLabel}</span>
 								<select
 									value={apptRequestSlot}
 									onChange={(e) => setApptRequestSlot(e.target.value)}
 									disabled={loadingSlots || apptSlots.length === 0}
 								>
 									{apptSlots.length === 0 && (
-										<option value=''>Sin slots libres</option>
+										<option value=''>{copy.dashboard.appointments.form.noSlots}</option>
 									)}
 									{apptSlots.map((slot) => (
 										<option key={slot} value={slot}>
@@ -1338,7 +1358,7 @@ export default function App() {
 								disabled={loadingSlots || !apptRequestNutriUid}
 								onClick={() => handleLoadSlots(apptRequestNutriUid)}
 							>
-								Refrescar slots
+								{copy.dashboard.appointments.form.refreshSlots}
 							</button>
 							<button
 								className='btn primary'
@@ -1351,23 +1371,24 @@ export default function App() {
 								}
 								onClick={handleRequestAppointment}
 							>
-								Solicitar turno (paciente)
+								{copy.dashboard.appointments.form.request}
 							</button>
 							<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
-								Listar turnos
+								{copy.dashboard.appointments.form.list}
 							</button>
 						</div>
 
-						{slotRangeError && <p className='muted'>{slotRangeError}</p>}
+						{slotRangeError && (
+							<p className='muted' role='status' aria-live='assertive'>
+								{slotRangeError}
+							</p>
+						)}
 
 						{apptSlots.length === 0 && (
 							<div className='card' style={{ background: '#f7f7f7', border: '1px dashed #ccc' }}>
-								<p className='muted'>
-									No hay slots libres en el rango seleccionado. Ingresá horario manual como
-									fallback.
-								</p>
+								<p className='muted'>{copy.dashboard.appointments.form.manualHelp}</p>
 								<label className='field'>
-									<span>Horario manual</span>
+									<span>{copy.dashboard.appointments.form.manualLabel}</span>
 									<input
 										type='datetime-local'
 										value={apptManualSlot}
@@ -1382,10 +1403,10 @@ export default function App() {
 								className='card'
 								style={{ background: '#fff7e0', border: '1px solid #f3c96b' }}
 							>
-								<h4>Necesitás vincular tu paciente</h4>
+								<h4>{copy.dashboard.appointments.linking.title}</h4>
 								<p className='muted'>
 									{linkRequired.reason ??
-										'No encontramos un paciente vinculado. Crealo y vinculalo para continuar.'}
+										copy.dashboard.appointments.linking.description}
 								</p>
 								<div className='actions'>
 									<button
@@ -1393,36 +1414,48 @@ export default function App() {
 										disabled={loading || linking}
 										onClick={handleLinkPatientAndRetry}
 									>
-										Crear y linkear paciente
+										{copy.dashboard.appointments.linking.createAndLink}
 									</button>
 									<button className='btn ghost' disabled={loading} onClick={handleListAppointments}>
-										Refrescar turnos
+										{copy.dashboard.appointments.linking.refresh}
 									</button>
 								</div>
-								{linkFlowMessage && <p className='muted'>{linkFlowMessage}</p>}
+								{linkFlowMessage && (
+									<p className='muted' role='status' aria-live='polite'>
+										{linkFlowMessage}
+									</p>
+								)}
 							</div>
 						)}
 
 						{appointments.length > 0 && (
 							<div className='appointments'>
 								{appointments.map((a, idx) => {
-									const appt = a as Record<string, any>;
+									const appt = a as Record<string, unknown>;
+									const appointmentId = getStringField(appt, 'id');
+									const appointmentKey = appointmentId ?? String(idx);
+									const appointmentNutri = getStringField(appt, 'nutriUid') ?? '';
+									const appointmentPatientUid = getStringField(appt, 'patientUid');
+									const appointmentPatientId =
+										getStringField(appt, 'patientId') ?? appointmentPatientUid ?? '—';
+									const appointmentClinic = getStringField(appt, 'clinicId') ?? copy.dashboard.noClinic;
+									const appointmentStatus = getStringField(appt, 'status') ?? 'requested';
 									const sched =
-										scheduleSelections[appt.id] ?? {
+										scheduleSelections[appointmentKey] ?? {
 											when: '',
 											manualWhen: '',
-											nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
+											nutri: appointmentNutri || apptRequestNutriUid || '',
 										};
 									const canSchedule =
 										role === 'nutri' ||
 										role === 'clinic_admin' ||
-										(role === 'patient' && appt.patientUid === user?.uid);
+										(role === 'patient' && appointmentPatientUid === user?.uid);
 									const canComplete =
 										role === 'nutri' ||
 										role === 'clinic_admin' ||
 										role === 'platform_admin';
 									const lockNutri = role === 'patient';
-									const status: string = appt.status ?? 'requested';
+									const status: string = appointmentStatus;
 									const statusTone =
 										status === 'completed'
 											? 'success'
@@ -1431,12 +1464,6 @@ export default function App() {
 											: status === 'scheduled'
 											? 'warn'
 											: 'info';
-									const statusLabel: Record<string, string> = {
-										requested: 'Solicitado',
-										scheduled: 'Programado',
-										completed: 'Completado',
-										cancelled: 'Cancelado',
-									};
 									const statusIcon: Record<string, string> = {
 										requested: '⏳',
 										scheduled: '📅',
@@ -1444,59 +1471,63 @@ export default function App() {
 										cancelled: '🚫',
 									};
 									return (
-										<div className='appt-card' key={appt.id ?? idx}>
+										<div className='appt-card' key={appointmentKey}>
 											<div className='appt-head'>
 												<div className='appt-headline'>
-													<p className='eyebrow'>Turno</p>
-													<strong>{appt.id ?? 'sin-id'}</strong>
+													<p className='eyebrow'>{copy.dashboard.appointments.cardLabel}</p>
+													<strong>{appointmentId ?? copy.dashboard.appointments.noId}</strong>
 												</div>
 												<div className='appt-meta'>
 													<span className={`pill status status-${statusTone}`}>
 														<span aria-hidden>{statusIcon[status] ?? '📌'}</span>{' '}
-														{statusLabel[status] ?? status}
+														{copy.dashboard.appointments.statusLabel[status as keyof typeof copy.dashboard.appointments.statusLabel] ??
+															status}
 													</span>
-													<span className='pill subtle'>
+													<span
+														className='pill subtle'
+														aria-label={`${copy.dashboard.appointments.detailLabels.positionLabel} ${idx + 1}`}
+													>
 														#{idx + 1}
 													</span>
 												</div>
 											</div>
 											<div className='appt-grid'>
 												<div>
-													<small>Clínica</small>
-													<div className='muted'>{appt.clinicId ?? '—'}</div>
+													<small>{copy.dashboard.appointments.detailLabels.clinic}</small>
+													<div className='muted'>{appointmentClinic}</div>
 												</div>
 												<div>
-													<small>Paciente</small>
-													<div className='muted'>{appt.patientId ?? appt.patientUid ?? '—'}</div>
+													<small>{copy.dashboard.appointments.detailLabels.patient}</small>
+													<div className='muted'>{appointmentPatientId}</div>
 												</div>
 												<div>
-													<small>Nutri</small>
-													<div className='muted'>{appt.nutriUid ?? '—'}</div>
+													<small>{copy.dashboard.appointments.detailLabels.nutri}</small>
+													<div className='muted'>{appointmentNutri || copy.dashboard.patients.missingNutri}</div>
 												</div>
 												<div>
-													<small>Solicitado</small>
+													<small>{copy.dashboard.appointments.detailLabels.requested}</small>
 													<div className='muted'>{toReadableDate(appt.requestedAt)}</div>
 												</div>
 												<div>
-													<small>Programado</small>
+													<small>{copy.dashboard.appointments.detailLabels.scheduled}</small>
 													<div className='muted'>{toReadableDate(appt.scheduledFor)}</div>
 												</div>
 												<div>
-													<small>Actualizado</small>
+													<small>{copy.dashboard.appointments.detailLabels.updated}</small>
 													<div className='muted'>{toReadableDate(appt.updatedAt)}</div>
 												</div>
 											</div>
 											{!canSchedule && (
 												<p className='muted' style={{ marginTop: 8 }}>
 													{role === 'patient'
-														? 'Solo podés programar turnos que solicitaste vos.'
-														: 'Seleccioná fecha y nutri cuando tengas permisos de clínica/nutri.'}
+														? copy.dashboard.appointments.schedule.lockNotice
+														: copy.dashboard.appointments.schedule.permissionHint}
 												</p>
 											)}
 											<div className='appt-actions'>
 												{canSchedule && (
 													<div className='appt-action-block'>
-														<p className='muted small'>Programar o reprogramar</p>
+														<p className='muted small'>{copy.dashboard.appointments.schedule.title}</p>
 														<div className='appt-action-grid'>
 															<select
 																value={sched.nutri}
@@ -1504,8 +1535,8 @@ export default function App() {
 																onChange={(e) =>
 																	setScheduleSelections((prev) => ({
 																		...prev,
-																		[appt.id]: {
-																			...prev[appt.id],
+																		[appointmentKey]: {
+																			...prev[appointmentKey],
 																			when: '',
 																			manualWhen: '',
 																			nutri: e.target.value,
@@ -1513,7 +1544,7 @@ export default function App() {
 																	}))
 																}
 															>
-																<option value=''>Elegí nutri</option>
+																<option value=''>{copy.dashboard.appointments.schedule.selectNutri}</option>
 																{knownNutris.map((n) => (
 																	<option key={n} value={n}>
 																		{n}
@@ -1531,19 +1562,19 @@ export default function App() {
 																onChange={(e) =>
 																	setScheduleSelections((prev) => ({
 																		...prev,
-																		[appt.id]: {
-																			...prev[appt.id],
+																		[appointmentKey]: {
+																			...prev[appointmentKey],
 																			when: e.target.value,
 																			nutri: sched.nutri,
 																		},
 																	}))
 																}
-															>
-																{currentSlotsNutri !== sched.nutri && (
-																	<option value=''>Cargá slots para este nutri</option>
+																>
+																	{currentSlotsNutri !== sched.nutri && (
+																	<option value=''>{copy.dashboard.appointments.schedule.selectSlot}</option>
 																)}
 																{currentSlotsNutri === sched.nutri && apptSlots.length === 0 && (
-																	<option value=''>Sin slots libres en el rango</option>
+																	<option value=''>{copy.dashboard.appointments.schedule.noSlots}</option>
 																)}
 																{currentSlotsNutri === sched.nutri &&
 																	apptSlots.map((slot) => (
@@ -1558,14 +1589,14 @@ export default function App() {
 																onChange={(e) =>
 																	setScheduleSelections((prev) => ({
 																		...prev,
-																		[appt.id]: {
-																			...prev[appt.id],
+																		[appointmentKey]: {
+																			...prev[appointmentKey],
 																			manualWhen: e.target.value,
 																			nutri: sched.nutri,
 																		},
 																	}))
 																}
-																placeholder='Fallback manual'
+																placeholder={copy.dashboard.appointments.schedule.manualFallback}
 															/>
 														</div>
 														<div className='actions wrap'>
@@ -1579,35 +1610,35 @@ export default function App() {
 																	})
 																}
 															>
-																Slots de nutri
+																{copy.dashboard.appointments.schedule.loadSlots}
 															</button>
 															<button
 																className='btn'
 																disabled={loading || (!sched.when && !sched.manualWhen)}
-																onClick={() => handleScheduleAppointment(appt.id)}
+																onClick={() => handleScheduleAppointment(appointmentKey)}
 															>
-																Programar
+																{copy.dashboard.appointments.schedule.program}
 															</button>
 														</div>
 													</div>
 												)}
 												<div className='appt-action-block secondary'>
-													<p className='muted small'>Acciones rápidas</p>
+													<p className='muted small'>{copy.dashboard.appointments.quickActions.title}</p>
 													<div className='actions wrap'>
 														<button
 															className='btn ghost'
 															disabled={loading}
-															onClick={() => setConfirmAction({ type: 'cancel', apptId: appt.id })}
+															onClick={() => setConfirmAction({ type: 'cancel', apptId: appointmentKey })}
 														>
-															Cancelar
+															{copy.dashboard.appointments.quickActions.cancel}
 														</button>
 														{canComplete && (
 															<button
 																className='btn success'
 																disabled={loading}
-																onClick={() => setConfirmAction({ type: 'complete', apptId: appt.id })}
+																onClick={() => setConfirmAction({ type: 'complete', apptId: appointmentKey })}
 															>
-																Completar
+																{copy.dashboard.appointments.quickActions.complete}
 															</button>
 														)}
 													</div>
@@ -1622,31 +1653,30 @@ export default function App() {
 
 					{(role === 'clinic_admin' || role === 'nutri') && (
 						<div className='card'>
-							<h3>Disponibilidad de la clínica (beta)</h3>
-							<p className='muted'>
-								Vista rápida de slots libres/ocupados para el nutri seleccionado. Próximamente
-								podrás editar disponibilidad desde aquí.
-							</p>
+							<h3>{copy.dashboard.clinicAvailability.title}</h3>
+							<p className='muted'>{copy.dashboard.clinicAvailability.description}</p>
 							<div className='actions wrap'>
 								<button
 									className='btn'
 									disabled={loadingSlots || !apptRequestNutriUid}
 									onClick={() => handleLoadSlots(apptRequestNutriUid)}
 								>
-									Actualizar slots del nutri
+									{copy.dashboard.clinicAvailability.refresh}
 								</button>
 								<span className='pill'>
-									Libres: {apptSlots.length} — Ocupados: {apptBusySlots.length}
+									{copy.dashboard.clinicAvailability.counts
+										.replace('{{free}}', String(apptSlots.length))
+										.replace('{{busy}}', String(apptBusySlots.length))}
 								</span>
 							</div>
 							{apptSlots.length === 0 && apptBusySlots.length === 0 ? (
-								<p className='muted'>Sin slots en el rango actual.</p>
+								<p className='muted'>{copy.dashboard.clinicAvailability.empty}</p>
 							) : (
 								<div className='list'>
 									{apptSlots.slice(0, 6).map((slot) => (
 										<div className='inline-info' key={`free-${slot}`}>
 											<div>
-												<small>Libre</small>
+												<small>{copy.dashboard.clinicAvailability.freeLabel}</small>
 												<div>{formatSlotLabel(slot)}</div>
 											</div>
 										</div>
@@ -1654,13 +1684,13 @@ export default function App() {
 									{apptBusySlots.slice(0, 6).map((slot) => (
 										<div className='inline-info' key={`busy-${slot}`}>
 											<div>
-												<small>Ocupado</small>
+												<small>{copy.dashboard.clinicAvailability.busyLabel}</small>
 												<div className='muted'>{formatSlotLabel(slot)}</div>
 											</div>
 										</div>
 									))}
 									{apptSlots.length + apptBusySlots.length > 12 && (
-										<p className='muted'>Mostrando solo los primeros slots.</p>
+										<p className='muted'>{copy.dashboard.clinicAvailability.limited}</p>
 									)}
 								</div>
 							)}
@@ -1668,9 +1698,9 @@ export default function App() {
 					)}
 
 				<div className='card'>
-					<h3>Log</h3>
+					<h3>{copy.dashboard.log.title}</h3>
 					{reversedLogs.length === 0 ? (
-						<p className='muted'>Sin llamadas todavía.</p>
+						<p className='muted'>{copy.dashboard.log.empty}</p>
 					) : (
 						<ul className='log'>
 							{reversedLogs.map((l, idx) => (
@@ -1679,17 +1709,17 @@ export default function App() {
 										<code>{l.ts}</code>
 										<strong>{l.endpoint}</strong>
 										<span className={l.ok ? 'pill ok' : 'pill error'}>
-											{l.ok ? 'OK' : 'ERROR'}
+											{l.ok ? copy.dashboard.log.ok : copy.dashboard.log.error}
 										</span>
 									</div>
 									{l.payload !== undefined && (
 										<div className='log-body'>
-											<small>payload</small>{' '}
+											<small>{copy.dashboard.log.payloadLabel}</small>{' '}
 											<code>{JSON.stringify(l.payload)}</code>
 										</div>
 									)}
 									<div className='log-body'>
-										<small>{l.ok ? 'data' : 'error'}</small>{' '}
+										<small>{l.ok ? copy.dashboard.log.dataLabel : copy.dashboard.log.error}</small>{' '}
 										<code>{l.ok ? JSON.stringify(l.data) : l.error}</code>
 									</div>
 								</li>
@@ -1716,12 +1746,16 @@ export default function App() {
 				{confirmAction && (
 					<div className='modal-backdrop' role='dialog' aria-modal='true'>
 						<div className='modal'>
-							<p className='eyebrow'>{confirmCopy[confirmAction.type].tone === 'warning' ? 'Confirmación' : 'Listo para cerrar'}</p>
+							<p className='eyebrow'>
+								{confirmAction.type === 'cancel'
+									? copy.confirm.cancel.title
+									: copy.confirm.complete.title}
+							</p>
 							<h3>{confirmCopy[confirmAction.type].title}</h3>
 							<p className='muted'>{confirmCopy[confirmAction.type].body}</p>
 							<div className='actions end'>
 								<button className='btn ghost' onClick={() => setConfirmAction(null)}>
-									Volver
+									{copy.confirm.back}
 								</button>
 								<button
 									className={`btn ${confirmCopy[confirmAction.type].tone === 'warning' ? 'danger' : 'success'}`}
@@ -1736,24 +1770,41 @@ export default function App() {
 				<nav className='topbar'>
 					<div className='actions'>
 						<Link to='/' className='brand'>
-							Nutri Platform
+							{copy.nav.brand}
 						</Link>
-						<span className='badge'>Modo tester (sin Firebase real)</span>
+						<span className='badge'>{copy.nav.badge}</span>
 					</div>
 					<div className='top-actions'>
+						<label className='field-inline' htmlFor={localeSelectId}>
+							<span className='muted small'>{copy.nav.languageLabel}</span>
+							<select
+								id={localeSelectId}
+								value={locale}
+								onChange={(e) => setLocale(e.target.value as Locale)}
+							>
+								{supportedLocales.map((loc) => {
+									const locCopy = getCopy(loc);
+									return (
+										<option key={loc} value={loc}>
+											{locCopy.languageName}
+										</option>
+									);
+								})}
+							</select>
+						</label>
 						<Link to='/' className='link'>
-							Inicio
+							{copy.nav.home}
 					</Link>
 					<Link to='/dashboard' className='link'>
-						Dashboard
+						{copy.nav.dashboard}
 					</Link>
 					{user ? (
 						<button className='btn ghost sm' onClick={handleLogout} disabled={loading}>
-							Cerrar sesión
+							{copy.nav.logout}
 						</button>
 					) : (
 						<Link to='/login' className='btn sm'>
-							Ingresar
+							{copy.nav.login}
 						</Link>
 					)}
 				</div>
