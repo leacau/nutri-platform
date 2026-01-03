@@ -33,6 +33,14 @@ function nowIso() {
 	return new Date().toISOString();
 }
 
+function isoToDatetimeLocal(iso: string): string {
+	const d = new Date(iso);
+	if (!Number.isFinite(d.getTime())) return '';
+	const tzOffsetMinutes = d.getTimezoneOffset();
+	const localDate = new Date(d.getTime() - tzOffsetMinutes * 60 * 1000);
+	return localDate.toISOString().slice(0, 16);
+}
+
 function toIsoFromDatetimeLocal(v: string): string | null {
 	if (!v || !v.includes('T')) return null;
 	const d = new Date(v);
@@ -107,14 +115,24 @@ export default function App() {
 	>({});
 	const [patients, setPatients] = useState<unknown[]>([]);
 
-		// Turnos
-		const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
+	// Turnos
+	const defaultWindow = useMemo(() => defaultSlotWindow(), []);
+	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
 	const [apptRequestSlot, setApptRequestSlot] = useState('');
+	const [apptManualSlot, setApptManualSlot] = useState('');
+	const [slotRangeFrom, setSlotRangeFrom] = useState(
+		isoToDatetimeLocal(defaultWindow.fromIso)
+	);
+	const [slotRangeTo, setSlotRangeTo] = useState(
+		isoToDatetimeLocal(defaultWindow.toIso)
+	);
 	const [apptSlots, setApptSlots] = useState<string[]>([]);
 	const [apptBusySlots, setApptBusySlots] = useState<string[]>([]);
 	const [loadingSlots, setLoadingSlots] = useState(false);
+	const [currentSlotsNutri, setCurrentSlotsNutri] = useState<string>('');
+	const [slotRangeError, setSlotRangeError] = useState<string | null>(null);
 	const [scheduleSelections, setScheduleSelections] = useState<
-		Record<string, { when: string; nutri: string }>
+		Record<string, { when: string; manualWhen?: string; nutri: string }>
 	>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
 	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
@@ -154,6 +172,12 @@ export default function App() {
 		});
 		return Array.from(seed);
 	}, [patients, appointments, claims.role, user?.uid]);
+
+	useEffect(() => {
+		if (!apptRequestNutriUid && knownNutris.length > 0) {
+			setApptRequestNutriUid(knownNutris[0]);
+		}
+	}, [apptRequestNutriUid, knownNutris]);
 
 	const clinicOptions = useMemo(() => {
 		const seed = new Set<string>();
@@ -522,22 +546,38 @@ export default function App() {
 		}
 	}
 
-	async function handleLoadSlots(nutriUid?: string) {
+	async function handleLoadSlots(
+		nutriUid?: string,
+		range?: { fromIso?: string | null; toIso?: string | null }
+	) {
 		if (!nutriUid) {
 			setApptSlots([]);
 			setApptBusySlots([]);
 			setApptRequestSlot('');
+			setCurrentSlotsNutri('');
 			return;
 		}
 		if (!user) return;
+
+		const fromIso = range?.fromIso ?? toIsoFromDatetimeLocal(slotRangeFrom);
+		const toIso = range?.toIso ?? toIsoFromDatetimeLocal(slotRangeTo);
+
+		if (!fromIso || !toIso) {
+			setSlotRangeError('Ingresá un rango válido para buscar slots.');
+			return;
+		}
+
+		if (Date.parse(toIso) <= Date.parse(fromIso)) {
+			setSlotRangeError('La fecha “hasta” debe ser mayor a “desde”.');
+			return;
+		}
+
 		setLoadingSlots(true);
 		try {
-			const window = defaultSlotWindow();
+			setSlotRangeError(null);
 			const query = `/appointments/slots?nutriUid=${encodeURIComponent(
 				nutriUid
-			)}&from=${encodeURIComponent(window.fromIso)}&to=${encodeURIComponent(
-				window.toIso
-			)}`;
+			)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
 			const res = await authedFetch('GET', query);
 			if (
 				res.ok &&
@@ -549,12 +589,26 @@ export default function App() {
 				const busy = ((res.data as any).data?.busy ?? []) as string[];
 				setApptSlots(free);
 				setApptBusySlots(busy);
-				setApptRequestSlot((prev) => prev || free[0] || '');
+				setCurrentSlotsNutri(nutriUid);
+				setApptRequestSlot((prev) => (free.includes(prev) ? prev : free[0] || ''));
 			}
 		} finally {
 			setLoadingSlots(false);
 		}
 	}
+
+	useEffect(() => {
+		if (!apptRequestNutriUid) {
+			setApptSlots([]);
+			setApptBusySlots([]);
+			setCurrentSlotsNutri('');
+			return;
+		}
+		const fromIso = toIsoFromDatetimeLocal(slotRangeFrom);
+		const toIso = toIsoFromDatetimeLocal(slotRangeTo);
+		if (!fromIso || !toIso) return;
+		handleLoadSlots(apptRequestNutriUid, { fromIso, toIso });
+	}, [apptRequestNutriUid, slotRangeFrom, slotRangeTo]);
 
 	async function handleRequestAppointment() {
 		setLoading(true);
@@ -567,18 +621,20 @@ export default function App() {
 				);
 				return;
 			}
-			if (!apptRequestSlot) {
+			const manualIso = toIsoFromDatetimeLocal(apptManualSlot);
+			const scheduledIso = apptRequestSlot || manualIso;
+			if (!scheduledIso) {
 				pushErr(
 					'/appointments/request',
-					{ apptRequestNutriUid, apptRequestSlot },
-					'Seleccioná un horario disponible'
+					{ apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
+					'Seleccioná un horario disponible o ingresá uno manual'
 				);
 				return;
 			}
 			const result = await authedFetch('POST', '/appointments/request', {
 				nutriUid: apptRequestNutriUid,
 				clinicId: claims.clinicId ?? undefined,
-				scheduledForIso: apptRequestSlot,
+				scheduledForIso: scheduledIso,
 			});
 			if (result.ok) {
 				setLinkRequired({ active: false, reason: '' });
@@ -677,7 +733,8 @@ export default function App() {
 		setLoading(true);
 		try {
 			const sched = scheduleSelections[apptId];
-			const iso = toIsoFromDatetimeLocal(sched?.when ?? '');
+			const iso =
+				sched?.when || toIsoFromDatetimeLocal(sched?.manualWhen ?? '') || '';
 			if (!iso) {
 				pushErr(
 					'/appointments/:id/schedule',
@@ -1101,6 +1158,22 @@ export default function App() {
 								</select>
 							</label>
 							<label className='field'>
+								<span>Desde</span>
+								<input
+									type='datetime-local'
+									value={slotRangeFrom}
+									onChange={(e) => setSlotRangeFrom(e.target.value)}
+								/>
+							</label>
+							<label className='field'>
+								<span>Hasta</span>
+								<input
+									type='datetime-local'
+									value={slotRangeTo}
+									onChange={(e) => setSlotRangeTo(e.target.value)}
+								/>
+							</label>
+							<label className='field'>
 								<span>Slots disponibles (24h)</span>
 								<select
 									value={apptRequestSlot}
@@ -1142,6 +1215,25 @@ export default function App() {
 							</button>
 						</div>
 
+						{slotRangeError && <p className='muted'>{slotRangeError}</p>}
+
+						{apptSlots.length === 0 && (
+							<div className='card' style={{ background: '#f7f7f7', border: '1px dashed #ccc' }}>
+								<p className='muted'>
+									No hay slots libres en el rango seleccionado. Ingresá horario manual como
+									fallback.
+								</p>
+								<label className='field'>
+									<span>Horario manual</span>
+									<input
+										type='datetime-local'
+										value={apptManualSlot}
+										onChange={(e) => setApptManualSlot(e.target.value)}
+									/>
+								</label>
+							</div>
+						)}
+
 						{linkRequired.active && (
 							<div
 								className='card'
@@ -1175,6 +1267,7 @@ export default function App() {
 									const sched =
 										scheduleSelections[appt.id] ?? {
 											when: '',
+											manualWhen: '',
 											nutri: appt.nutriUid ?? apptRequestNutriUid ?? '',
 										};
 									const canSchedule =
@@ -1233,9 +1326,14 @@ export default function App() {
 											<div className='actions wrap'>
 												{canSchedule && (
 													<>
-														<input
-															type='datetime-local'
+														<select
 															value={sched.when}
+															disabled={
+																loadingSlots ||
+																!sched.nutri ||
+																currentSlotsNutri !== sched.nutri ||
+																apptSlots.length === 0
+															}
 															onChange={(e) =>
 																setScheduleSelections((prev) => ({
 																	...prev,
@@ -1246,7 +1344,20 @@ export default function App() {
 																	},
 																}))
 															}
-														/>
+														>
+															{currentSlotsNutri !== sched.nutri && (
+																<option value=''>Cargá slots para este nutri</option>
+															)}
+															{currentSlotsNutri === sched.nutri && apptSlots.length === 0 && (
+																<option value=''>Sin slots libres en el rango</option>
+															)}
+															{currentSlotsNutri === sched.nutri &&
+																apptSlots.map((slot) => (
+																	<option key={slot} value={slot}>
+																		{formatSlotLabel(slot)}
+																	</option>
+																))}
+														</select>
 														<select
 															value={sched.nutri}
 															disabled={lockNutri}
@@ -1255,7 +1366,8 @@ export default function App() {
 																	...prev,
 																	[appt.id]: {
 																		...prev[appt.id],
-																		when: sched.when,
+																		when: '',
+																		manualWhen: '',
 																		nutri: e.target.value,
 																	},
 																}))
@@ -1268,9 +1380,38 @@ export default function App() {
 																</option>
 															))}
 														</select>
+														<input
+															type='datetime-local'
+															value={sched.manualWhen ?? ''}
+															onChange={(e) =>
+																setScheduleSelections((prev) => ({
+																	...prev,
+																	[appt.id]: {
+																		...prev[appt.id],
+																		manualWhen: e.target.value,
+																		nutri: sched.nutri,
+																	},
+																}))
+															}
+															placeholder='Fallback manual'
+														/>
+														<button
+															className='btn ghost'
+															disabled={loadingSlots || !sched.nutri}
+															onClick={() =>
+																handleLoadSlots(sched.nutri || apptRequestNutriUid, {
+																	fromIso: toIsoFromDatetimeLocal(slotRangeFrom),
+																	toIso: toIsoFromDatetimeLocal(slotRangeTo),
+																})
+															}
+														>
+															Slots de nutri
+														</button>
 														<button
 															className='btn'
-															disabled={loading || !sched.when}
+															disabled={
+																loading || (!sched.when && !sched.manualWhen)
+															}
 															onClick={() => handleScheduleAppointment(appt.id)}
 														>
 															Programar
