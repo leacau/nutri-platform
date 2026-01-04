@@ -7,7 +7,7 @@ import {
 	type ReactElement,
 } from 'react';
 import type { User } from 'firebase/auth';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
 import { fetchJSON } from './api';
 import { getCopy, supportedLocales, type Locale } from './i18n';
@@ -112,6 +112,7 @@ export default function App() {
 	const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
 
 	const navigate = useNavigate();
+	const location = useLocation();
 
 	const {
 		user,
@@ -125,6 +126,8 @@ export default function App() {
 		clearSessionError,
 	} = useAuthSession();
 	const [loading, setLoading] = useState(false);
+	const [patientsLoading, setPatientsLoading] = useState(false);
+	const [appointmentsLoading, setAppointmentsLoading] = useState(false);
 	const [theme, setTheme] = useState<'light' | 'dark'>(() => {
 		if (typeof window === 'undefined') return 'light';
 		const stored = window.localStorage.getItem('qa-console-theme');
@@ -145,6 +148,9 @@ export default function App() {
 	const setAuthFieldRef = (field: 'email' | 'password', ref: HTMLInputElement | null) => {
 		authFieldRefs.current[field] = ref;
 	};
+	const patientNameInputRef = useRef<HTMLInputElement | null>(null);
+	const apptNutriSelectRef = useRef<HTMLSelectElement | null>(null);
+	const apptFromInputRef = useRef<HTMLInputElement | null>(null);
 	const [stickyAuthField, setStickyAuthField] = useState<'email' | 'password' | null>(null);
 
 	const [email, setEmail] = useState('qa1@test.com');
@@ -262,7 +268,7 @@ export default function App() {
 
 	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
 	const isDark = theme === 'dark';
-	const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+	const toggleTheme = useCallback(() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light')), []);
 
 	const setValidatedPEmail: typeof setPEmail = (value) =>
 		setPEmail((prev) => {
@@ -318,6 +324,21 @@ export default function App() {
 	}, [copy, pEmail, pPhone]);
 
 	useEffect(() => {
+		if (location.pathname.startsWith('/login')) {
+			setStickyAuthField('email');
+			authFieldRefs.current.email?.focus({ preventScroll: true });
+			return;
+		}
+		if (location.pathname.startsWith('/dashboard')) {
+			if (patientNameInputRef.current) {
+				patientNameInputRef.current.focus({ preventScroll: true });
+			} else {
+				apptNutriSelectRef.current?.focus({ preventScroll: true });
+			}
+		}
+	}, [location.pathname]);
+
+	useEffect(() => {
 		const ref = stickyAuthField ? authFieldRefs.current[stickyAuthField] : null;
 		ref?.focus({ preventScroll: true });
 	}, [stickyAuthField]);
@@ -349,6 +370,32 @@ export default function App() {
 		document.documentElement.setAttribute('lang', locale);
 		window.localStorage.setItem('qa-console-locale', locale);
 	}, [locale]);
+
+	useEffect(() => {
+		const handleHotkeys = (event: KeyboardEvent) => {
+			if (!(event.shiftKey && (event.metaKey || event.ctrlKey))) return;
+			const key = event.key.toLowerCase();
+			if (['input', 'textarea', 'select'].includes((event.target as HTMLElement)?.tagName?.toLowerCase())) {
+				// allow hotkeys while typing without blocking text shortcuts
+				if (key !== 't') return;
+			}
+			event.preventDefault();
+			if (key === 't') toggleTheme();
+			else if (key === 'l') {
+				navigate('/login');
+				window.requestAnimationFrame(() => authFieldRefs.current.email?.focus({ preventScroll: true }));
+			} else if (key === 'd') {
+				navigate('/dashboard');
+			} else if (key === 'p') {
+				patientNameInputRef.current?.focus({ preventScroll: true });
+			} else if (key === 'a') {
+				(apptNutriSelectRef.current ?? apptFromInputRef.current)?.focus({ preventScroll: true });
+			}
+		};
+
+		window.addEventListener('keydown', handleHotkeys);
+		return () => window.removeEventListener('keydown', handleHotkeys);
+	}, [navigate, toggleTheme]);
 
 	useEffect(() => {
 		setBackendStatus((prev) => ({
@@ -660,6 +707,7 @@ function getEmailError(value: string) {
 		setPatientErrors({ email: emailIssue, phone: phoneIssue });
 		if (emailIssue || phoneIssue) return;
 		setLoading(true);
+		setPatientsLoading(true);
 		try {
 			const created = await authedFetch('POST', '/patients', {
 				name: pName,
@@ -675,11 +723,13 @@ function getEmailError(value: string) {
 			}
 		} finally {
 			setLoading(false);
+			setPatientsLoading(false);
 		}
 	}
 
 	async function handleListPatients() {
 		setLoading(true);
+		setPatientsLoading(true);
 		try {
 			const data = await authedFetch('GET', '/patients');
 			if (
@@ -692,6 +742,7 @@ function getEmailError(value: string) {
 			}
 		} finally {
 			setLoading(false);
+			setPatientsLoading(false);
 		}
 	}
 
@@ -725,6 +776,7 @@ function getEmailError(value: string) {
 
 	async function handleListAppointments() {
 		setLoading(true);
+		setAppointmentsLoading(true);
 		try {
 			const data = await authedFetch('GET', '/appointments');
 			if (
@@ -738,6 +790,7 @@ function getEmailError(value: string) {
 			}
 		} finally {
 			setLoading(false);
+			setAppointmentsLoading(false);
 		}
 	}
 
@@ -1085,12 +1138,14 @@ function getEmailError(value: string) {
 		clinicOptions,
 		handleCreatePatient,
 		patients,
+		patientsLoading,
 		patientAssignSelections,
 		setPatientAssignSelections,
 		knownNutris,
 		handleAssignNutri,
 		handleListPatients,
 		appointments,
+		appointmentsLoading,
 		handleScheduleAppointment,
 		apptRequestNutriUid,
 		setApptRequestNutriUid,
@@ -1123,6 +1178,9 @@ function getEmailError(value: string) {
 		toIsoFromDatetimeLocal,
 		setConfirmAction,
 		reversedLogs,
+		patientNameInputRef,
+		apptNutriSelectRef,
+		apptFromInputRef,
 	};
 
 	return (

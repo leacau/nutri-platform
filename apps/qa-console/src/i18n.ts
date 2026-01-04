@@ -122,6 +122,9 @@ type Translation = {
 			assignNutri: string;
 			selectNutri: string;
 			onlyClinic: string;
+			empty: string;
+			loading: string;
+			loadingHint: string;
 		};
 		appointments: {
 			title: string;
@@ -194,6 +197,8 @@ type Translation = {
 				cancel: string;
 				complete: string;
 			};
+			loading: string;
+			loadingHint: string;
 		};
 		clinicAvailability: {
 			title: string;
@@ -204,10 +209,13 @@ type Translation = {
 			limited: string;
 			freeLabel: string;
 			busyLabel: string;
+			loading: string;
+			loadingHint: string;
 		};
 		log: {
 			title: string;
 			empty: string;
+			hint?: string;
 			ok: string;
 			error: string;
 			payloadLabel: string;
@@ -218,6 +226,11 @@ type Translation = {
 			durationLabel: string;
 			attemptLabel: string;
 			emptyPayload: string;
+		};
+		shortcuts: {
+			title: string;
+			description: string;
+			items: { combo: string; label: string }[];
 		};
 	};
 	confirm: {
@@ -420,21 +433,24 @@ const translations: Record<Locale, Translation> = {
 					emailInvalid: 'Ingresá un email válido o dejá el campo vacío.',
 					phoneInvalid: 'Ingresá un teléfono válido (solo dígitos, espacios o +).',
 				},
-				assignedNutri: 'Nutri asignado',
-				missingName: 'Sin nombre',
-				missingEmail: 'Sin email',
-				missingPhone: '—',
-				missingNutri: '—',
-				create: 'Crear paciente',
-				refresh: 'Refrescar pacientes',
-				assignNutri: 'Asignar nutri',
-				selectNutri: 'Elegí un nutri',
-				onlyClinic: 'Disponible para roles de clínica.',
-			},
-			appointments: {
-				title: 'Turnos',
-				description: 'Flujo completo: pedir como paciente, schedule como nutri/clinic_admin, cancelar, completar.',
-				patientRoleReminder: 'Para solicitar turnos necesitás rol patient. Aun así podés programar/cancelar/completar si tu rol lo permite.',
+			assignedNutri: 'Nutri asignado',
+			missingName: 'Sin nombre',
+			missingEmail: 'Sin email',
+			missingPhone: '—',
+			missingNutri: '—',
+			create: 'Crear paciente',
+			refresh: 'Refrescar pacientes',
+			assignNutri: 'Asignar nutri',
+			selectNutri: 'Elegí un nutri',
+			onlyClinic: 'Disponible para roles de clínica.',
+			empty: 'Sin pacientes aún. Creá un paciente y refrescá la lista.',
+			loading: 'Cargando pacientes...',
+			loadingHint: 'Traemos la lista desde el backend. Podés seguir editando otros campos mientras tanto.',
+		},
+		appointments: {
+			title: 'Turnos',
+			description: 'Flujo completo: pedir como paciente, schedule como nutri/clinic_admin, cancelar, completar.',
+			patientRoleReminder: 'Para solicitar turnos necesitás rol patient. Aun así podés programar/cancelar/completar si tu rol lo permite.',
 				tip: 'Tip: el backend exige que tu usuario esté vinculado a un perfil de paciente en el emulador (linkedUid). Si recibís un 403, creá o vinculá tu paciente antes de volver a pedir turno.',
 				reminder: 'Recordatorio: vinculá tu usuario a un paciente antes de solicitar turnos para evitar errores.',
 				noAppointments: 'No hay turnos aún. Solicitá uno como paciente (con perfil vinculado) y luego podrás elegir fecha y horario en la tarjeta del turno.',
@@ -503,37 +519,53 @@ const translations: Record<Locale, Translation> = {
 					manualInvalid: 'Ingresá fecha y hora válidas (AAAA-MM-DD HH:MM).',
 					validDateRequired: 'Falta fecha válida para programar',
 				},
-				quickActions: {
-					title: 'Acciones rápidas',
-					cancel: 'Cancelar',
-					complete: 'Completar',
-				},
+			quickActions: {
+				title: 'Acciones rápidas',
+				cancel: 'Cancelar',
+				complete: 'Completar',
 			},
-			clinicAvailability: {
-				title: 'Disponibilidad de la clínica (beta)',
-				description: 'Vista rápida de slots libres/ocupados para el nutri seleccionado. Próximamente podrás editar disponibilidad desde aquí.',
-				refresh: 'Actualizar slots del nutri',
-				counts: 'Libres: {{free}} — Ocupados: {{busy}}',
-				empty: 'Sin slots en el rango actual.',
-				limited: 'Mostrando solo los primeros slots.',
-				freeLabel: 'Libre',
-				busyLabel: 'Ocupado',
-			},
-			log: {
-				title: 'Log',
-				empty: 'Sin llamadas todavía.',
-				ok: 'OK',
-				error: 'ERROR',
-				payloadLabel: 'payload',
-				dataLabel: 'data',
+			loading: 'Cargando turnos...',
+			loadingHint: 'Actualizamos el listado y los estados. Podés seguir navegando.',
+		},
+		clinicAvailability: {
+			title: 'Disponibilidad de la clínica (beta)',
+			description: 'Vista rápida de slots libres/ocupados para el nutri seleccionado. Próximamente podrás editar disponibilidad desde aquí.',
+			refresh: 'Actualizar slots del nutri',
+			counts: 'Libres: {{free}} — Ocupados: {{busy}}',
+			empty: 'Sin slots en el rango actual.',
+			limited: 'Mostrando solo los primeros slots.',
+			freeLabel: 'Libre',
+			busyLabel: 'Ocupado',
+			loading: 'Cargando disponibilidad...',
+			loadingHint: 'Buscamos slots libres y ocupados para el nutri seleccionado.',
+		},
+		log: {
+			title: 'Log',
+			empty: 'Sin llamadas todavía.',
+			hint: 'Hacé un ping o listá pacientes/turnos para ver el detalle del request/response.',
+			ok: 'OK',
+			error: 'ERROR',
+			payloadLabel: 'payload',
+			dataLabel: 'data',
 				requestLabel: 'request',
 				responseLabel: 'response',
 				statusLabel: 'Status',
 				durationLabel: 'Duración: {{ms}}ms',
 				attemptLabel: 'Intento {{attempt}} de {{total}}',
-				emptyPayload: '—',
-			},
+			emptyPayload: '—',
 		},
+		shortcuts: {
+			title: 'Accesos rápidos',
+			description: 'Usá Ctrl/Cmd + Shift + tecla',
+			items: [
+				{ combo: 'Ctrl/Cmd + Shift + T', label: 'Alternar modo claro/oscuro' },
+				{ combo: 'Ctrl/Cmd + Shift + L', label: 'Ir al login y enfocar email' },
+				{ combo: 'Ctrl/Cmd + Shift + D', label: 'Ir al dashboard' },
+				{ combo: 'Ctrl/Cmd + Shift + P', label: 'Enfocar nombre en formulario de pacientes' },
+				{ combo: 'Ctrl/Cmd + Shift + A', label: 'Enfocar selección de nutri/fecha en turnos' },
+			],
+		},
+	},
 		confirm: {
 			cancel: {
 				title: 'Cancelar turno',
@@ -732,21 +764,24 @@ const translations: Record<Locale, Translation> = {
 					emailInvalid: 'Enter a valid email or leave the field empty.',
 					phoneInvalid: 'Enter a valid phone (digits, spaces, or +).',
 				},
-				assignedNutri: 'Assigned nutri',
-				missingName: 'No name',
-				missingEmail: 'No email',
-				missingPhone: '—',
-				missingNutri: '—',
-				create: 'Create patient',
-				refresh: 'Refresh patients',
-				assignNutri: 'Assign nutri',
-				selectNutri: 'Choose a nutri',
-				onlyClinic: 'Available for clinic-facing roles.',
-			},
-			appointments: {
-				title: 'Appointments',
-				description: 'Full flow: request as patient, schedule as nutri/clinic_admin, cancel, complete.',
-				patientRoleReminder: 'To request appointments you need the patient role. You can still schedule/cancel/complete if your role allows it.',
+			assignedNutri: 'Assigned nutri',
+			missingName: 'No name',
+			missingEmail: 'No email',
+			missingPhone: '—',
+			missingNutri: '—',
+			create: 'Create patient',
+			refresh: 'Refresh patients',
+			assignNutri: 'Assign nutri',
+			selectNutri: 'Choose a nutri',
+			onlyClinic: 'Available for clinic-facing roles.',
+			empty: 'No patients yet. Create one and refresh the list.',
+			loading: 'Loading patients...',
+			loadingHint: 'Fetching the list from the backend. You can keep editing other fields meanwhile.',
+		},
+		appointments: {
+			title: 'Appointments',
+			description: 'Full flow: request as patient, schedule as nutri/clinic_admin, cancel, complete.',
+			patientRoleReminder: 'To request appointments you need the patient role. You can still schedule/cancel/complete if your role allows it.',
 				tip: 'Tip: the backend requires your user to be linked to a patient profile in the emulator (linkedUid). If you get a 403, create or link your patient before requesting again.',
 				reminder: 'Reminder: link your user to a patient before requesting appointments to avoid errors.',
 				noAppointments: 'No appointments yet. Request one as a patient (with linked profile) and then choose date/time in the card.',
@@ -815,37 +850,53 @@ const translations: Record<Locale, Translation> = {
 					manualInvalid: 'Enter a valid date and time (YYYY-MM-DD HH:MM).',
 					validDateRequired: 'A valid date is required to schedule',
 				},
-				quickActions: {
-					title: 'Quick actions',
-					cancel: 'Cancel',
-					complete: 'Complete',
-				},
+			quickActions: {
+				title: 'Quick actions',
+				cancel: 'Cancel',
+				complete: 'Complete',
 			},
-			clinicAvailability: {
-				title: 'Clinic availability (beta)',
-				description: 'Quick view of free/busy slots for the selected nutri. You will soon edit availability here.',
-				refresh: 'Refresh nutri slots',
-				counts: 'Free: {{free}} — Busy: {{busy}}',
-				empty: 'No slots in the current range.',
-				limited: 'Showing only the first slots.',
-				freeLabel: 'Free',
-				busyLabel: 'Busy',
-			},
-			log: {
-				title: 'Log',
-				empty: 'No calls yet.',
-				ok: 'OK',
-				error: 'ERROR',
-				payloadLabel: 'payload',
-				dataLabel: 'data',
+			loading: 'Loading appointments...',
+			loadingHint: 'Refreshing the list and states. You can continue browsing.',
+		},
+		clinicAvailability: {
+			title: 'Clinic availability (beta)',
+			description: 'Quick view of free/busy slots for the selected nutri. You will soon edit availability here.',
+			refresh: 'Refresh nutri slots',
+			counts: 'Free: {{free}} — Busy: {{busy}}',
+			empty: 'No slots in the current range.',
+			limited: 'Showing only the first slots.',
+			freeLabel: 'Free',
+			busyLabel: 'Busy',
+			loading: 'Loading availability...',
+			loadingHint: 'Fetching free and busy slots for the selected nutri.',
+		},
+		log: {
+			title: 'Log',
+			empty: 'No calls yet.',
+			hint: 'Ping health or list patients/appointments to capture request and response payloads.',
+			ok: 'OK',
+			error: 'ERROR',
+			payloadLabel: 'payload',
+			dataLabel: 'data',
 				requestLabel: 'request',
 				responseLabel: 'response',
 				statusLabel: 'Status',
 				durationLabel: 'Duration: {{ms}}ms',
 				attemptLabel: 'Attempt {{attempt}} of {{total}}',
-				emptyPayload: '—',
-			},
+			emptyPayload: '—',
 		},
+		shortcuts: {
+			title: 'Keyboard shortcuts',
+			description: 'Use Ctrl/Cmd + Shift + key',
+			items: [
+				{ combo: 'Ctrl/Cmd + Shift + T', label: 'Toggle light/dark mode' },
+				{ combo: 'Ctrl/Cmd + Shift + L', label: 'Go to login and focus email' },
+				{ combo: 'Ctrl/Cmd + Shift + D', label: 'Go to dashboard' },
+				{ combo: 'Ctrl/Cmd + Shift + P', label: 'Focus patient form name field' },
+				{ combo: 'Ctrl/Cmd + Shift + A', label: 'Focus nutri/date selectors in appointments' },
+			],
+		},
+	},
 		confirm: {
 			cancel: {
 				title: 'Cancel appointment',
