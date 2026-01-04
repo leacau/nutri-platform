@@ -9,7 +9,7 @@ type SeedUser = {
 	email: string;
 	password: string;
 	displayName: string;
-	role: Role;
+	role: Role | null;
 	clinicId?: string | null;
 };
 
@@ -44,11 +44,16 @@ async function upsertUser(seed: SeedUser): Promise<string> {
 			password: seed.password,
 			displayName: seed.displayName,
 		});
-		await auth.setCustomUserClaims(existing.uid, {
-			role: seed.role,
-			clinicId: seed.clinicId ?? null,
-		});
-		log(`Updated user ${seed.email} (${seed.role})`);
+		const claims: Record<string, unknown> = {};
+		if (seed.role === 'platform_admin') {
+			claims.platformAdmin = true;
+		}
+		if (seed.role && seed.role !== 'platform_admin') {
+			claims.role = seed.role;
+			claims.clinicId = seed.clinicId ?? null;
+		}
+		await auth.setCustomUserClaims(existing.uid, claims);
+		log(`Updated user ${seed.email} (${seed.role ?? 'none'})`);
 		return existing.uid;
 	} catch (err) {
 		if ((err as { code?: string } | null)?.code !== 'auth/user-not-found') {
@@ -59,13 +64,18 @@ async function upsertUser(seed: SeedUser): Promise<string> {
 	const created = await auth.createUser({
 		email: seed.email,
 		password: seed.password,
-		displayName: seed.displayName,
-	});
-	await auth.setCustomUserClaims(created.uid, {
-		role: seed.role,
-		clinicId: seed.clinicId ?? null,
-	});
-	log(`Created user ${seed.email} (${seed.role})`);
+	displayName: seed.displayName,
+});
+	const claims: Record<string, unknown> = {};
+	if (seed.role === 'platform_admin') {
+		claims.platformAdmin = true;
+	}
+	if (seed.role && seed.role !== 'platform_admin') {
+		claims.role = seed.role;
+		claims.clinicId = seed.clinicId ?? null;
+	}
+	await auth.setCustomUserClaims(created.uid, claims);
+	log(`Created user ${seed.email} (${seed.role ?? 'none'})`);
 	return created.uid;
 }
 
@@ -171,16 +181,13 @@ async function main() {
 	const { firestore } = getFirebaseAdmin();
 	firestore.settings({ ignoreUndefinedProperties: true });
 
-	const users: Record<
-		'patient' | 'nutri' | 'clinic' | 'platform',
-		SeedUser
-	> = {
+	const users: Record<'patient' | 'nutri' | 'clinic' | 'platform', SeedUser> = {
 		patient: {
 			email: 'patient@test.com',
 			password: 'Passw0rd!',
 			displayName: 'Paciente Demo',
-			role: 'patient',
-			clinicId: CLINIC_ID,
+			role: null,
+			clinicId: null,
 		},
 		nutri: {
 			email: 'nutri@test.com',

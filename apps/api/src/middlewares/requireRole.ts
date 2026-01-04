@@ -7,8 +7,16 @@ export function requireRole(...allowed: Role[]) {
 	return (req: Request, res: Response, next: NextFunction) => {
 		const auth = req.auth;
 
-		if (!auth || !auth.role) {
-			return denyAuthz(req, res, 'Missing role claim');
+		if (!auth) {
+			return denyAuthz(req, res, 'Missing auth context', 401);
+		}
+
+		if (auth.isPlatformAdmin) {
+			return next();
+		}
+
+		if (!auth.role) {
+			return denyAuthz(req, res, 'Missing role for clinic access');
 		}
 
 		if (!allowed.includes(auth.role)) {

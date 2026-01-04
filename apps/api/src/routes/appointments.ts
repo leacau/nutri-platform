@@ -1,943 +1,450 @@
 import { Router, type Request, type Response } from 'express';
+import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
-import { Timestamp } from 'firebase-admin/firestore';
 
 import { authMiddleware } from '../middlewares/authMiddleware.js';
-import { requireRole } from '../middlewares/requireRole.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
-import { getFirebaseAdmin } from '../firebase/admin.js';
-import type { Role } from '../types/auth.js';
-import { denyAuthz, logAuthzDenied } from '../security/authz.js';
+import { requireRole } from '../middlewares/requireRole.js';
+import { requirePatientLink } from '../middlewares/requirePatientLink.js';
+import { denyAuthz } from '../security/authz.js';
+import { getFirestoreDb } from '../firebase/firestore.js';
+import type { AppointmentDoc, AppointmentStatus } from '../types/appointments.js';
+import type { ClinicMembershipDoc } from '../types/clinics.js';
 import { logEvent } from '../observability/eventLogger.js';
-
-export type AppointmentStatus =
-	| 'requested'
-	| 'scheduled'
-	| 'cancelled'
-	| 'completed';
-
-export type AppointmentDoc = {
-	clinicId: string;
-
-	// Pivotes de aislamiento
-	patientId: string; // patients/{id}
-	patientUid: string; // auth uid (linkedUid)
-
-	// Selección del nutricionista
-	nutriUid: string | null;
-
-	status: AppointmentStatus;
-
-	requestedAt: FirebaseFirestore.Timestamp;
-	scheduledFor: FirebaseFirestore.Timestamp | null;
-
-	cancelledAt: FirebaseFirestore.Timestamp | null;
-	cancelledByUid: string | null;
-	cancelledByRole: Role | null;
-
-	completedAt: FirebaseFirestore.Timestamp | null;
-	completedByUid: string | null;
-	completedByRole: Role | null;
-
-	createdAt: FirebaseFirestore.Timestamp;
-	updatedAt: FirebaseFirestore.Timestamp;
-};
 
 const router = Router();
 
-const requestBodySchema = z
-	.object({
-		nutriUid: z.string().min(1),
-		scheduledForIso: z.string().min(10).optional(),
-		clinicId: z.string().min(1).optional(),
-	})
-	.strict();
-
-const slotsQuerySchema = z
-	.object({
-		nutriUid: z.union([z.string(), z.array(z.string())]).transform((v) =>
-			Array.isArray(v) ? v[0] : v
-		),
-		from: z
-			.union([z.string(), z.array(z.string())])
-			.optional()
-			.transform((v) => (Array.isArray(v) ? v[0] : v)),
-		to: z
-			.union([z.string(), z.array(z.string())])
-			.optional()
-			.transform((v) => (Array.isArray(v) ? v[0] : v)),
-	})
-	.strict();
-
-const cancelParamsSchema = z.object({ id: z.string().min(1) });
-const scheduleParamsSchema = z.object({ id: z.string().min(1) });
-
-const scheduleBodySchema = z
-	.object({
-		// ISO string desde el front
-		scheduledForIso: z.string().min(10),
-
-		// uid del nutri seleccionado
-		nutriUid: z.string().min(1),
-	})
-	.strict();
-
-function mustAuth(req: Request) {
-	if (!req.auth) {
-		throw Object.assign(new Error('Missing req.auth'), { statusCode: 500 });
-	}
-	return req.auth;
-}
-
-/**
- * GET /api/appointments/slots?nutriUid=&from=&to=
- * Retorna slots libres/ocupados para un nutri
- * Desde/ hasta son ISO opcionales, por defecto [now, now+7d]
- */
-router.get('/slots', authMiddleware, async (req: Request, res: Response) => {
-	const parsed = slotsQuerySchema.safeParse(req.query ?? {});
-	if (!parsed.success) {
-		return res.status(400).json({
-			success: false,
-			message: 'Invalid query',
-			errors: parsed.error.flatten(),
-		});
-	}
-
-	const fromIso = parsed.data.from ?? new Date().toISOString();
-	const toIso =
-		parsed.data.to ??
-		new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-	const fromMs = Date.parse(fromIso);
-	const toMs = Date.parse(toIso);
-
-	if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
-		return res.status(400).json({
-			success: false,
-			message: 'from/to must be valid ISO date strings',
-		});
-	}
-
-	if (toMs <= fromMs) {
-		return res.status(400).json({
-			success: false,
-			message: 'to must be greater than from',
-		});
-	}
-
-	const { firestore } = getFirebaseAdmin();
-
-	const snap = await firestore
-		.collection('appointments')
-		.where('nutriUid', '==', parsed.data.nutriUid)
-		.where('status', '==', 'scheduled')
-		.where('scheduledFor', '>=', Timestamp.fromMillis(fromMs))
-		.where('scheduledFor', '<=', Timestamp.fromMillis(toMs))
-		.get();
-
-	const occupiedIso = new Set<string>();
-	snap.docs.forEach((d) => {
-		const data = d.data() as AppointmentDoc;
-		const scheduled = data.scheduledFor?.toMillis();
-		if (typeof scheduled === 'number') {
-			occupiedIso.add(new Date(scheduled).toISOString());
-		}
-	});
-
-	// Mock de slots libres/ocupados basado en un grid cada 30 minutos
-	const slots = buildFreeBusySlots(fromMs, toMs, occupiedIso, 30);
-	const free = slots.filter((s) => s.status === 'free').map((s) => s.iso);
-	const busy = slots.filter((s) => s.status === 'busy').map((s) => s.iso);
-
-	return res.status(200).json({
-		success: true,
-		data: { free, busy, slots },
-	});
+const scheduleBodySchema = z.object({
+	scheduledFor: z.string().min(10),
+	nutriUid: z.string().min(1),
 });
 
-async function getPatientProfileByUid(
-	firestore: FirebaseFirestore.Firestore,
+const cancelBodySchema = z.object({}).optional();
+
+function timestampToIso(ts: Timestamp | null): string | null {
+	return ts ? new Date(ts.toMillis()).toISOString() : null;
+}
+
+async function getMembership(
+	db: Firestore,
+	clinicId: string,
 	uid: string
-): Promise<{ patientId: string; clinicId: string }> {
-	const snap = await firestore
+): Promise<ClinicMembershipDoc | null> {
+	const snap = await db
+		.collection('clinic_memberships')
+		.where('clinicId', '==', clinicId)
+		.where('uid', '==', uid)
+		.where('isActive', '==', true)
+		.limit(1)
+		.get();
+	if (snap.empty) return null;
+	const doc = snap.docs[0];
+	if (!doc) return null;
+	return doc.data() as ClinicMembershipDoc;
+}
+
+async function getPatientLink(
+	db: Firestore,
+	clinicId: string,
+	uid: string
+	): Promise<{ patientId: string } | null> {
+	const snap = await db
 		.collection('patients')
+		.where('clinicId', '==', clinicId)
 		.where('linkedUid', '==', uid)
 		.limit(1)
-	.get();
-
-	if (snap.empty) {
-		throw Object.assign(
-			new Error(
-				'Este usuario no tiene un paciente vinculado. Creá y linkeá un paciente antes de solicitar turnos.'
-			),
-			{
-				statusCode: 403,
-			}
-		);
-	}
-
-	const doc = snap.docs.at(0);
-	if (!doc) {
-		throw Object.assign(new Error('Patient profile lookup failed'), {
-			statusCode: 500,
-		});
-	}
-	const data = doc.data() as { clinicId?: unknown };
-
-	if (typeof data.clinicId !== 'string' || !data.clinicId) {
-		throw Object.assign(new Error('Patient profile missing clinicId'), {
-			statusCode: 500,
-		});
-	}
-
-	return { patientId: doc.id, clinicId: data.clinicId };
-}
-
-function buildFreeBusySlots(
-	startMs: number,
-	endMs: number,
-	occupiedIso: Set<string>,
-	stepMinutes = 30
-) {
-	const slots: Array<{ iso: string; status: 'free' | 'busy' }> = [];
-	const stepMs = stepMinutes * 60 * 1000;
-	for (let ts = startMs; ts <= endMs; ts += stepMs) {
-		const iso = new Date(ts).toISOString();
-		slots.push({ iso, status: occupiedIso.has(iso) ? 'busy' : 'free' });
-	}
-	return slots;
-}
-
-function timestampToIso(
-	ts: FirebaseFirestore.Timestamp | null | undefined
-): string | null {
-	if (!ts) return null;
-	return new Date(ts.toMillis()).toISOString();
+		.get();
+	if (snap.empty) return null;
+	const doc = snap.docs[0];
+	if (!doc) return null;
+	return { patientId: doc.id };
 }
 
 function canCancelWith24hRule(
 	status: AppointmentStatus,
-	scheduledFor: FirebaseFirestore.Timestamp | null,
+	scheduledFor: Timestamp | null,
 	nowMs: number
 ): { ok: true } | { ok: false; reason: string; http: number } {
 	if (status === 'completed') {
-		return {
-			ok: false,
-			reason: 'Cannot cancel a completed appointment',
-			http: 403,
-		};
+		return { ok: false, reason: 'Cannot cancel a completed appointment', http: 403 };
 	}
 	if (status === 'cancelled') return { ok: true };
 	if (status === 'requested') return { ok: true };
 
 	if (!scheduledFor) {
-		return {
-			ok: false,
-			reason: 'scheduledFor missing on scheduled appointment',
-			http: 500,
-		};
+		return { ok: false, reason: 'scheduledFor missing on scheduled appointment', http: 500 };
 	}
 
 	const H24 = 24 * 60 * 60 * 1000;
 	const diffMs = scheduledFor.toMillis() - nowMs;
 
 	if (diffMs < H24) {
-		return {
-			ok: false,
-			reason: 'Cancellation allowed only if >= 24h before scheduled time',
-			http: 403,
-		};
+		return { ok: false, reason: 'Cancellation allowed only if >= 24h before scheduled time', http: 403 };
 	}
 
 	return { ok: true };
 }
 
-/**
- * POST /api/appointments/request
- * - patient only
- * - paciente elige nutriUid
- * - idempotente por (patientUid + nutriUid + status=requested)
- */
-router.post(
-	'/request',
-	authMiddleware,
-	requireRole('patient'),
-	async (req: Request, res: Response) => {
-		const ctx = mustAuth(req);
+router.post('/request', authMiddleware, requirePatientLink, async (req: Request, res: Response) => {
+	const auth = req.auth!;
+	const patientCtx = req.patientContext!;
+	const db = getFirestoreDb();
 
-		// Frenamos explícitamente si el usuario no está vinculado a un perfil de paciente.
-		// Esto evita que se intente crear/usar perfiles "self-service" sin linkedUid.
-		const parsed = requestBodySchema.safeParse(req.body ?? {});
-		if (!parsed.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid body',
-				errors: parsed.error.flatten(),
-			});
+	const existing = await db
+		.collection('appointments')
+		.where('clinicId', '==', patientCtx.clinicId)
+		.where('patientUid', '==', auth.uid)
+		.where('status', '==', 'requested')
+		.limit(1)
+		.get();
+
+	if (!existing.empty) {
+		const doc = existing.docs[0];
+		if (!doc) {
+			return res.status(500).json({ success: false, message: 'Failed to resolve requested appointment' });
 		}
-
-		const { nutriUid, scheduledForIso, clinicId: clinicIdFromBody } =
-			parsed.data;
-
-		if (
-			typeof scheduledForIso === 'string' &&
-			!Number.isFinite(Date.parse(scheduledForIso))
-		) {
-			return res.status(400).json({
-				success: false,
-				message: 'scheduledForIso must be a valid ISO date string',
-			});
-		}
-
-		const { firestore } = getFirebaseAdmin();
-
-		let patientProfile: { patientId: string; clinicId: string } | null = null;
-		try {
-			patientProfile = await getPatientProfileByUid(firestore, ctx.uid);
-		} catch (err) {
-			const statusCode =
-				typeof (err as any)?.statusCode === 'number'
-					? (err as any).statusCode
-					: 500;
-			const message =
-				err instanceof Error
-					? err.message
-					: 'Necesitás un paciente vinculado antes de solicitar turnos.';
-			return res.status(statusCode === 403 ? 403 : statusCode).json({
-				success: false,
-				message,
-			});
-		}
-
-		// ✅ Idempotencia anti-spam (por nutri seleccionado)
-		const existing = await firestore
-			.collection('appointments')
-			.where('patientUid', '==', ctx.uid)
-			.where('nutriUid', '==', nutriUid)
-			.where('status', '==', 'requested')
-			.limit(1)
-			.get();
-
-		if (!existing.empty) {
-			const doc = existing.docs.at(0);
-			if (!doc) {
-				return res.status(500).json({
-					success: false,
-					message: 'Failed to resolve existing appointment',
-				});
-			}
-			return res.status(200).json({
-				success: true,
-				message: 'Already requested',
-				data: {
-					id: doc.id,
-					...(doc.data() as AppointmentDoc),
-				},
-			});
-		}
-
-		const patientId = patientProfile!.patientId;
-		const clinicId =
-			patientProfile!.clinicId ??
-			clinicIdFromBody ??
-			ctx.clinicId ??
-			'self-service';
-
-		// (Opcional) Hard guard: verificar que el nutri pertenece a la misma clínica.
-		// Hoy no tenemos colección nutris, así que lo dejamos para la próxima iteración.
-
-		const now = Timestamp.now();
-		const scheduledTimestamp =
-			scheduledForIso && Number.isFinite(Date.parse(scheduledForIso))
-				? Timestamp.fromMillis(Date.parse(scheduledForIso))
-				: null;
-
-		const doc: AppointmentDoc = {
-			clinicId,
-			patientId,
-			patientUid: ctx.uid,
-			nutriUid,
-			status: scheduledTimestamp ? 'scheduled' : 'requested',
-			requestedAt: now,
-			scheduledFor: scheduledTimestamp,
-			cancelledAt: null,
-			cancelledByUid: null,
-			cancelledByRole: null,
-			completedAt: null,
-			completedByUid: null,
-			completedByRole: null,
-			createdAt: now,
-			updatedAt: now,
-		};
-
-		const ref = await firestore.collection('appointments').add(doc);
-
-		logEvent('appointment_requested', {
-			req,
-			clinicId,
-			data: {
-				appointmentId: ref.id,
-				patientId,
-				patientUid: ctx.uid,
-				nutriUid,
-				scheduledForIso: timestampToIso(scheduledTimestamp),
-				status: doc.status,
-			},
-		});
-
-		return res.status(201).json({
+		return res.status(200).json({
 			success: true,
-			message: scheduledTimestamp ? 'Appointment scheduled' : 'Appointment requested',
-			data: { id: ref.id, ...doc },
+			message: 'Already requested',
+			data: { id: doc.id, ...(doc.data() as AppointmentDoc) },
 		});
 	}
-);
 
-/**
- * POST /api/appointments/:id/schedule
- * - clinic_admin/nutri/patient
- * - clinic scoped para roles de clínica, paciente solo propias citas
- * - solo desde requested
- * - respeta nutriUid del request salvo clinic_admin (puede cambiar)
- */
+	const now = Timestamp.now();
+	const doc: AppointmentDoc = {
+		clinicId: patientCtx.clinicId,
+		patientId: patientCtx.patientId,
+		patientUid: auth.uid,
+		nutriUid: null,
+		status: 'requested',
+		requestedAt: now,
+		scheduledFor: null,
+		cancelledAt: null,
+		cancelledByUid: null,
+		cancelledByRole: null,
+		completedAt: null,
+		completedByUid: null,
+		completedByRole: null,
+		createdAt: now,
+		updatedAt: now,
+	};
+
+	const ref = await db.collection('appointments').add(doc);
+
+	logEvent('appointment_requested', {
+		req,
+		clinicId: patientCtx.clinicId,
+		data: { appointmentId: ref.id, patientId: patientCtx.patientId },
+	});
+
+	return res.status(201).json({
+		success: true,
+		message: 'Appointment requested',
+		data: { id: ref.id, ...doc },
+	});
+});
+
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
+	const auth = req.auth!;
+	const clinicIdHeader = req.header('x-clinic-id');
+	const db = getFirestoreDb();
+
+	if (auth.isPlatformAdmin) {
+		const clinicId =
+			clinicIdHeader ?? (req.query.clinicId as string | undefined) ?? null;
+		if (!clinicId) {
+			return res.status(400).json({
+				success: false,
+				message: 'clinicId is required for platform admin listing',
+			});
+		}
+		const snap = await db
+			.collection('appointments')
+			.where('clinicId', '==', clinicId)
+			.orderBy('createdAt', 'desc')
+			.limit(50)
+			.get();
+		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as AppointmentDoc) }));
+		return res.status(200).json({ success: true, data: items });
+	}
+
+	if (!clinicIdHeader) {
+		return res.status(400).json({
+			success: false,
+			message: 'X-Clinic-Id header is required',
+		});
+	}
+
+	const clinicId = clinicIdHeader as string;
+	const membership = await getMembership(db, clinicId, auth.uid);
+	if (membership) {
+		const role = membership.role;
+		req.auth = { ...auth, clinicId, role };
+
+		let query = db
+			.collection('appointments')
+			.where('clinicId', '==', clinicId)
+			.orderBy('createdAt', 'desc');
+		if (role === 'nutri') {
+			query = query.where('nutriUid', '==', auth.uid);
+		}
+
+		const snap = await query.limit(50).get();
+		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as AppointmentDoc) }));
+		return res.status(200).json({ success: true, data: items });
+	}
+
+	const patient = await getPatientLink(db, clinicId, auth.uid);
+	if (patient) {
+		const snap = await db
+			.collection('appointments')
+			.where('clinicId', '==', clinicIdHeader)
+			.where('patientUid', '==', auth.uid)
+			.orderBy('createdAt', 'desc')
+			.limit(50)
+			.get();
+		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as AppointmentDoc) }));
+		return res.status(200).json({ success: true, data: items });
+	}
+
+	return denyAuthz(
+		req,
+		res,
+		`User ${auth.uid} has no membership or patient link in clinic ${clinicIdHeader}`
+	);
+});
+
 router.post(
 	'/:id/schedule',
 	authMiddleware,
-	async (req: Request, res: Response) => {
-		const ctx = mustAuth(req);
-		const role = (ctx.role as Role | null) ?? null;
-		const forbidden = (reason: string) => {
-			logAuthzDenied(req, 403, reason);
-			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
-		};
-
-		if (!role) {
-			return denyAuthz(req, res, 'Missing role claim for scheduling');
-		}
-
-		const allowedRoles: Role[] = ['clinic_admin', 'nutri', 'patient'];
-		if (!allowedRoles.includes(role)) {
-			return denyAuthz(
-				req,
-				res,
-				`Role ${role} not allowed to schedule appointments`
-			);
-		}
-
-		const parsedParams = scheduleParamsSchema.safeParse(req.params);
-		if (!parsedParams.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid params',
-				errors: parsedParams.error.flatten(),
-			});
-		}
-
-		const parsedBody = scheduleBodySchema.safeParse(req.body ?? {});
-		if (!parsedBody.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid body',
+		requireClinicContext,
+		requireRole('clinic_admin', 'staff', 'nutri'),
+		async (req: Request, res: Response) => {
+			const auth = req.auth!;
+			const clinicId = auth.clinicId!;
+			const apptId = req.params.id;
+			if (!apptId) {
+				return res.status(400).json({ success: false, message: 'Missing appointment id' });
+			}
+			const parsedBody = scheduleBodySchema.safeParse(req.body ?? {});
+			if (!parsedBody.success) {
+				return res.status(400).json({
+					success: false,
+					message: 'Invalid body',
 				errors: parsedBody.error.flatten(),
 			});
 		}
 
-		const clinicId = ctx.clinicId;
-		if (!clinicId && role !== 'patient') {
-			return denyAuthz(req, res, 'Missing clinicId claim for scheduling');
-		}
-
-		// guard: si schedule lo hace un nutri, solo puede schedule para sí mismo
-		if (role === 'nutri' && parsedBody.data.nutriUid !== ctx.uid) {
-			return denyAuthz(
-				req,
-				res,
-				'Nutri attempting to schedule for different nutriUid'
-			);
-		}
-
-		const scheduledMs = Date.parse(parsedBody.data.scheduledForIso);
+		const scheduledMs = Date.parse(parsedBody.data.scheduledFor);
 		if (!Number.isFinite(scheduledMs)) {
 			return res.status(400).json({
 				success: false,
-				message: 'scheduledForIso must be a valid ISO date string',
+				message: 'scheduledFor must be a valid ISO date string',
 			});
-		}
+			}
 
-		const { firestore } = getFirebaseAdmin();
-		const ref = firestore.collection('appointments').doc(parsedParams.data.id);
+			const db = getFirestoreDb();
+			const ref = db.collection('appointments').doc(apptId);
 
-		const result = await firestore.runTransaction(async (tx) => {
+		const result = await db.runTransaction(async (tx) => {
 			const snap = await tx.get(ref);
 			if (!snap.exists) {
-				return {
-					http: 404 as const,
-					body: { success: false, message: 'Appointment not found' },
-				};
+				return { http: 404 as const, body: { success: false, message: 'Appointment not found' } };
 			}
 
 			const appt = snap.data() as AppointmentDoc;
-
-			// clinic isolation (paciente no requiere clinicId en claim)
-			if (role !== 'patient') {
-				if (appt.clinicId !== clinicId) {
-					return forbidden(
-						`Clinic isolation failed scheduling appt ${snap.id}`
-					);
-				}
-			} else if (appt.patientUid !== ctx.uid) {
-				return forbidden(
-					`Patient ${ctx.uid} tried to schedule other patient appt ${snap.id}`
-				);
+			if (appt.clinicId !== clinicId) {
+				return denyAuthz(req, res, 'Cross-clinic schedule') as any;
 			}
 
 			if (appt.status === 'cancelled') {
-				return {
-					http: 409 as const,
-					body: {
-						success: false,
-						message: 'Cannot schedule a cancelled appointment',
-					},
-				};
+				return { http: 409 as const, body: { success: false, message: 'Cannot schedule a cancelled appointment' } };
 			}
+
 			if (appt.status === 'completed') {
-				return {
-					http: 409 as const,
-					body: {
-						success: false,
-						message: 'Cannot schedule a completed appointment',
-					},
-				};
+				return { http: 409 as const, body: { success: false, message: 'Cannot schedule a completed appointment' } };
+			}
+
+			if (auth.role === 'nutri' && appt.nutriUid && appt.nutriUid !== auth.uid) {
+				return denyAuthz(req, res, 'Nutri cannot take appointment for another nutri') as any;
+			}
+
+			if (auth.role === 'nutri' && parsedBody.data.nutriUid !== auth.uid) {
+				return denyAuthz(req, res, 'Nutri cannot assign appointment to another nutri') as any;
 			}
 
 			const newScheduled = Timestamp.fromMillis(scheduledMs);
-
-			// idempotente: ya scheduled igual => OK
-			if (
-				appt.status === 'scheduled' &&
-				appt.scheduledFor?.toMillis() === newScheduled.toMillis() &&
-				appt.nutriUid === parsedBody.data.nutriUid
-			) {
-				return {
-					http: 200 as const,
-					body: {
-						success: true,
-						message: 'Already scheduled',
-						data: { id: snap.id, ...appt },
-					},
-				};
-			}
-
-			if (appt.status !== 'requested') {
-				return {
-					http: 409 as const,
-					body: {
-						success: false,
-						message: `Cannot schedule from status=${appt.status}`,
-					},
-				};
-			}
-
-			// Regla: si el request ya tiene nutriUid, un nutri NO puede cambiarlo
-			if (role === 'nutri') {
-				if (appt.nutriUid !== ctx.uid) {
-					return forbidden(
-						`Nutri ${ctx.uid} tried to schedule appt for ${appt.nutriUid}`
-					);
-				}
-			}
-			if (
-				role === 'patient' &&
-				appt.nutriUid &&
-				appt.nutriUid !== parsedBody.data.nutriUid
-			) {
-				return forbidden(
-					`Patient ${ctx.uid} tried to change assigned nutri on scheduling`
-				);
-			}
-
-			// clinic_admin puede reasignar (si querés bloquearlo, lo cambiamos después)
-			const now = Timestamp.now();
 			const update: Partial<AppointmentDoc> = {
 				status: 'scheduled',
 				scheduledFor: newScheduled,
 				nutriUid: parsedBody.data.nutriUid,
-				updatedAt: now,
+				updatedAt: Timestamp.now(),
 			};
 
 			tx.update(ref, update);
 
 			return {
 				http: 200 as const,
-				body: {
-					success: true,
-					message: 'Scheduled',
-					data: { id: snap.id, ...appt, ...update },
-				},
+				body: { success: true, message: 'Scheduled', data: { id: ref.id, ...appt, ...update } },
 			};
 		});
-
-		if (
-			result.http === 200 &&
-			result.body.success === true &&
-			result.body.message === 'Scheduled' &&
-			'data' in result.body
-		) {
-			const appt = result.body.data as AppointmentDoc & { id: string };
-			logEvent('appointment_scheduled', {
-				req,
-				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
-				data: {
-					appointmentId: appt.id,
-					patientUid: appt.patientUid,
-					nutriUid: appt.nutriUid,
-					scheduledForIso: timestampToIso(appt.scheduledFor),
-				},
-			});
-		}
 
 		return res.status(result.http).json(result.body);
 	}
 );
 
-/**
- * GET /api/appointments
- * - patient: own
- * - clinic roles: clinic scoped
- * - platform_admin: all
- */
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
-	const ctx = mustAuth(req);
-	const role = ctx.role ?? null;
-
-	if (!role) {
-		return denyAuthz(req, res, 'Missing role claim for listing appointments');
+router.post('/:id/cancel', authMiddleware, async (req: Request, res: Response) => {
+	const auth = req.auth!;
+	const clinicIdHeader = req.header('x-clinic-id');
+	const parsedBody = cancelBodySchema.safeParse(req.body ?? {});
+	const apptId = req.params.id;
+	if (!apptId) {
+		return res.status(400).json({ success: false, message: 'Missing appointment id' });
+	}
+	if (!parsedBody.success) {
+		return res.status(400).json({
+			success: false,
+			message: 'Invalid body',
+			errors: parsedBody.error.flatten(),
+		});
 	}
 
-	const { firestore } = getFirebaseAdmin();
-
-	if (role === 'patient') {
-		const snap = await firestore
-			.collection('appointments')
-			.where('patientUid', '==', ctx.uid)
-			.orderBy('createdAt', 'desc')
-			.limit(50)
-			.get();
-
-		const items = snap.docs.map((d) => ({
-			id: d.id,
-			...(d.data() as AppointmentDoc),
-		}));
-		return res.status(200).json({ success: true, data: items });
+	const db = getFirestoreDb();
+	const ref = db.collection('appointments').doc(apptId);
+	const snap = await ref.get();
+	if (!snap.exists) {
+		return res.status(404).json({ success: false, message: 'Appointment not found' });
 	}
+	const appt = snap.data() as AppointmentDoc;
 
-	if (role === 'platform_admin') {
-		const snap = await firestore
-			.collection('appointments')
-			.orderBy('createdAt', 'desc')
-			.limit(50)
-			.get();
+	if (auth.isPlatformAdmin) {
+		// allowed
+	} else if (!clinicIdHeader) {
+		return res.status(400).json({ success: false, message: 'Missing X-Clinic-Id header' });
+	} else {
+		const clinicId = clinicIdHeader as string;
+		const membership = await getMembership(db, clinicId, auth.uid);
+		const patient = await getPatientLink(db, clinicId, auth.uid);
 
-		const items = snap.docs.map((d) => ({
-			id: d.id,
-			...(d.data() as AppointmentDoc),
-		}));
-		return res.status(200).json({ success: true, data: items });
-	}
-
-	return requireClinicContext(req, res, async () => {
-		const clinicId = req.auth?.clinicId;
-		if (!clinicId) {
-			return denyAuthz(req, res, 'Missing clinicId claim for clinic listing');
+		if (membership) {
+			req.auth = { ...auth, clinicId, role: membership.role };
+			if (appt.clinicId !== clinicId) {
+				return denyAuthz(req, res, 'Cross-clinic cancel');
+			}
+			if (membership.role === 'nutri' && appt.nutriUid !== auth.uid) {
+				return denyAuthz(req, res, 'Nutri cannot cancel appointments of other nutris');
+			}
+		} else if (patient) {
+			if (appt.clinicId !== clinicId || appt.patientUid !== auth.uid) {
+				return denyAuthz(req, res, 'Patient can only cancel own appointments');
+			}
+		} else {
+			return denyAuthz(req, res, 'No membership or patient link to cancel');
 		}
+	}
 
-		const snap = await firestore
-			.collection('appointments')
-			.where('clinicId', '==', clinicId)
-			.orderBy('createdAt', 'desc')
-			.limit(50)
-			.get();
+	if (appt.status === 'cancelled') {
+		return res.status(200).json({ success: true, message: 'Already cancelled', data: { id: snap.id, ...appt } });
+	}
 
-		const items = snap.docs.map((d) => ({
-			id: d.id,
-			...(d.data() as AppointmentDoc),
-		}));
-		return res.status(200).json({ success: true, data: items });
+	const rule = canCancelWith24hRule(appt.status, appt.scheduledFor, Date.now());
+	if (!rule.ok) {
+		return res.status(rule.http).json({ success: false, message: rule.reason });
+	}
+
+	const now = Timestamp.now();
+	const updated: Partial<AppointmentDoc> = {
+		status: 'cancelled',
+		cancelledAt: now,
+		cancelledByUid: auth.uid,
+		cancelledByRole: auth.role ?? (auth.isPlatformAdmin ? 'platform_admin' : null),
+		updatedAt: now,
+	};
+
+	await ref.update(updated);
+
+	logEvent('appointment_cancelled', {
+		req,
+		clinicId: appt.clinicId,
+		data: {
+			appointmentId: snap.id,
+			cancelledByUid: auth.uid,
+			cancelledByRole: updated.cancelledByRole,
+		},
+	});
+
+	return res.status(200).json({
+		success: true,
+		message: 'Cancelled',
+		data: { id: snap.id, ...appt, ...updated },
 	});
 });
 
-/**
- * POST /api/appointments/:id/cancel
- */
-router.post(
-	'/:id/cancel',
-	authMiddleware,
-	async (req: Request, res: Response) => {
-		const ctx = mustAuth(req);
-		const role = ctx.role ?? null;
-		let auditId: string | null = null;
-		const forbidden = (reason: string) => {
-			logAuthzDenied(req, 403, reason);
-			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
-		};
-
-		if (!role) {
-			return denyAuthz(req, res, 'Missing role claim on cancel');
-		}
-
-		const parsedParams = cancelParamsSchema.safeParse(req.params);
-		if (!parsedParams.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid params',
-				errors: parsedParams.error.flatten(),
-			});
-		}
-
-		const { id } = parsedParams.data;
-
-		const { firestore } = getFirebaseAdmin();
-		const ref = firestore.collection('appointments').doc(id);
-
-		const result = await firestore.runTransaction(async (tx) => {
-			const snap = await tx.get(ref);
-			if (!snap.exists) {
-				return {
-					http: 404 as const,
-					body: { success: false, message: 'Appointment not found' },
-				};
-			}
-
-			const appt = snap.data() as AppointmentDoc;
-
-			// AuthZ
-			if (role === 'patient') {
-				if (appt.patientUid !== ctx.uid) {
-					return forbidden(
-						`Patient ${ctx.uid} tried to cancel appointment ${id} from ${appt.patientUid}`
-					);
-				}
-			} else if (role === 'platform_admin') {
-				// ok
-			} else {
-				const clinicId = ctx.clinicId;
-				if (!clinicId) {
-					return forbidden(
-						`Missing clinicId claim for ${role} cancelling appointment ${id}`
-					);
-				}
-				if (appt.clinicId !== clinicId) {
-					return forbidden(
-						`Clinic isolation failed cancelling appointment ${id} for clinic ${clinicId}`
-					);
-				}
-			}
-
-			if (appt.status === 'cancelled') {
-				return {
-					http: 200 as const,
-					body: {
-						success: true,
-						message: 'Already cancelled',
-						data: { id, ...appt },
-					},
-				};
-			}
-
-			const rule = canCancelWith24hRule(
-				appt.status,
-				appt.scheduledFor ?? null,
-				Date.now()
-			);
-			if (!rule.ok) {
-				return {
-					http: rule.http as 403 | 500,
-					body: { success: false, message: rule.reason },
-				};
-			}
-
-			const now = Timestamp.now();
-			const updated: Partial<AppointmentDoc> = {
-				status: 'cancelled',
-				cancelledAt: now,
-				cancelledByUid: ctx.uid,
-				cancelledByRole: role as Role,
-				updatedAt: now,
-			};
-
-			tx.update(ref, updated);
-
-			return {
-				http: 200 as const,
-				body: {
-					success: true,
-					message: 'Cancelled',
-					data: { id, ...appt, ...updated },
-				},
-			};
-		});
-
-		if (
-			result.http === 200 &&
-			result.body.success === true &&
-			result.body.message === 'Cancelled' &&
-			'data' in result.body
-		) {
-			const appt = result.body.data as AppointmentDoc & { id: string };
-			const payload = logEvent('appointment_cancelled', {
-				req,
-				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
-				data: {
-					appointmentId: appt.id,
-					patientUid: appt.patientUid,
-					cancelledByUid: appt.cancelledByUid,
-					cancelledByRole: appt.cancelledByRole,
-					scheduledForIso: timestampToIso(appt.scheduledFor),
-				},
-			});
-			auditId = payload.auditId;
-		}
-
-		const responseBody = auditId ? { ...result.body, auditId } : result.body;
-		return res.status(result.http).json(responseBody);
-	}
-);
-
-/**
- * POST /api/appointments/:id/complete
- * - clinic_admin/nutri: solo dentro de su clínica
- * - nutri: únicamente si es el mismo asignado
- * - platform_admin: puede completar cualquier cita
- */
 router.post(
 	'/:id/complete',
 	authMiddleware,
-	requireRole('clinic_admin', 'nutri', 'platform_admin'),
-	async (req: Request, res: Response) => {
-		const ctx = mustAuth(req);
-		const role = ctx.role!;
-		let auditId: string | null = null;
-		const forbidden = (reason: string) => {
-			logAuthzDenied(req, 403, reason);
-			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
-		};
+		requireClinicContext,
+		requireRole('clinic_admin', 'staff', 'nutri'),
+		async (req: Request, res: Response) => {
+			const auth = req.auth!;
+			const clinicId = auth.clinicId!;
+			const apptId = req.params.id;
+			if (!apptId) {
+				return res.status(400).json({ success: false, message: 'Missing appointment id' });
+			}
+			const db = getFirestoreDb();
+			const ref = db.collection('appointments').doc(apptId);
 
-		const parsedParams = scheduleParamsSchema.safeParse(req.params);
-		if (!parsedParams.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid params',
-				errors: parsedParams.error.flatten(),
-			});
-		}
-
-		const { firestore } = getFirebaseAdmin();
-		const ref = firestore.collection('appointments').doc(parsedParams.data.id);
-
-		const result = await firestore.runTransaction(async (tx) => {
+		const result = await db.runTransaction(async (tx) => {
 			const snap = await tx.get(ref);
 			if (!snap.exists) {
-				return {
-					http: 404 as const,
-					body: { success: false, message: 'Appointment not found' },
-				};
+				return { http: 404 as const, body: { success: false, message: 'Appointment not found' } };
 			}
 
 			const appt = snap.data() as AppointmentDoc;
-
-			// Aislamiento por clínica (excepto platform_admin)
-			if (role !== 'platform_admin') {
-				const clinicId = ctx.clinicId;
-				if (!clinicId) {
-					return forbidden(
-						`Missing clinicId claim when completing appointment ${parsedParams.data.id}`
-					);
-				}
-				if (appt.clinicId !== clinicId) {
-					return forbidden(
-						`Clinic isolation failed completing appointment ${parsedParams.data.id}`
-					);
-				}
+			if (appt.clinicId !== clinicId) {
+				return denyAuthz(req, res, 'Cross-clinic complete') as any;
 			}
 
 			if (appt.status === 'cancelled') {
-				return {
-					http: 409 as const,
-					body: { success: false, message: 'Cannot complete a cancelled appointment' },
-				};
+				return { http: 409 as const, body: { success: false, message: 'Cannot complete a cancelled appointment' } };
 			}
 
 			if (appt.status === 'completed') {
 				return {
 					http: 200 as const,
-					body: {
-						success: true,
-						message: 'Already completed',
-						data: { id: snap.id, ...appt },
-					},
+					body: { success: true, message: 'Already completed', data: { id: snap.id, ...appt } },
 				};
 			}
 
 			if (appt.status !== 'scheduled') {
-				return {
-					http: 409 as const,
-					body: { success: false, message: 'Only scheduled appointments can be completed' },
-				};
+				return { http: 409 as const, body: { success: false, message: 'Only scheduled appointments can be completed' } };
 			}
 
-			// Nutri solo completa si es el asignado
-			if (role === 'nutri' && appt.nutriUid !== ctx.uid) {
-				return forbidden(
-					`Nutri ${ctx.uid} tried to complete appointment assigned to ${appt.nutriUid}`
-				);
+			if (auth.role === 'nutri' && appt.nutriUid !== auth.uid) {
+				return denyAuthz(req, res, 'Nutri cannot complete appointments of other nutris') as any;
 			}
 
 			const now = Timestamp.now();
 			const updated: Partial<AppointmentDoc> = {
 				status: 'completed',
 				completedAt: now,
-				completedByUid: ctx.uid,
-				completedByRole: role as Role,
+				completedByUid: auth.uid,
+				completedByRole: auth.role,
 				updatedAt: now,
 			};
 
 			tx.update(ref, updated);
-
-			return {
-				http: 200 as const,
-				body: {
-					success: true,
-					message: 'Completed',
-					data: { id: snap.id, ...appt, ...updated },
-				},
-			};
+			return { http: 200 as const, body: { success: true, message: 'Completed', data: { id: snap.id, ...appt, ...updated } } };
 		});
 
-		if (
-			result.http === 200 &&
-			result.body.success === true &&
-			result.body.message === 'Completed' &&
-			'data' in result.body
-		) {
-			const appt = result.body.data as AppointmentDoc & { id: string };
-			const payload = logEvent('appointment_completed', {
-				req,
-				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
-				data: {
-					appointmentId: appt.id,
-					patientUid: appt.patientUid,
-					completedByUid: appt.completedByUid,
-					completedByRole: appt.completedByRole,
-					scheduledForIso: timestampToIso(appt.scheduledFor),
-				},
-			});
-			auditId = payload.auditId;
-		}
-
-		const responseBody = auditId ? { ...result.body, auditId } : result.body;
-		return res.status(result.http).json(responseBody);
+		return res.status(result.http).json(result.body);
 	}
 );
+
+// Mantener endpoint de slots para compatibilidad mínima (mock simple)
+router.get('/slots', authMiddleware, requireClinicContext, async (_req: Request, res: Response) => {
+	return res.status(200).json({ success: true, data: { free: [], busy: [], slots: [] } });
+});
 
 export const appointmentsRouter = router;
