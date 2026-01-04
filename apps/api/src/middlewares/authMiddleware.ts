@@ -1,4 +1,4 @@
-import type { AuthContext, Role } from '../types/auth.js';
+import type { AuthContext } from '../types/auth.js';
 import type { NextFunction, Request, Response } from 'express';
 
 import { getFirebaseAdmin } from '../firebase/admin.js';
@@ -32,16 +32,12 @@ export async function authMiddleware(
 		// NO confiamos en nada del front. Verify real.
 		const decoded = await auth.verifyIdToken(token);
 
-		const role = decoded.role as Role | undefined;
-		const clinicId = decoded.clinicId as string | undefined;
-		const isPlatformAdmin = decoded.platformAdmin === true || role === 'platform_admin';
-
 		const ctx: AuthContext = {
 			uid: decoded.uid,
 			email: decoded.email ?? null,
-			isPlatformAdmin,
-			role: role ?? null,
-			clinicId: clinicId ?? null,
+			isPlatformAdmin: decoded.platformAdmin === true,
+			role: null,
+			clinicId: null,
 		};
 
 		req.auth = ctx;

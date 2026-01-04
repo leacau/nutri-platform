@@ -120,7 +120,6 @@ router.post('/seed', async (req: Request, res: Response) => {
 				phone: p.phone ?? null,
 				linkedUid: p.linkedUid ?? null,
 				assignedNutriUid: p.assignedNutriUid ?? null,
-				status: 'active',
 				createdAt: now,
 				updatedAt: now,
 			};

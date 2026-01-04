@@ -11,16 +11,13 @@ import { auth, firebaseConfig } from '../firebase';
 import type { Claims } from '../types/app';
 
 const getClaimsFromResult = (tokenRes: Awaited<ReturnType<typeof getIdTokenResult>>): Claims => {
-	const role = typeof tokenRes.claims.role === 'string' ? (tokenRes.claims.role as string) : null;
-	const clinicId = typeof tokenRes.claims.clinicId === 'string' ? (tokenRes.claims.clinicId as string) : null;
-	const isPlatformAdmin = tokenRes.claims.platformAdmin === true || role === 'platform_admin';
-	return { isPlatformAdmin, role, clinicId };
+	const isPlatformAdmin = tokenRes.claims.platformAdmin === true;
+	return { isPlatformAdmin };
 };
 
 type AuthSessionResult = {
 	user: User | null;
 	isPlatformAdmin: boolean;
-	claims: Claims;
 	sessionError: string | null;
 	login: (email: string, password: string) => Promise<{ ok: boolean; user?: User; error?: string }>;
 	register: (email: string, password: string) => Promise<{ ok: boolean; user?: User; error?: string }>;
@@ -36,7 +33,7 @@ export function useAuthSession(): AuthSessionResult {
 	}
 
 	const [user, setUser] = useState<User | null>(auth.currentUser);
-	const [claims, setClaims] = useState<Claims>({ isPlatformAdmin: false, role: null, clinicId: null });
+	const [claims, setClaims] = useState<Claims>({ isPlatformAdmin: false });
 	const [sessionError, setSessionError] = useState<string | null>(null);
 	const [idToken, setIdToken] = useState<string | null>(null);
 	const [tokenExpiryMs, setTokenExpiryMs] = useState<number | null>(null);
@@ -55,7 +52,7 @@ export function useAuthSession(): AuthSessionResult {
 			const currentUser = auth.currentUser;
 			if (!currentUser) {
 				setUser(null);
-				setClaims({ isPlatformAdmin: false, role: null, clinicId: null });
+				setClaims({ isPlatformAdmin: false });
 				setIdToken(null);
 				setTokenExpiryMs(null);
 				setSessionError(null);
@@ -173,7 +170,7 @@ export function useAuthSession(): AuthSessionResult {
 
 		await signOut(auth);
 		setUser(null);
-		setClaims({ isPlatformAdmin: false, role: null, clinicId: null });
+		setClaims({ isPlatformAdmin: false });
 		setIdToken(null);
 		setTokenExpiryMs(null);
 		clearRefreshTimer();
@@ -204,7 +201,6 @@ export function useAuthSession(): AuthSessionResult {
 	return {
 		user,
 		isPlatformAdmin: claims.isPlatformAdmin,
-		claims,
 		sessionError,
 		login,
 		register,
@@ -218,11 +214,7 @@ export function useAuthSession(): AuthSessionResult {
 function useMockAuthSession(): AuthSessionResult {
 	const [user, setUser] = useState<User | null>(null);
 	const [sessionError, setSessionError] = useState<string | null>(null);
-	const claims: Claims = {
-		isPlatformAdmin: false,
-		role: import.meta.env.VITE_E2E_ROLE ?? null,
-		clinicId: import.meta.env.VITE_E2E_CLINIC_ID ?? null,
-	};
+	const claims: Claims = { isPlatformAdmin: false };
 
 	const mockUser = useMemo(
 		() =>
@@ -275,7 +267,6 @@ function useMockAuthSession(): AuthSessionResult {
 	return {
 		user,
 		isPlatformAdmin: claims.isPlatformAdmin,
-		claims,
 		sessionError,
 		login,
 		register,

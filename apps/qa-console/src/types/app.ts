@@ -1,6 +1,6 @@
 import type { RoleCopy } from '../i18n';
 
-export type Claims = { isPlatformAdmin: boolean; role: string | null; clinicId: string | null };
+export type Claims = { isPlatformAdmin: boolean; role?: string | null; clinicId?: string | null };
 
 export type RoleTab = RoleCopy;
 

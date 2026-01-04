@@ -9,7 +9,6 @@ export type PatientPublic = {
 	phone: string | null;
 	linkedUid: string | null;
 	assignedNutriUid: string | null | undefined;
-	status?: string | null;
 	createdAt: unknown;
 	updatedAt: unknown;
 };
@@ -22,7 +21,6 @@ export type PatientStaffView = {
 	phone: string | null;
 	linkedUid: string | null;
 	assignedNutriUid: string | null | undefined;
-	status?: string | null;
 };
 
 export function sanitizePatientForRole(
@@ -39,7 +37,6 @@ export function sanitizePatientForRole(
 			phone: p.phone,
 			linkedUid: p.linkedUid,
 			assignedNutriUid: p.assignedNutriUid,
-			status: p.status,
 		};
 	}
 
@@ -52,7 +49,6 @@ export function sanitizePatientForRole(
 		phone: p.phone,
 		linkedUid: p.linkedUid,
 		assignedNutriUid: p.assignedNutriUid,
-		status: p.status,
 		createdAt: p.createdAt,
 		updatedAt: p.updatedAt,
 	};

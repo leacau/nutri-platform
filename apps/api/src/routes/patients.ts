@@ -19,16 +19,14 @@ const createPatientSchema = z.object({
 	name: z.string().min(2),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
-	assignedNutriUid: z.string().min(1),
-	status: z.enum(['active', 'inactive', 'discharged']).default('active'),
+	assignedNutriUid: z.string().min(1).optional().nullable(),
 });
 
 const patchPatientSchema = z.object({
 	name: z.string().min(2).optional(),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
-	assignedNutriUid: z.string().min(1).optional(),
-	status: z.enum(['active', 'inactive', 'discharged']).optional(),
+	assignedNutriUid: z.string().min(1).optional().nullable(),
 });
 
 const assignNutriSchema = z.object({
@@ -49,9 +47,17 @@ patientsRouter.get(
 		if (!auth) return res.status(401).json({ success: false, message: 'Unauthenticated' });
 
 		const db = getFirestoreDb();
-		const clinicId = auth.isPlatformAdmin
-			? req.auth?.clinicId ?? req.header('x-clinic-id') ?? null
-			: auth.clinicId;
+		let clinicId: string | null = auth.clinicId;
+
+		if (auth.isPlatformAdmin) {
+			clinicId = req.header('x-clinic-id') ?? (req.query.clinicId as string | undefined) ?? null;
+			if (!clinicId) {
+				return res.status(400).json({
+					success: false,
+					message: 'clinicId is required for platform admin listing',
+				});
+			}
+		}
 
 		if (!clinicId) {
 			return denyAuthz(req, res, 'Missing clinicId for clinic listing');
@@ -60,9 +66,6 @@ patientsRouter.get(
 		let query = db.collection('patients').where('clinicId', '==', clinicId);
 		if (auth.role === 'nutri') {
 			query = query.where('assignedNutriUid', '==', auth.uid);
-		}
-		if (auth.role === 'patient') {
-			query = query.where('linkedUid', '==', auth.uid);
 		}
 
 		const snap = await query.limit(100).get();
@@ -91,13 +94,13 @@ patientsRouter.post(
 			});
 		}
 
-		const clinicId = auth.isPlatformAdmin ? auth.clinicId ?? req.header('x-clinic-id') ?? null : auth.clinicId;
+		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
 		if (!clinicId) {
 			return denyAuthz(req, res, 'Missing clinic context when creating patient');
 		}
 
-		if (auth.role === 'staff') {
-			return denyAuthz(req, res, 'Staff cannot set assignedNutriUid');
+		if (auth.role === 'staff' && parsed.data.assignedNutriUid !== undefined) {
+			return denyAuthz(req, res, 'Staff cannot assign nutri on creation');
 		}
 
 		const now = Timestamp.now();
@@ -108,7 +111,7 @@ patientsRouter.post(
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
-			status: parsed.data.status ?? 'active',
+			assignedNutriUid: parsed.data.assignedNutriUid ?? null,
 			createdAt: now,
 			updatedAt: now,
 		};

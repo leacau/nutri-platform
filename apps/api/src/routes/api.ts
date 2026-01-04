@@ -3,11 +3,6 @@ import { devRouter } from './dev.js';
 import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
 import { clinicsRouter } from './clinics.js';
-import { patientProfilesRouter } from './patientProfiles.js';
-import { visitsRouter } from './visits.js';
-import { metricsRouter } from './metrics.js';
-import { plansRouter } from './plans.js';
-import { notesRouter } from './notes.js';
 import { logEvent } from '../observability/eventLogger.js';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
@@ -76,21 +71,6 @@ apiRouter.use('/appointments', appointmentsRouter);
 
 // Clinics
 apiRouter.use('/clinics', clinicsRouter);
-
-// Patient profiles
-apiRouter.use('/patient-profiles', patientProfilesRouter);
-
-// Visits
-apiRouter.use('/visits', visitsRouter);
-
-// Metrics
-apiRouter.use('/metrics', metricsRouter);
-
-// Plans
-apiRouter.use('/plans', plansRouter);
-
-// Notes
-apiRouter.use('/notes', notesRouter);
 
 // DEV only
 apiRouter.use('/dev', devRouter);

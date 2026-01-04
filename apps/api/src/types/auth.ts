@@ -1,6 +1,6 @@
 export type ClinicRole = 'clinic_admin' | 'nutri' | 'staff';
 
-export type Role = ClinicRole | 'platform_admin' | 'patient';
+export type Role = ClinicRole | 'platform_admin';
 
 export type AuthContext = {
 	uid: string;

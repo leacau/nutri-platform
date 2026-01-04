@@ -46,10 +46,9 @@ export default function App() {
 		if (stored && supportedLocales.includes(stored as Locale)) return stored as Locale;
 		return 'es';
 	});
-	const {
+const {
 		user,
 		isPlatformAdmin,
-		claims,
 		sessionError,
 		login,
 		register,
@@ -60,7 +59,7 @@ export default function App() {
 
 	const [sessionClinics, setSessionClinics] = useState<Membership[]>([]);
 	const [activeClinicId, setActiveClinicId] = useState<string | null>(() => {
-		return window.localStorage.getItem('qa-active-clinic') || null;
+		return window.localStorage.getItem('qa-active-clinic');
 	});
 	const activeMembership = useMemo(
 		() => sessionClinics.find((c) => c.clinicId === activeClinicId) ?? null,
@@ -98,27 +97,6 @@ export default function App() {
 	const [appointments, setAppointments] = useState<any[]>([]);
 	const [appointmentsLoading, setAppointmentsLoading] = useState(false);
 	const [scheduleForms, setScheduleForms] = useState<Record<string, ScheduleForm>>({});
-	const [profilePatientId, setProfilePatientId] = useState('');
-	const [profileData, setProfileData] = useState<Record<string, any>>({});
-	const [visitForm, setVisitForm] = useState<{ patientId: string; reason: string; notes: string }>({
-		patientId: '',
-		reason: '',
-		notes: '',
-	});
-	const [metricForm, setMetricForm] = useState<{ patientId: string; weightKg: string }>({
-		patientId: '',
-		weightKg: '',
-	});
-	const [planForm, setPlanForm] = useState<{ patientId: string; nutriUid: string; type: string }>({
-		patientId: '',
-		nutriUid: '',
-		type: 'weight_loss',
-	});
-	const [noteForm, setNoteForm] = useState<{ patientId: string; content: string; visibility: 'private' | 'shared' }>({
-		patientId: '',
-		content: '',
-		visibility: 'private',
-	});
 
 	function pushLog(entry: Omit<ApiLog, 'id' | 'ts'>) {
 		setLogs((prev) => [
@@ -142,7 +120,7 @@ export default function App() {
 			Authorization: `Bearer ${token}`,
 		};
 		if (body !== undefined) headers['Content-Type'] = 'application/json';
-		if (opts?.includeClinicHeader !== false && activeClinicId && isPlatformAdmin) {
+		if (opts?.includeClinicHeader !== false && activeClinicId) {
 			headers['X-Clinic-Id'] = activeClinicId;
 		}
 
@@ -213,12 +191,6 @@ export default function App() {
 			setActiveClinicId(null);
 		}
 	}, [user]);
-
-	useEffect(() => {
-		if (claims.clinicId && !activeClinicId) {
-			setActiveClinicId(claims.clinicId);
-		}
-	}, [claims.clinicId, activeClinicId]);
 
 	const handleLogin = async (action: 'login' | 'register') => {
 		setAuthPending(true);
@@ -363,53 +335,6 @@ export default function App() {
 		else setAuthMessage(res.error ?? 'No se pudo cancelar');
 	};
 
-	const loadProfile = async () => {
-		if (!profilePatientId) return;
-		const res = await authedFetch('GET', `/patient-profiles/${profilePatientId}`);
-		if (res.ok) setProfileData(res.data?.data ?? {});
-	};
-
-	const saveProfile = async () => {
-		if (!profilePatientId) return;
-		const res = await authedFetch('PUT', `/patient-profiles/${profilePatientId}`, profileData);
-		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo guardar perfil');
-	};
-
-	const createVisit = async () => {
-		const res = await authedFetch('POST', '/visits', {
-			patientId: visitForm.patientId,
-			reason: visitForm.reason,
-			clinicalNotes: visitForm.notes,
-		});
-		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear visita');
-	};
-
-	const createMetric = async () => {
-		const res = await authedFetch('POST', '/metrics', {
-			patientId: metricForm.patientId,
-			weightKg: metricForm.weightKg ? Number(metricForm.weightKg) : null,
-		});
-		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear métrica');
-	};
-
-	const createPlan = async () => {
-		const res = await authedFetch('POST', '/plans', {
-			patientId: planForm.patientId,
-			nutriUid: planForm.nutriUid,
-			type: planForm.type,
-		});
-		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear plan');
-	};
-
-	const createNote = async () => {
-		const res = await authedFetch('POST', '/notes', {
-			patientId: noteForm.patientId,
-			content: noteForm.content,
-			visibility: noteForm.visibility,
-		});
-		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear nota');
-	};
-
 	useEffect(() => {
 		if (activeClinicId) {
 			window.localStorage.setItem('qa-active-clinic', activeClinicId);
@@ -491,31 +416,25 @@ export default function App() {
 					)}
 				</div>
 				{authMessage && <p className='error-text'>{authMessage}</p>}
-					{sessionError && (
-						<p className='error-text'>
-							{sessionError}{' '}
-							<button className='link' onClick={clearSessionError}>
-								OK
-							</button>
-						</p>
-					)}
-					<div className='inline-info'>
-						<div>
-							<strong>UID</strong> <code>{user?.uid ?? '—'}</code>
-						</div>
-						<div>
-							<strong>Platform admin</strong> {isPlatformAdmin ? 'sí' : 'no'}
-						</div>
-						<div>
-							<strong>Role claim</strong> {claims.role ?? '—'}
-						</div>
-						<div>
-							<strong>clinicId claim</strong> {claims.clinicId ?? '—'}
-						</div>
+				{sessionError && (
+					<p className='error-text'>
+						{sessionError}{' '}
+						<button className='link' onClick={clearSessionError}>
+							OK
+						</button>
+					</p>
+				)}
+				<div className='inline-info'>
+					<div>
+						<strong>UID</strong> <code>{user?.uid ?? '—'}</code>
+					</div>
+					<div>
+						<strong>Platform admin</strong> {isPlatformAdmin ? 'sí' : 'no'}
 					</div>
 				</div>
 			</div>
-		);
+		</div>
+	);
 
 	const Dashboard = (
 		<div className='page'>
@@ -735,121 +654,6 @@ export default function App() {
 							);
 						})}
 					</div>
-				</div>
-			</div>
-
-			<div className='grid two'>
-				<div className='card'>
-					<h3>Perfil del paciente</h3>
-					<div className='field'>
-						<span>PatientId</span>
-						<input value={profilePatientId} onChange={(e) => setProfilePatientId(e.target.value)} />
-					</div>
-					<div className='actions'>
-						<button className='btn ghost' onClick={loadProfile} disabled={!profilePatientId}>
-							Cargar perfil
-						</button>
-						<button className='btn' onClick={saveProfile} disabled={!profilePatientId}>
-							Guardar perfil
-						</button>
-					</div>
-					<textarea
-						value={JSON.stringify(profileData, null, 2)}
-						onChange={(e) => {
-							try {
-								setProfileData(JSON.parse(e.target.value));
-							} catch {
-								// ignore parse errors
-							}
-						}}
-						rows={8}
-					/>
-				</div>
-
-				<div className='card'>
-					<h3>Visitas y métricas</h3>
-					<div className='field'>
-						<span>PatientId</span>
-						<input
-							value={visitForm.patientId}
-							onChange={(e) => {
-								setVisitForm((p) => ({ ...p, patientId: e.target.value }));
-								setMetricForm((m) => ({ ...m, patientId: e.target.value }));
-								setPlanForm((pl) => ({ ...pl, patientId: e.target.value }));
-								setNoteForm((n) => ({ ...n, patientId: e.target.value }));
-							}}
-						/>
-					</div>
-					<div className='field'>
-						<span>Motivo</span>
-						<input value={visitForm.reason} onChange={(e) => setVisitForm((p) => ({ ...p, reason: e.target.value }))} />
-					</div>
-					<div className='field'>
-						<span>Notas clínicas</span>
-						<textarea value={visitForm.notes} onChange={(e) => setVisitForm((p) => ({ ...p, notes: e.target.value }))} />
-					</div>
-					<div className='actions wrap'>
-						<button className='btn' onClick={createVisit}>
-							Crear visita
-						</button>
-						<div className='field-inline'>
-							<span className='muted small'>Peso (kg)</span>
-							<input
-								value={metricForm.weightKg}
-								onChange={(e) => setMetricForm((p) => ({ ...p, weightKg: e.target.value }))}
-								style={{ width: '120px' }}
-							/>
-						</div>
-						<button className='btn ghost' onClick={createMetric}>
-							Crear métrica
-						</button>
-					</div>
-				</div>
-			</div>
-
-			<div className='grid two'>
-				<div className='card'>
-					<h3>Plan nutricional</h3>
-					<div className='field'>
-						<span>PatientId</span>
-						<input value={planForm.patientId} onChange={(e) => setPlanForm((p) => ({ ...p, patientId: e.target.value }))} />
-					</div>
-					<div className='field'>
-						<span>Nutri UID</span>
-						<input value={planForm.nutriUid} onChange={(e) => setPlanForm((p) => ({ ...p, nutriUid: e.target.value }))} />
-					</div>
-					<div className='field'>
-						<span>Tipo</span>
-						<input value={planForm.type} onChange={(e) => setPlanForm((p) => ({ ...p, type: e.target.value }))} />
-					</div>
-					<button className='btn' onClick={createPlan}>
-						Crear plan
-					</button>
-				</div>
-
-				<div className='card'>
-					<h3>Notas clínicas</h3>
-					<div className='field'>
-						<span>PatientId</span>
-						<input value={noteForm.patientId} onChange={(e) => setNoteForm((p) => ({ ...p, patientId: e.target.value }))} />
-					</div>
-					<div className='field'>
-						<span>Contenido</span>
-						<textarea value={noteForm.content} onChange={(e) => setNoteForm((p) => ({ ...p, content: e.target.value }))} />
-					</div>
-					<div className='field-inline'>
-						<span className='muted small'>Visibilidad</span>
-						<select
-							value={noteForm.visibility}
-							onChange={(e) => setNoteForm((p) => ({ ...p, visibility: e.target.value as 'private' | 'shared' }))}
-						>
-							<option value='private'>Privada</option>
-							<option value='shared'>Compartida</option>
-						</select>
-					</div>
-					<button className='btn' onClick={createNote}>
-						Crear nota
-					</button>
 				</div>
 			</div>
 

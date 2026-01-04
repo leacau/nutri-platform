@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
+import { requirePatientLink } from '../middlewares/requirePatientLink.js';
 import { denyAuthz } from '../security/authz.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { AppointmentDoc, AppointmentStatus } from '../types/appointments.js';
@@ -84,36 +85,14 @@ function canCancelWith24hRule(
 	return { ok: true };
 }
 
-router.post('/request', authMiddleware, requireRole('patient', 'platform_admin'), async (req: Request, res: Response) => {
+router.post('/request', authMiddleware, requirePatientLink, async (req: Request, res: Response) => {
 	const auth = req.auth!;
+	const patientCtx = req.patientContext!;
 	const db = getFirestoreDb();
-
-	if (!auth.clinicId && !auth.isPlatformAdmin) {
-		return denyAuthz(req, res, 'Missing clinicId claim for appointment request');
-	}
-	const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
-	if (!clinicId) {
-		return denyAuthz(req, res, 'clinicId is required to request appointment');
-	}
-
-	const patientSnap = await db
-		.collection('patients')
-		.where('clinicId', '==', clinicId)
-		.where('linkedUid', '==', auth.uid)
-		.limit(1)
-		.get();
-
-	if (patientSnap.empty) {
-		return denyAuthz(req, res, 'No patient linked for this user in clinic');
-	}
-	const patientDoc = patientSnap.docs[0];
-	if (!patientDoc) {
-		return res.status(500).json({ success: false, message: 'Failed to resolve patient link' });
-	}
 
 	const existing = await db
 		.collection('appointments')
-		.where('clinicId', '==', clinicId)
+		.where('clinicId', '==', patientCtx.clinicId)
 		.where('patientUid', '==', auth.uid)
 		.where('status', '==', 'requested')
 		.limit(1)
@@ -133,8 +112,8 @@ router.post('/request', authMiddleware, requireRole('patient', 'platform_admin')
 
 	const now = Timestamp.now();
 	const doc: AppointmentDoc = {
-		clinicId,
-		patientId: patientDoc.id,
+		clinicId: patientCtx.clinicId,
+		patientId: patientCtx.patientId,
 		patientUid: auth.uid,
 		nutriUid: null,
 		status: 'requested',
@@ -154,8 +133,8 @@ router.post('/request', authMiddleware, requireRole('patient', 'platform_admin')
 
 	logEvent('appointment_requested', {
 		req,
-		clinicId,
-			data: { appointmentId: ref.id, patientId: patientDoc.id },
+		clinicId: patientCtx.clinicId,
+		data: { appointmentId: ref.id, patientId: patientCtx.patientId },
 	});
 
 	return res.status(201).json({
@@ -189,10 +168,14 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		return res.status(200).json({ success: true, data: items });
 	}
 
-	const clinicId = (auth.clinicId ?? clinicIdHeader) as string | null;
-	if (!clinicId) {
-		return res.status(400).json({ success: false, message: 'clinicId is required to list appointments' });
+	if (!clinicIdHeader) {
+		return res.status(400).json({
+			success: false,
+			message: 'X-Clinic-Id header is required',
+		});
 	}
+
+	const clinicId = clinicIdHeader as string;
 	const membership = await getMembership(db, clinicId, auth.uid);
 	if (membership) {
 		const role = membership.role;
@@ -211,14 +194,14 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		return res.status(200).json({ success: true, data: items });
 	}
 
-		const patient = await getPatientLink(db, clinicId, auth.uid);
-		if (patient) {
-			const snap = await db
-				.collection('appointments')
-				.where('clinicId', '==', clinicId)
-				.where('patientUid', '==', auth.uid)
-				.orderBy('createdAt', 'desc')
-				.limit(50)
+	const patient = await getPatientLink(db, clinicId, auth.uid);
+	if (patient) {
+		const snap = await db
+			.collection('appointments')
+			.where('clinicId', '==', clinicIdHeader)
+			.where('patientUid', '==', auth.uid)
+			.orderBy('createdAt', 'desc')
+			.limit(50)
 			.get();
 		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as AppointmentDoc) }));
 		return res.status(200).json({ success: true, data: items });
@@ -234,22 +217,20 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 router.post(
 	'/:id/schedule',
 	authMiddleware,
-	requireClinicContext,
-	requireRole('clinic_admin', 'staff', 'nutri'),
-	async (req: Request, res: Response) => {
-		const auth = req.auth!;
-		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
-		if (!clinicId) return denyAuthz(req, res, 'Missing clinicId for scheduling');
-
-		const apptId = req.params.id;
-		if (!apptId) {
-			return res.status(400).json({ success: false, message: 'Missing appointment id' });
-		}
-		const parsedBody = scheduleBodySchema.safeParse(req.body ?? {});
-		if (!parsedBody.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid body',
+		requireClinicContext,
+		requireRole('clinic_admin', 'staff', 'nutri'),
+		async (req: Request, res: Response) => {
+			const auth = req.auth!;
+			const clinicId = auth.clinicId!;
+			const apptId = req.params.id;
+			if (!apptId) {
+				return res.status(400).json({ success: false, message: 'Missing appointment id' });
+			}
+			const parsedBody = scheduleBodySchema.safeParse(req.body ?? {});
+			if (!parsedBody.success) {
+				return res.status(400).json({
+					success: false,
+					message: 'Invalid body',
 				errors: parsedBody.error.flatten(),
 			});
 		}
@@ -260,10 +241,10 @@ router.post(
 				success: false,
 				message: 'scheduledFor must be a valid ISO date string',
 			});
-		}
+			}
 
-		const db = getFirestoreDb();
-		const ref = db.collection('appointments').doc(apptId);
+			const db = getFirestoreDb();
+			const ref = db.collection('appointments').doc(apptId);
 
 		const result = await db.runTransaction(async (tx) => {
 			const snap = await tx.get(ref);
@@ -338,9 +319,10 @@ router.post('/:id/cancel', authMiddleware, async (req: Request, res: Response) =
 
 	if (auth.isPlatformAdmin) {
 		// allowed
+	} else if (!clinicIdHeader) {
+		return res.status(400).json({ success: false, message: 'Missing X-Clinic-Id header' });
 	} else {
-		const clinicId = (auth.clinicId ?? clinicIdHeader) as string | null;
-		if (!clinicId) return res.status(400).json({ success: false, message: 'Missing clinicId for cancel' });
+		const clinicId = clinicIdHeader as string;
 		const membership = await getMembership(db, clinicId, auth.uid);
 		const patient = await getPatientLink(db, clinicId, auth.uid);
 
@@ -401,18 +383,17 @@ router.post('/:id/cancel', authMiddleware, async (req: Request, res: Response) =
 router.post(
 	'/:id/complete',
 	authMiddleware,
-	requireClinicContext,
-	requireRole('clinic_admin', 'staff', 'nutri'),
-	async (req: Request, res: Response) => {
-		const auth = req.auth!;
-		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
-		if (!clinicId) return denyAuthz(req, res, 'Missing clinicId when completing appointment');
-		const apptId = req.params.id;
-		if (!apptId) {
-			return res.status(400).json({ success: false, message: 'Missing appointment id' });
-		}
-		const db = getFirestoreDb();
-		const ref = db.collection('appointments').doc(apptId);
+		requireClinicContext,
+		requireRole('clinic_admin', 'staff', 'nutri'),
+		async (req: Request, res: Response) => {
+			const auth = req.auth!;
+			const clinicId = auth.clinicId!;
+			const apptId = req.params.id;
+			if (!apptId) {
+				return res.status(400).json({ success: false, message: 'Missing appointment id' });
+			}
+			const db = getFirestoreDb();
+			const ref = db.collection('appointments').doc(apptId);
 
 		const result = await db.runTransaction(async (tx) => {
 			const snap = await tx.get(ref);

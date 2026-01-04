@@ -5,7 +5,6 @@ declare global {
 		interface Request {
 			auth?: AuthContext;
 			patientContext?: PatientContext;
-			audit?: { clinicOverride?: string | null };
 		}
 	}
 }
