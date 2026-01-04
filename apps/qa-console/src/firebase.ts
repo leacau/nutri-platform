@@ -1,12 +1,9 @@
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 
 import { initializeApp } from 'firebase/app';
+import { APP_ENV, FIREBASE_CLIENT_CONFIG } from './config/env';
 
-export const firebaseConfig = {
-	apiKey: 'fake-api-key',
-	authDomain: 'demo-nutri-platform.firebaseapp.com',
-	projectId: 'demo-nutri-platform',
-};
+export const firebaseConfig = FIREBASE_CLIENT_CONFIG;
 
 const app = initializeApp(firebaseConfig);
 
@@ -20,7 +17,7 @@ declare global {
 	}
 }
 
-if (!import.meta.env.PROD) {
+if (APP_ENV !== 'prod') {
 	if (!window.__NUTRI_AUTH_EMU_CONNECTED__) {
 		connectAuthEmulator(auth, 'http://127.0.0.1:9099', {
 			disableWarnings: true,
