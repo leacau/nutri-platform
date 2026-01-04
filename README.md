@@ -1,12 +1,12 @@
 # Nutri Platform (modo demo)
 
-Guía rápida para levantar los emuladores de Firebase, sembrar datos de prueba y ejecutar el backend + frontend en modo demo local.
+Frontend y backend para AMSA Core. Incluye el nuevo front en Next.js (App Router) con Firebase Auth, multi-clínica y shadcn/ui.
 
 ## Requisitos
 
 - Node.js 20+
 - npm 10+
-- Firebase CLI instalado (`npm i -g firebase-tools`) para los emuladores.
+- Firebase CLI (`npm i -g firebase-tools`) para los emuladores.
 
 ## Instalación
 
@@ -14,7 +14,9 @@ Guía rápida para levantar los emuladores de Firebase, sembrar datos de prueba 
 npm install
 ```
 
-Creá un archivo `.env` en la raíz con las variables mínimas para el backend:
+### Variables de entorno
+
+Backend (`.env` en la raíz):
 
 ```
 FIREBASE_PROJECT_ID=demo-nutri-platform
@@ -24,13 +26,27 @@ DEV_ADMIN_SECRET=local-dev-secret
 PORT=8081
 ```
 
-Para el frontend (`apps/qa-console`) definí la URL del backend (sirve desde Vite):
+Frontend AMSA Core (`apps/web/.env.local`, hay plantilla en `.env.example`):
+
+```
+NEXT_PUBLIC_API_BASE_URL=/api       # proxy local hacia backend
+BACKEND_PROXY_TARGET=http://localhost:8081
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-nutri-platform
+NEXT_PUBLIC_FIREBASE_API_KEY=demo-key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-nutri-platform.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-nutri-platform.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=1234567890
+NEXT_PUBLIC_FIREBASE_APP_ID=1:1234567890:web:demo
+NEXT_PUBLIC_USE_EMULATORS=true
+NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+NEXT_PUBLIC_ENV=dev
+```
+
+QA Console (`apps/qa-console/.env.local`):
 
 ```
 VITE_API_BASE_URL=http://localhost:8081
 ```
-
-Guardalo como `apps/qa-console/.env.local` o exportalo en tu shell antes de correr Vite.
 
 ## Emuladores + seed
 
@@ -40,7 +56,7 @@ Guardalo como `apps/qa-console/.env.local` o exportalo en tu shell antes de corr
     npm run emulators
     ```
 
-2. En otra terminal, cargá el seed para dejar datos listos en el emulador:
+2. Cargá el seed para dejar datos listos en el emulador:
 
     ```bash
     npm run seed:emu
@@ -61,12 +77,13 @@ Guardalo como `apps/qa-console/.env.local` o exportalo en tu shell antes de corr
 
 Reejecutá el seed cada vez que quieras resetear los datos del emulador.
 
-## Ejecutar backend y frontend en modo demo
+## Ejecutar backend y frontends
 
 - Backend API (usa `.env`): `npm run dev:api`
-- Frontend QA console (usa `apps/qa-console/.env.local`): `npm run dev:qa`
+- Frontend AMSA Core (Next.js App Router): `npm run dev:web`
+- QA console (modo debug): `npm run dev:qa`
 
-Si ya tenés las variables configuradas podés levantar todo junto con:
+Para todo junto (emuladores + API + AMSA Core):
 
 ```bash
 npm run dev

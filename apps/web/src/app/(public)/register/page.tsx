@@ -1,0 +1,86 @@
+"use client";
+
+import Link from "next/link";
+import { z } from "zod";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
+import { UserPlus } from "lucide-react";
+import { useState } from "react";
+import { Button } from "../../../components/ui/button";
+import { Input } from "../../../components/ui/input";
+import { Label } from "../../../components/ui/label";
+import { useAuth } from "../../../providers/auth-provider";
+import { useI18n } from "../../../providers/i18n-provider";
+
+const schema = z.object({
+  name: z.string().min(2, "Ingresá tu nombre"),
+  email: z.string().email(),
+  password: z.string().min(6),
+});
+
+type RegisterForm = z.infer<typeof schema>;
+
+export default function RegisterPage() {
+  const { registerWithEmail } = useAuth();
+  const router = useRouter();
+  const { t } = useI18n();
+  const [error, setError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    formState: { isSubmitting },
+  } = useForm<RegisterForm>({
+    resolver: zodResolver(schema),
+  });
+
+  const onSubmit = async (data: RegisterForm) => {
+    setError(null);
+    try {
+      await registerWithEmail(data.email, data.password);
+      router.push("/select-clinic");
+    } catch (err) {
+      console.error(err);
+      setError("No pudimos crear la cuenta. Probá con otro email.");
+    }
+  };
+
+  return (
+    <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center px-6 py-12">
+      <div className="mb-8 space-y-2 text-center">
+        <div className="inline-flex items-center gap-2 rounded-full bg-secondary/10 px-4 py-1 text-xs font-semibold text-secondary">
+          Onboarding
+        </div>
+        <h1 className="text-3xl font-semibold text-primary">Creá tu cuenta</h1>
+        <p className="text-sm text-muted-foreground">
+          {t("auth.subtitle")} Elegí contraseña segura y luego vinculá tu clínica.
+        </p>
+      </div>
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 rounded-xl border bg-card p-8 shadow-sm">
+        <div className="space-y-2">
+          <Label htmlFor="name">{t("auth.name")}</Label>
+          <Input id="name" placeholder="Tu nombre" {...register("name")} required />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="email">{t("auth.email")}</Label>
+          <Input id="email" placeholder="vos@amsa.core" type="email" {...register("email")} required />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password">{t("auth.password")}</Label>
+          <Input id="password" placeholder="•••••••" type="password" {...register("password")} required />
+        </div>
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
+          <UserPlus className="mr-2 h-4 w-4" />
+          {t("action.register")}
+        </Button>
+      </form>
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        ¿Ya tenés cuenta?{" "}
+        <Link href="/login" className="text-primary hover:underline">
+          {t("action.login")}
+        </Link>
+      </p>
+    </div>
+  );
+}
