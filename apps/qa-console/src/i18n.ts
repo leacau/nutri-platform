@@ -57,6 +57,7 @@ type Translation = {
 		infoClaims: string;
 		notLogged: string;
 		refreshClaims: string;
+		legalNotice: string;
 		errors: {
 			emailRequired: string;
 			emailInvalid: string;
@@ -125,6 +126,7 @@ type Translation = {
 			empty: string;
 			loading: string;
 			loadingHint: string;
+			legalNotice: string;
 		};
 		appointments: {
 			title: string;
@@ -217,6 +219,7 @@ type Translation = {
 				title: string;
 				cancel: string;
 				complete: string;
+				auditRef: string;
 			};
 			loading: string;
 			loadingHint: string;
@@ -300,6 +303,7 @@ type Translation = {
 		appointmentCancelError: string;
 		appointmentCompleted: string;
 		appointmentCompleteError: string;
+		auditLogged: string;
 	};
 	errors: {
 		unauthenticated: string;
@@ -403,6 +407,7 @@ const translations: Record<Locale, Translation> = {
 			infoClaims: 'Claims:',
 			notLogged: 'no logueado',
 			refreshClaims: 'Refrescar claims',
+			legalNotice: 'Usá solo datos de prueba. Las acciones sensibles quedan registradas para auditoría y verificación.',
 			errors: {
 				emailRequired: 'Ingresá un email',
 				emailInvalid: 'Ingresá un email válido',
@@ -476,6 +481,7 @@ const translations: Record<Locale, Translation> = {
 			empty: 'Sin pacientes aún. Creá un paciente y refrescá la lista.',
 			loading: 'Cargando pacientes...',
 			loadingHint: 'Traemos la lista desde el backend. Podés seguir editando otros campos mientras tanto.',
+			legalNotice: 'Cargá solo datos ficticios o anonimizados. La creación enlaza tu cuenta si sos paciente y registra las acciones sensibles.',
 		},
 		appointments: {
 			title: 'Turnos',
@@ -574,6 +580,7 @@ const translations: Record<Locale, Translation> = {
 					title: 'Acciones rápidas',
 					cancel: 'Cancelar',
 					complete: 'Completar',
+					auditRef: 'Referencia de auditoría: {{id}}',
 				},
 				loading: 'Cargando turnos...',
 				loadingHint: 'Actualizamos el listado y los estados. Podés seguir navegando.',
@@ -663,6 +670,7 @@ const translations: Record<Locale, Translation> = {
 			appointmentCancelError: 'No se pudo cancelar el turno',
 			appointmentCompleted: 'Turno completado',
 			appointmentCompleteError: 'No se pudo completar el turno',
+			auditLogged: 'Auditoría registrada (ref {{id}})',
 		},
 		errors: {
 			unauthenticated: 'Usuario no autenticado',
@@ -764,6 +772,7 @@ const translations: Record<Locale, Translation> = {
 			infoClaims: 'Claims:',
 			notLogged: 'not logged in',
 			refreshClaims: 'Refresh claims',
+			legalNotice: 'Use test data only. Sensitive actions are logged for audit with a visible reference.',
 			errors: {
 				emailRequired: 'Enter an email',
 				emailInvalid: 'Enter a valid email',
@@ -837,6 +846,7 @@ const translations: Record<Locale, Translation> = {
 			empty: 'No patients yet. Create one and refresh the list.',
 			loading: 'Loading patients...',
 			loadingHint: 'Fetching the list from the backend. You can keep editing other fields meanwhile.',
+			legalNotice: 'Use fake or anonymised data only. If you are a patient, creation links your account and sensitive actions are tracked.',
 		},
 		appointments: {
 			title: 'Appointments',
@@ -935,6 +945,7 @@ const translations: Record<Locale, Translation> = {
 					title: 'Quick actions',
 					cancel: 'Cancel',
 					complete: 'Complete',
+					auditRef: 'Audit reference: {{id}}',
 				},
 				loading: 'Loading appointments...',
 				loadingHint: 'Refreshing the list and states. You can continue browsing.',
@@ -1024,6 +1035,7 @@ const translations: Record<Locale, Translation> = {
 			appointmentCancelError: 'Could not cancel appointment',
 			appointmentCompleted: 'Appointment completed',
 			appointmentCompleteError: 'Could not complete appointment',
+			auditLogged: 'Audit logged (ref {{id}})',
 		},
 		errors: {
 			unauthenticated: 'User not authenticated',
