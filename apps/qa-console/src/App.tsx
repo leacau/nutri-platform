@@ -30,6 +30,7 @@ import {
 	isValidPhone,
 	toIsoFromDatetimeLocal,
 } from './utils/validation';
+import { createE2EStubApi } from './utils/e2eStubApi';
 
 type ProtectedProps = {
 	user: User | null;
@@ -141,6 +142,7 @@ function ProtectedRoute({ user, children }: ProtectedProps) {
 
 export default function App() {
 	const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
+	const useE2EStubApi = import.meta.env.VITE_E2E_API_STUB === 'true';
 
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -630,6 +632,8 @@ export default function App() {
 		}, 3800);
 	}
 
+	const e2eApi = useMemo(() => (useE2EStubApi ? createE2EStubApi() : null), [useE2EStubApi]);
+
 	async function authedFetch(
 		method: 'GET' | 'POST' | 'PATCH',
 		endpoint: string,
@@ -640,6 +644,33 @@ export default function App() {
 			logManual({ endpoint, payload: body, ok: false, status: 401, error });
 			return { ok: false, status: 401, data: null, error, attempts: 0, durationMs: 0 };
 		}
+
+		if (useE2EStubApi && e2eApi) {
+			const stubResult = e2eApi.handle(method, endpoint, body);
+			appendLog({
+				id: createLogId(),
+				ts: nowIso(),
+				method,
+				endpoint,
+				url: endpoint,
+				ok: stubResult.ok,
+				status: stubResult.status,
+				durationMs: stubResult.durationMs,
+				attempt: stubResult.attempts,
+				retries: Math.max(0, stubResult.attempts - 1),
+				request: body ? { body } : undefined,
+				response: stubResult.ok ? { body: stubResult.data } : undefined,
+				error: stubResult.ok ? undefined : stubResult.error,
+			});
+			if (stubResult.ok) {
+				setBackendState('online');
+				return stubResult;
+			}
+			setApiErrorCount((prev) => prev + 1);
+			setBackendState('degraded');
+			return stubResult;
+		}
+
 		const token = await getValidIdToken();
 		if (!token) {
 			const error = sessionError ?? copy.errors.unauthenticated;
