@@ -97,6 +97,7 @@ export default function AuthPage({
 						inputMode='email'
 						pattern={EMAIL_PATTERN.source}
 						ref={(el) => setAuthFieldRef('email', el)}
+						autoFocus
 						value={email}
 						onFocus={() => setStickyAuthField('email')}
 						onChange={(e) => {

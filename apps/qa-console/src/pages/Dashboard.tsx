@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, type RefObject } from 'react';
 import type { User } from 'firebase/auth';
 import type { Dispatch, SetStateAction } from 'react';
 import type { getCopy } from '../i18n';
@@ -11,6 +11,7 @@ import type {
 	RoleTab,
 } from '../types/app';
 import { DATETIME_LOCAL_PATTERN, EMAIL_PATTERN, PHONE_PATTERN } from '../utils/validation';
+import { StateBlock } from '../components';
 
 type Copy = ReturnType<typeof getCopy>;
 
@@ -51,12 +52,14 @@ type DashboardProps = {
 	clinicOptions: string[];
 	handleCreatePatient: () => Promise<void>;
 	patients: unknown[];
+	patientsLoading: boolean;
 	patientAssignSelections: Record<string, string>;
 	setPatientAssignSelections: Dispatch<SetStateAction<Record<string, string>>>;
 	knownNutris: string[];
 	handleAssignNutri: (patientId: string) => Promise<void>;
 	handleListPatients: () => Promise<void>;
 	appointments: unknown[];
+	appointmentsLoading: boolean;
 	handleScheduleAppointment: (apptId: string) => Promise<void>;
 	apptRequestNutriUid: string;
 	setApptRequestNutriUid: Dispatch<SetStateAction<string>>;
@@ -92,6 +95,9 @@ type DashboardProps = {
 	toIsoFromDatetimeLocal: (value: string) => string | null;
 	setConfirmAction: Dispatch<SetStateAction<ConfirmAction | null>>;
 	reversedLogs: LogEntry[];
+	patientNameInputRef: RefObject<HTMLInputElement>;
+	apptNutriSelectRef: RefObject<HTMLSelectElement>;
+	apptFromInputRef: RefObject<HTMLInputElement>;
 };
 
 export default function Dashboard({
@@ -124,12 +130,14 @@ export default function Dashboard({
 	clinicOptions,
 	handleCreatePatient,
 	patients,
+	patientsLoading,
 	patientAssignSelections,
 	setPatientAssignSelections,
 	knownNutris,
 	handleAssignNutri,
 	handleListPatients,
 	appointments,
+	appointmentsLoading,
 	handleScheduleAppointment,
 	apptRequestNutriUid,
 	setApptRequestNutriUid,
@@ -162,6 +170,9 @@ export default function Dashboard({
 	toIsoFromDatetimeLocal,
 	setConfirmAction,
 	reversedLogs,
+	patientNameInputRef,
+	apptNutriSelectRef,
+	apptFromInputRef,
 }: DashboardProps) {
 	const role = claims.role;
 	const canClinic = role === 'clinic_admin' || role === 'nutri' || role === 'staff';
@@ -187,6 +198,18 @@ export default function Dashboard({
 	const backendLastChecked = backendStatus.lastChecked
 		? copy.dashboard.backend.lastChecked.replace('{{time}}', toReadableDate(backendStatus.lastChecked))
 		: copy.dashboard.backend.notChecked;
+	const shortcuts = copy.dashboard.shortcuts.items;
+
+	useEffect(() => {
+		patientNameInputRef.current?.focus({ preventScroll: true });
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	useEffect(() => {
+		if (appointments.length === 0) {
+			(apptNutriSelectRef.current ?? apptFromInputRef.current)?.focus({ preventScroll: true });
+		}
+	}, [appointments.length, apptFromInputRef, apptNutriSelectRef]);
 	const handleRoleTabKeyDown = (
 		event: React.KeyboardEvent<HTMLButtonElement>,
 		index: number
@@ -227,28 +250,43 @@ export default function Dashboard({
 				</div>
 			</header>
 
-			<div className='status-banner'>
-				<div className='status-banner__head'>
-					<div>
-						<p className='eyebrow'>{copy.dashboard.backend.eyebrow}</p>
-						<div className='inline-heading'>
-							<h3>{copy.dashboard.backend.title}</h3>
-							<span className={`pill status ${backendStateClass[backendStatus.state]}`}>
-								{backendStateLabel}
-							</span>
-						</div>
-						<p className='muted'>{backendStatus.message}</p>
+		<div className='status-banner'>
+			<div className='status-banner__head'>
+				<div>
+					<p className='eyebrow'>{copy.dashboard.backend.eyebrow}</p>
+					<div className='inline-heading'>
+						<h3>{copy.dashboard.backend.title}</h3>
+						<span className={`pill status ${backendStateClass[backendStatus.state]}`}>
+							{backendStateLabel}
+						</span>
 					</div>
-					<div className='status-banner__meta'>
-						<span className='pill subtle'>{backendErrorLabel}</span>
-						<span className='pill subtle'>{backendLastChecked}</span>
-					</div>
+					<p className='muted'>{backendStatus.message}</p>
+				</div>
+				<div className='status-banner__meta'>
+					<span className='pill subtle'>{backendErrorLabel}</span>
+					<span className='pill subtle'>{backendLastChecked}</span>
 				</div>
 			</div>
+		</div>
 
-			<div className='card tabs-card'>
-				<div className='inline-heading'>
-					<h3>{copy.dashboard.roleTabsLabel}</h3>
+		<div className='card'>
+			<div className='inline-heading'>
+				<h3>{copy.dashboard.shortcuts.title}</h3>
+				<span className='pill subtle'>{copy.dashboard.shortcuts.description}</span>
+			</div>
+			<div className='hotkey-grid'>
+				{shortcuts.map((shortcut) => (
+					<div key={shortcut.combo} className='hotkey-item'>
+						<kbd>{shortcut.combo}</kbd>
+						<span className='muted small'>{shortcut.label}</span>
+					</div>
+				))}
+			</div>
+		</div>
+
+		<div className='card tabs-card'>
+			<div className='inline-heading'>
+				<h3>{copy.dashboard.roleTabsLabel}</h3>
 					<span className='pill subtle'>{copy.dashboard.roleTabsHelp}</span>
 				</div>
 				<div className='tabs' role='tablist' aria-label={copy.dashboard.roleTabsLabel} id={roleTabListId}>
@@ -300,14 +338,15 @@ export default function Dashboard({
 					{canClinic || isPlatform ? (
 						<>
 							<div className='grid two'>
-								<label className='field'>
-									<span>{copy.dashboard.patients.fields.name}</span>
-									<input
-										value={pName}
-										onChange={(e) => setPName(e.target.value)}
-										placeholder={copy.dashboard.patients.placeholders.name}
-									/>
-								</label>
+						<label className='field'>
+							<span>{copy.dashboard.patients.fields.name}</span>
+							<input
+								value={pName}
+								ref={patientNameInputRef}
+								onChange={(e) => setPName(e.target.value)}
+								placeholder={copy.dashboard.patients.placeholders.name}
+							/>
+						</label>
 								<label className='field'>
 									<span>{copy.dashboard.patients.fields.phone}</span>
 									<input
@@ -370,81 +409,112 @@ export default function Dashboard({
 								</div>
 							</div>
 
-							<div className='divider' />
+						<div className='divider' />
 
-							{patients.length > 0 && (
-								<div className='list'>
-									{patients.map((p, idx) => {
-										const patientRecord = p as Record<string, unknown>;
-										const patientId = (patientRecord.id as string) ?? String(idx);
-										const patientName =
-											(patientRecord.name as string) ?? copy.dashboard.patients.missingName;
-										const patientEmail =
-											(patientRecord.email as string) ?? copy.dashboard.patients.missingEmail;
-										const patientClinic =
-											(patientRecord.clinicId as string) ?? copy.dashboard.noClinic;
-										const patientPhone =
-											(patientRecord.phone as string) ?? copy.dashboard.patients.missingPhone;
-										const assignedNutri =
-											(patientRecord.assignedNutriUid as string) ?? '';
-										const selectedNutri = patientAssignSelections[patientId] ?? assignedNutri;
-										return (
-											<div className='card' key={patientId}>
-												<div className='inline-info'>
-													<div>
-														<strong>{patientName}</strong>
-														<div className='muted'>{patientEmail}</div>
-													</div>
-													<div>
-														<small>{copy.dashboard.patients.fields.clinic}</small>
-														<div className='muted'>{patientClinic}</div>
-													</div>
+						{patientsLoading && (
+							<StateBlock
+								loading
+								title={copy.dashboard.patients.loading}
+								description={copy.dashboard.patients.loadingHint}
+							/>
+						)}
+
+						{!patientsLoading && patients.length === 0 && (
+							<StateBlock
+								icon='🧑‍⚕️'
+								title={copy.dashboard.patients.empty}
+								description={copy.dashboard.patients.description}
+								action={
+									<button className='btn ghost sm' disabled={loading} onClick={handleListPatients}>
+										{copy.dashboard.patients.refresh}
+									</button>
+								}
+							/>
+						)}
+
+						{patients.length > 0 && (
+							<div className='list' aria-busy={patientsLoading} aria-live='polite'>
+								{patientsLoading && (
+									<StateBlock
+										loading
+										title={copy.dashboard.patients.loading}
+										description={copy.dashboard.patients.loadingHint}
+									/>
+								)}
+								{patients.map((p, idx) => {
+									const patientRecord = p as Record<string, unknown>;
+									const patientId = (patientRecord.id as string) ?? String(idx);
+									const patientName =
+										(patientRecord.name as string) ?? copy.dashboard.patients.missingName;
+									const patientEmail =
+										(patientRecord.email as string) ?? copy.dashboard.patients.missingEmail;
+									const patientClinic =
+										(patientRecord.clinicId as string) ?? copy.dashboard.noClinic;
+									const patientPhone =
+										(patientRecord.phone as string) ?? copy.dashboard.patients.missingPhone;
+									const assignedNutri =
+										(patientRecord.assignedNutriUid as string) ?? '';
+									const selectedNutri = patientAssignSelections[patientId] ?? assignedNutri;
+									return (
+										<div className='card' key={patientId}>
+											<div className='inline-info'>
+												<div>
+													<strong>{patientName}</strong>
+													<div className='muted'>{patientEmail}</div>
 												</div>
-												<div className='inline-info'>
-													<div>
-														<small>{copy.dashboard.patients.fields.phone}</small>
-														<div className='muted'>{patientPhone}</div>
-													</div>
-													<div>
-														<small>{copy.dashboard.patients.assignedNutri}</small>
-														<div className='muted'>
-															{assignedNutri || copy.dashboard.patients.missingNutri}
-														</div>
-													</div>
-												</div>
-												<div className='actions'>
-													<select
-														value={selectedNutri}
-														onChange={(e) =>
-															setPatientAssignSelections((prev) => ({
-																...prev,
-																[patientId]: e.target.value,
-															}))
-														}
-													>
-														<option value=''>{copy.dashboard.patients.selectNutri}</option>
-														{knownNutris.map((n) => (
-															<option key={n} value={n}>
-																{n}
-															</option>
-														))}
-													</select>
-													<button
-														className='btn'
-														disabled={loading || !selectedNutri}
-														onClick={() => handleAssignNutri(patientId)}
-													>
-														{copy.dashboard.patients.assignNutri}
-													</button>
+												<div>
+													<small>{copy.dashboard.patients.fields.clinic}</small>
+													<div className='muted'>{patientClinic}</div>
 												</div>
 											</div>
-										);
-									})}
-								</div>
-							)}
+											<div className='inline-info'>
+												<div>
+													<small>{copy.dashboard.patients.fields.phone}</small>
+													<div className='muted'>{patientPhone}</div>
+												</div>
+												<div>
+													<small>{copy.dashboard.patients.assignedNutri}</small>
+													<div className='muted'>
+														{assignedNutri || copy.dashboard.patients.missingNutri}
+													</div>
+												</div>
+											</div>
+											<div className='actions'>
+												<select
+													value={selectedNutri}
+													onChange={(e) =>
+														setPatientAssignSelections((prev) => ({
+															...prev,
+															[patientId]: e.target.value,
+														}))
+													}
+												>
+													<option value=''>{copy.dashboard.patients.selectNutri}</option>
+													{knownNutris.map((n) => (
+														<option key={n} value={n}>
+															{n}
+														</option>
+													))}
+												</select>
+												<button
+													className='btn'
+													disabled={loading || !selectedNutri}
+													onClick={() => handleAssignNutri(patientId)}
+												>
+													{copy.dashboard.patients.assignNutri}
+												</button>
+											</div>
+										</div>
+									);
+								})}
+							</div>
+						)}
+
+						<div className='actions end'>
 							<button className='btn ghost' disabled={loading} onClick={handleListPatients}>
 								{copy.dashboard.patients.refresh}
 							</button>
+						</div>
 						</>
 					) : (
 						<p className='muted'>{copy.dashboard.patients.onlyClinic}</p>
@@ -452,28 +522,47 @@ export default function Dashboard({
 				</div>
 			</div>
 
-			<div className='card'>
-				<h3>{copy.dashboard.appointments.title}</h3>
-				<p className='muted'>{copy.dashboard.appointments.description}</p>
-				{!isPatient && <p className='muted'>{copy.dashboard.appointments.patientRoleReminder}</p>}
-				<p className='muted'>{copy.dashboard.appointments.tip}</p>
-				<div
-					className='muted'
-					style={{
-						padding: 12,
-						borderRadius: 8,
-						border: '1px solid #f3c96b',
-						background: '#fff7e0',
-						marginBottom: 16,
-					}}
-				>
-					{copy.dashboard.appointments.reminder}
-				</div>
-				{appointments.length === 0 && <p className='muted'>{copy.dashboard.appointments.noAppointments}</p>}
+		<div className='card'>
+			<h3>{copy.dashboard.appointments.title}</h3>
+			<p className='muted'>{copy.dashboard.appointments.description}</p>
+			{!isPatient && <p className='muted'>{copy.dashboard.appointments.patientRoleReminder}</p>}
+			<p className='muted'>{copy.dashboard.appointments.tip}</p>
+			<div
+				className='muted'
+				style={{
+					padding: 12,
+					borderRadius: 8,
+					border: '1px solid #f3c96b',
+					background: '#fff7e0',
+					marginBottom: 16,
+				}}
+			>
+				{copy.dashboard.appointments.reminder}
+			</div>
+
+			{appointmentsLoading && (
+				<StateBlock
+					loading
+					title={copy.dashboard.appointments.loading}
+					description={copy.dashboard.appointments.loadingHint}
+				/>
+			)}
+
+			{appointments.length === 0 && !appointmentsLoading && (
+				<StateBlock
+					icon='📅'
+					title={copy.dashboard.appointments.noAppointments}
+					description={copy.dashboard.appointments.patientRoleReminder}
+				/>
+			)}
 				<div className='grid three'>
 					<label className='field'>
 						<span>{copy.dashboard.appointments.form.selectNutri}</span>
-						<select value={apptRequestNutriUid} onChange={(e) => setApptRequestNutriUid(e.target.value)}>
+						<select
+							value={apptRequestNutriUid}
+							onChange={(e) => setApptRequestNutriUid(e.target.value)}
+							ref={apptNutriSelectRef}
+						>
 							{knownNutris.map((n) => (
 								<option key={n} value={n}>
 									{n}
@@ -492,6 +581,7 @@ export default function Dashboard({
 							pattern={DATETIME_LOCAL_PATTERN.source}
 							value={slotRangeFrom}
 							onChange={(e) => setSlotRangeFrom(e.target.value)}
+							ref={apptFromInputRef}
 							aria-invalid={!!slotRangeError}
 							aria-describedby={slotRangeError ? slotRangeErrorId : undefined}
 						/>
@@ -593,9 +683,16 @@ export default function Dashboard({
 					</div>
 				)}
 
-				{appointments.length > 0 && (
-					<div className='appointments'>
-						{appointments.map((a, idx) => {
+			{appointments.length > 0 && (
+				<div className='appointments' aria-busy={appointmentsLoading} aria-live='polite'>
+					{appointmentsLoading && (
+						<StateBlock
+							loading
+							title={copy.dashboard.appointments.loading}
+							description={copy.dashboard.appointments.loadingHint}
+						/>
+					)}
+					{appointments.map((a, idx) => {
 							const appt = a as Record<string, unknown>;
 							const appointmentId = (appt.id as string) ?? undefined;
 							const appointmentKey = appointmentId ?? String(idx);
@@ -825,59 +922,77 @@ export default function Dashboard({
 				)}
 			</div>
 
-			{(role === 'clinic_admin' || role === 'nutri') && (
-				<div className='card'>
-					<h3>{copy.dashboard.clinicAvailability.title}</h3>
-					<p className='muted'>{copy.dashboard.clinicAvailability.description}</p>
-					<div className='actions wrap'>
-						<button
-							className='btn'
-							disabled={loadingSlots || !apptRequestNutriUid}
-							onClick={() => handleLoadSlots(apptRequestNutriUid)}
-						>
-							{copy.dashboard.clinicAvailability.refresh}
-						</button>
-						<span className='pill'>
-							{copy.dashboard.clinicAvailability.counts
-								.replace('{{free}}', String(apptSlots.length))
-								.replace('{{busy}}', String(apptBusySlots.length))}
-						</span>
-					</div>
-					{apptSlots.length === 0 && apptBusySlots.length === 0 ? (
-						<p className='muted'>{copy.dashboard.clinicAvailability.empty}</p>
-					) : (
-						<div className='list'>
-							{apptSlots.slice(0, 6).map((slot) => (
-								<div className='inline-info' key={`free-${slot}`}>
-									<div>
-										<small>{copy.dashboard.clinicAvailability.freeLabel}</small>
-										<div>{formatSlotLabel(slot)}</div>
-									</div>
-								</div>
-							))}
-							{apptBusySlots.slice(0, 6).map((slot) => (
-								<div className='inline-info' key={`busy-${slot}`}>
-									<div>
-										<small>{copy.dashboard.clinicAvailability.busyLabel}</small>
-										<div className='muted'>{formatSlotLabel(slot)}</div>
-									</div>
-								</div>
-							))}
-							{apptSlots.length + apptBusySlots.length > 12 && (
-								<p className='muted'>{copy.dashboard.clinicAvailability.limited}</p>
-							)}
-						</div>
-					)}
-				</div>
-			)}
-
+		{(role === 'clinic_admin' || role === 'nutri') && (
 			<div className='card'>
-				<h3>{copy.dashboard.log.title}</h3>
-				{reversedLogs.length === 0 ? (
-					<p className='muted'>{copy.dashboard.log.empty}</p>
+				<h3>{copy.dashboard.clinicAvailability.title}</h3>
+				<p className='muted'>{copy.dashboard.clinicAvailability.description}</p>
+				<div className='actions wrap'>
+					<button
+						className='btn'
+						disabled={loadingSlots || !apptRequestNutriUid}
+						onClick={() => handleLoadSlots(apptRequestNutriUid)}
+					>
+						{copy.dashboard.clinicAvailability.refresh}
+					</button>
+					<span className='pill'>
+						{copy.dashboard.clinicAvailability.counts
+							.replace('{{free}}', String(apptSlots.length))
+							.replace('{{busy}}', String(apptBusySlots.length))}
+					</span>
+				</div>
+				{loadingSlots && (
+					<StateBlock
+						loading
+						title={copy.dashboard.clinicAvailability.loading}
+						description={copy.dashboard.clinicAvailability.loadingHint}
+					/>
+				)}
+				{apptSlots.length === 0 && apptBusySlots.length === 0 && !loadingSlots ? (
+					<StateBlock
+						icon='🗓️'
+						title={copy.dashboard.clinicAvailability.empty}
+						description={copy.dashboard.clinicAvailability.loadingHint}
+					/>
 				) : (
-					<ul className='log'>
-						{reversedLogs.map((l) => {
+					<div className='list' aria-busy={loadingSlots} aria-live='polite'>
+						{loadingSlots && (
+							<StateBlock
+								loading
+								title={copy.dashboard.clinicAvailability.loading}
+								description={copy.dashboard.clinicAvailability.loadingHint}
+							/>
+						)}
+						{apptSlots.slice(0, 6).map((slot) => (
+							<div className='inline-info' key={`free-${slot}`}>
+								<div>
+									<small>{copy.dashboard.clinicAvailability.freeLabel}</small>
+									<div>{formatSlotLabel(slot)}</div>
+								</div>
+							</div>
+						))}
+						{apptBusySlots.slice(0, 6).map((slot) => (
+							<div className='inline-info' key={`busy-${slot}`}>
+								<div>
+									<small>{copy.dashboard.clinicAvailability.busyLabel}</small>
+									<div className='muted'>{formatSlotLabel(slot)}</div>
+								</div>
+							</div>
+						))}
+						{apptSlots.length + apptBusySlots.length > 12 && (
+							<p className='muted'>{copy.dashboard.clinicAvailability.limited}</p>
+						)}
+					</div>
+				)}
+			</div>
+		)}
+
+		<div className='card'>
+			<h3>{copy.dashboard.log.title}</h3>
+			{reversedLogs.length === 0 ? (
+				<StateBlock icon='📜' title={copy.dashboard.log.empty} description={copy.dashboard.log.hint} />
+			) : (
+				<ul className='log'>
+					{reversedLogs.map((l) => {
 							const attemptTotal = Math.max(l.retries + 1, l.attempt);
 							const statusPillClass = l.ok ? 'pill ok' : 'pill error';
 							const requestContent = l.request ? JSON.stringify(l.request) : copy.dashboard.log.emptyPayload;
