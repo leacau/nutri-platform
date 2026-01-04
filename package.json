@@ -9,6 +9,7 @@
 		"emulators": "firebase emulators:start --only auth,firestore --project demo-nutri-platform --import ./_emu --export-on-exit",
 		"dev:api": "npm --workspace apps/api run dev",
 		"dev:qa": "npm --workspace apps/qa-console run dev",
+		"test:e2e": "npm --workspace apps/qa-console run test:e2e",
 		"seed:emu": "npm --workspace apps/api run seed:emu"
 	},
 	"devDependencies": {

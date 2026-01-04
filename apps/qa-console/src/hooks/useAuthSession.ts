@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	createUserWithEmailAndPassword,
 	getIdTokenResult,
@@ -29,6 +29,10 @@ type AuthSessionResult = {
 };
 
 export function useAuthSession(): AuthSessionResult {
+	if (import.meta.env.VITE_E2E_MOCK_AUTH === 'true') {
+		return useMockAuthSession();
+	}
+
 	const [user, setUser] = useState<User | null>(auth.currentUser);
 	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
 	const [sessionError, setSessionError] = useState<string | null>(null);
@@ -195,6 +199,76 @@ export function useAuthSession(): AuthSessionResult {
 		},
 		[clearRefreshTimer]
 	);
+
+	const clearSessionError = useCallback(() => setSessionError(null), []);
+
+	return {
+		user,
+		claims,
+		sessionError,
+		login,
+		register,
+		refreshClaims,
+		getValidIdToken,
+		logoutAndRevoke,
+	clearSessionError,
+	};
+}
+
+function useMockAuthSession(): AuthSessionResult {
+	const [user, setUser] = useState<User | null>(null);
+	const [sessionError, setSessionError] = useState<string | null>(null);
+	const [claims, setClaims] = useState<Claims>(() => ({
+		role: import.meta.env.VITE_E2E_ROLE ?? 'clinic_admin',
+		clinicId: import.meta.env.VITE_E2E_CLINIC_ID ?? 'demo-clinic',
+	}));
+
+	const mockUser = useMemo(
+		() =>
+			({
+				uid: 'e2e-user',
+				email: 'qa1@test.com',
+				providerData: [],
+			}) as User,
+		[]
+	);
+
+	const login = useCallback(
+		async (email: string) => {
+			const nextUser = { ...mockUser, email };
+			setUser(nextUser);
+			setSessionError(null);
+			return { ok: true, user: nextUser };
+		},
+		[mockUser]
+	);
+
+	const register = useCallback(
+		async (email: string) => {
+			const nextUser = { ...mockUser, email };
+			setUser(nextUser);
+			setSessionError(null);
+			return { ok: true, user: nextUser };
+		},
+		[mockUser]
+	);
+
+	const refreshClaims = useCallback(async () => true, []);
+
+	const getValidIdToken = useCallback(async () => {
+		if (!user) {
+			setSessionError('Please sign in to continue.');
+			return null;
+		}
+		return 'mock-token';
+	}, [user]);
+
+	const logoutAndRevoke = useCallback(async () => {
+		setUser(null);
+		setSessionError(null);
+		setClaims({ role: import.meta.env.VITE_E2E_ROLE ?? 'clinic_admin', clinicId: import.meta.env.VITE_E2E_CLINIC_ID ?? 'demo-clinic' });
+		return { ok: true, error: null };
+	}, []);
 
 	const clearSessionError = useCallback(() => setSessionError(null), []);
 

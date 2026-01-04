@@ -22,3 +22,6 @@ logs/
 *.log
 *.tsbuildinfo
 firebase-export-*/
+playwright-report/
+test-results/
+blob-report/
