@@ -97,6 +97,7 @@ type DashboardProps = {
 	handleListAppointments: () => Promise<void>;
 	slotRangeError: string | null;
 	appointmentFormError: string | null;
+	setAppointmentFormError: Dispatch<SetStateAction<string | null>>;
 	apptSlots: string[];
 	apptBusySlots: string[];
 	linkRequired: { active: boolean; reason?: string };
@@ -113,9 +114,9 @@ type DashboardProps = {
 	toIsoFromDatetimeLocal: (value: string) => string | null;
 	setConfirmAction: Dispatch<SetStateAction<ConfirmAction | null>>;
 	reversedLogs: LogEntry[];
-	patientNameInputRef: RefObject<HTMLInputElement>;
-	apptNutriSelectRef: RefObject<HTMLSelectElement>;
-	apptFromInputRef: RefObject<HTMLInputElement>;
+	patientNameInputRef: RefObject<HTMLInputElement | null>;
+	apptNutriSelectRef: RefObject<HTMLSelectElement | null>;
+	apptFromInputRef: RefObject<HTMLInputElement | null>;
 	auditRefs: Record<string, string>;
 };
 
@@ -182,6 +183,7 @@ export default function Dashboard({
 	handleListAppointments,
 	slotRangeError,
 	appointmentFormError,
+	setAppointmentFormError,
 	apptSlots,
 	apptBusySlots,
 	linkRequired,
@@ -752,13 +754,15 @@ export default function Dashboard({
 								}
 							>
 								<option value='all'>{copy.dashboard.appointments.filters.allStatuses}</option>
-								{(Object.keys(copy.dashboard.appointments.statusLabel) as AppointmentFilters['status'][]).map(
-									(status) => (
-										<option key={status} value={status}>
-											{copy.dashboard.appointments.statusLabel[status] ?? status}
-										</option>
-									)
-								)}
+								{(
+									Object.keys(copy.dashboard.appointments.statusLabel) as Array<
+										keyof typeof copy.dashboard.appointments.statusLabel
+									>
+								).map((status) => (
+									<option key={status} value={status}>
+										{copy.dashboard.appointments.statusLabel[status] ?? status}
+									</option>
+								))}
 							</select>
 						</label>
 						<label className='field'>

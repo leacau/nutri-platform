@@ -211,7 +211,7 @@ export function useAuthSession(): AuthSessionResult {
 		refreshClaims,
 		getValidIdToken,
 		logoutAndRevoke,
-	clearSessionError,
+		clearSessionError,
 	};
 }
 
@@ -229,7 +229,7 @@ function useMockAuthSession(): AuthSessionResult {
 				uid: 'e2e-user',
 				email: 'qa1@test.com',
 				providerData: [],
-			}) as User,
+			}) as unknown as User,
 		[]
 	);
 

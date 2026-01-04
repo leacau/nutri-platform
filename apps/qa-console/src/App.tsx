@@ -4,6 +4,8 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	lazy,
+	Suspense,
 	type ReactElement,
 } from 'react';
 import type { User } from 'firebase/auth';
@@ -12,7 +14,10 @@ import './App.css';
 import { fetchJSON } from './api';
 import { getCopy, supportedLocales, type Locale } from './i18n';
 import { ConfirmModal, ToastStack, Topbar } from './components';
-import { AuthPage, Dashboard, Landing } from './pages';
+import { API_BASE_URL } from './config/env';
+const Landing = lazy(() => import('./pages/Landing'));
+const AuthPage = lazy(() => import('./pages/AuthPage'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
 import type {
 	AuthedFetchResult,
 	BackendStatus,
@@ -141,7 +146,7 @@ function ProtectedRoute({ user, children }: ProtectedProps) {
 }
 
 export default function App() {
-	const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
+	const API_BASE = API_BASE_URL;
 	const useE2EStubApi = import.meta.env.VITE_E2E_API_STUB === 'true';
 
 	const navigate = useNavigate();
@@ -1414,6 +1419,7 @@ function getEmailError(value: string) {
 		handleListAppointments,
 		slotRangeError,
 		appointmentFormError,
+		setAppointmentFormError,
 		apptSlots,
 		apptBusySlots,
 		linkRequired,
@@ -1455,19 +1461,21 @@ function getEmailError(value: string) {
 				loading={loading}
 				onLogout={handleLogout}
 			/>
-			<Routes>
-				<Route path='/' element={<Landing copy={copy} />} />
-				<Route path='/login' element={<AuthPage {...authPageProps} />} />
-				<Route
-					path='/dashboard'
-					element={
-						<ProtectedRoute user={user}>
-							<Dashboard {...dashboardProps} />
-						</ProtectedRoute>
-					}
-				/>
-				<Route path='*' element={<Navigate to='/' />} />
-			</Routes>
+			<Suspense fallback={<div className='app-loading'>Cargando consola…</div>}>
+				<Routes>
+					<Route path='/' element={<Landing copy={copy} />} />
+					<Route path='/login' element={<AuthPage {...authPageProps} />} />
+					<Route
+						path='/dashboard'
+						element={
+							<ProtectedRoute user={user}>
+								<Dashboard {...dashboardProps} />
+							</ProtectedRoute>
+						}
+					/>
+					<Route path='*' element={<Navigate to='/' />} />
+				</Routes>
+			</Suspense>
 		</div>
 	);
 }
