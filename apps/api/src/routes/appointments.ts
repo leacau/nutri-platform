@@ -676,6 +676,7 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 		const role = ctx.role ?? null;
+		let auditId: string | null = null;
 		const forbidden = (reason: string) => {
 			logAuthzDenied(req, 403, reason);
 			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
@@ -784,7 +785,7 @@ router.post(
 			'data' in result.body
 		) {
 			const appt = result.body.data as AppointmentDoc & { id: string };
-			logEvent('appointment_cancelled', {
+			const payload = logEvent('appointment_cancelled', {
 				req,
 				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
 				data: {
@@ -795,9 +796,11 @@ router.post(
 					scheduledForIso: timestampToIso(appt.scheduledFor),
 				},
 			});
+			auditId = payload.auditId;
 		}
 
-		return res.status(result.http).json(result.body);
+		const responseBody = auditId ? { ...result.body, auditId } : result.body;
+		return res.status(result.http).json(responseBody);
 	}
 );
 
@@ -814,6 +817,7 @@ router.post(
 	async (req: Request, res: Response) => {
 		const ctx = mustAuth(req);
 		const role = ctx.role!;
+		let auditId: string | null = null;
 		const forbidden = (reason: string) => {
 			logAuthzDenied(req, 403, reason);
 			return { http: 403 as const, body: { success: false, message: 'Forbidden' } as const };
@@ -917,7 +921,7 @@ router.post(
 			'data' in result.body
 		) {
 			const appt = result.body.data as AppointmentDoc & { id: string };
-			logEvent('appointment_completed', {
+			const payload = logEvent('appointment_completed', {
 				req,
 				clinicId: appt.clinicId ?? ctx.clinicId ?? null,
 				data: {
@@ -928,9 +932,11 @@ router.post(
 					scheduledForIso: timestampToIso(appt.scheduledFor),
 				},
 			});
+			auditId = payload.auditId;
 		}
 
-		return res.status(result.http).json(result.body);
+		const responseBody = auditId ? { ...result.body, auditId } : result.body;
+		return res.status(result.http).json(responseBody);
 	}
 );
 

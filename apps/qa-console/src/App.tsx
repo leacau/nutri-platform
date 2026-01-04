@@ -23,6 +23,7 @@ import type {
 } from './types/app';
 import useAuthSession from './hooks/useAuthSession';
 import useDebouncedValue from './hooks/useDebouncedValue';
+import { formatAuditId, scrubPII } from './utils/privacy';
 import {
 	isValidDatetimeLocal,
 	isValidEmail,
@@ -238,6 +239,7 @@ export default function App() {
 	const [scheduleSelections, setScheduleSelections] = useState<
 		Record<string, ScheduleSelection>
 	>({});
+	const [auditRefs, setAuditRefs] = useState<Record<string, string>>({});
 	const [scheduleErrors, setScheduleErrors] = useState<Record<string, string | null>>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
 	const [appointmentFilters, setAppointmentFilters] = useState<AppointmentFilters>({
@@ -277,8 +279,22 @@ export default function App() {
 		});
 	};
 
+	const sanitizeLogEntry = (entry: LogEntry): LogEntry => ({
+		...entry,
+		request: entry.request
+			? {
+					...entry.request,
+					body: scrubPII(entry.request.body),
+					headers: entry.request.headers,
+			  }
+			: undefined,
+		response: entry.response ? { ...entry.response, body: scrubPII(entry.response.body) } : undefined,
+		error: entry.error ? scrubPII(entry.error) : entry.error,
+	});
+
 	const appendLog = (entry: LogEntry) => {
-		setLogs((prev) => [...prev.slice(-99), entry]);
+		const safeEntry = sanitizeLogEntry(entry);
+		setLogs((prev) => [...prev.slice(-99), safeEntry]);
 	};
 
 	const logManual = (input: {
@@ -757,6 +773,7 @@ function getEmailError(value: string) {
 			}
 			setPatients([]);
 			setAppointments([]);
+			setAuditRefs({});
 			navigate('/login');
 		} catch (err) {
 			logManual({
@@ -1200,6 +1217,14 @@ function getEmailError(value: string) {
 		try {
 			const res = await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
 			if (res.ok) {
+				const auditId = getStringField(res.data, 'auditId');
+				if (auditId) {
+					setAuditRefs((prev) => ({ ...prev, [apptId]: auditId }));
+					pushToast(
+						copy.toasts.auditLogged.replace('{{id}}', formatAuditId(auditId)),
+						'info'
+					);
+				}
 				await handleListAppointments();
 				pushToast(copy.toasts.appointmentCancelled, 'info');
 			} else {
@@ -1215,6 +1240,14 @@ function getEmailError(value: string) {
 		try {
 			const res = await authedFetch('POST', `/appointments/${apptId}/complete`, {});
 			if (res.ok) {
+				const auditId = getStringField(res.data, 'auditId');
+				if (auditId) {
+					setAuditRefs((prev) => ({ ...prev, [apptId]: auditId }));
+					pushToast(
+						copy.toasts.auditLogged.replace('{{id}}', formatAuditId(auditId)),
+						'success'
+					);
+				}
 				await handleListAppointments();
 				pushToast(copy.toasts.appointmentCompleted, 'success');
 			} else {
@@ -1369,6 +1402,7 @@ function getEmailError(value: string) {
 		patientNameInputRef,
 		apptNutriSelectRef,
 		apptFromInputRef,
+		auditRefs,
 	};
 
 	return (

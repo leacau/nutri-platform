@@ -12,6 +12,7 @@ import type {
 } from '../types/app';
 import { DATETIME_LOCAL_PATTERN, EMAIL_PATTERN, PHONE_PATTERN } from '../utils/validation';
 import { StateBlock } from '../components';
+import { formatAuditId, maskEmail, maskPhone } from '../utils/privacy';
 
 type Copy = ReturnType<typeof getCopy>;
 
@@ -115,6 +116,7 @@ type DashboardProps = {
 	patientNameInputRef: RefObject<HTMLInputElement>;
 	apptNutriSelectRef: RefObject<HTMLSelectElement>;
 	apptFromInputRef: RefObject<HTMLInputElement>;
+	auditRefs: Record<string, string>;
 };
 
 export default function Dashboard({
@@ -199,12 +201,13 @@ export default function Dashboard({
 	patientNameInputRef,
 	apptNutriSelectRef,
 	apptFromInputRef,
+	auditRefs,
 }: DashboardProps) {
 	const role = claims.role;
 	const canClinic = role === 'clinic_admin' || role === 'nutri' || role === 'staff';
 	const isPlatform = role === 'platform_admin';
 	const isPatient = role === 'patient';
-	const displayEmail = user?.email ?? copy.dashboard.unknownEmail;
+	const displayEmail = maskEmail(user?.email ?? null, copy.dashboard.unknownEmail);
 	const roleLabelValue = role ?? copy.dashboard.noRole;
 	const clinicLabelValue = claims.clinicId ?? copy.dashboard.noClinic;
 	const roleTabListId = useId();
@@ -436,6 +439,7 @@ export default function Dashboard({
 							</div>
 
 						<div className='divider' />
+						<p className='muted small'>{copy.dashboard.patients.legalNotice}</p>
 
 						{patientsLoading && (
 							<StateBlock
@@ -472,12 +476,16 @@ export default function Dashboard({
 									const patientId = (patientRecord.id as string) ?? String(idx);
 									const patientName =
 										(patientRecord.name as string) ?? copy.dashboard.patients.missingName;
-									const patientEmail =
-										(patientRecord.email as string) ?? copy.dashboard.patients.missingEmail;
+									const patientEmail = maskEmail(
+										(patientRecord.email as string) ?? null,
+										copy.dashboard.patients.missingEmail
+									);
 									const patientClinic =
 										(patientRecord.clinicId as string) ?? copy.dashboard.noClinic;
-									const patientPhone =
-										(patientRecord.phone as string) ?? copy.dashboard.patients.missingPhone;
+									const patientPhone = maskPhone(
+										(patientRecord.phone as string) ?? null,
+										copy.dashboard.patients.missingPhone
+									);
 									const assignedNutri =
 										(patientRecord.assignedNutriUid as string) ?? '';
 									const selectedNutri = patientAssignSelections[patientId] ?? assignedNutri;
@@ -896,6 +904,7 @@ export default function Dashboard({
 							};
 							const scheduleErrorMessage = scheduleErrors[appointmentKey] ?? null;
 							const scheduleErrorId = `schedule-error-${appointmentKey}`;
+							const auditId = auditRefs[appointmentKey];
 							return (
 								<div className='appt-card' key={appointmentKey}>
 									<div className='appt-head'>
@@ -1085,6 +1094,14 @@ export default function Dashboard({
 													</button>
 												)}
 											</div>
+											{auditId && (
+												<p className='muted small' role='status' aria-live='polite'>
+													{copy.dashboard.appointments.quickActions.auditRef.replace(
+														'{{id}}',
+														formatAuditId(auditId, 10)
+													)}
+												</p>
+											)}
 										</div>
 									</div>
 								</div>

@@ -173,6 +173,9 @@ export default function AuthPage({
 						</button>
 					)}
 				</div>
+				<p className='muted small' role='note'>
+					{copy.auth.legalNotice}
+				</p>
 				<div className='inline-info'>
 					<div>
 						<strong>{copy.auth.infoUid}</strong> <code>{user ? user.uid : copy.auth.notLogged}</code>
