@@ -157,11 +157,13 @@ type Translation = {
 				manualLabel: string;
 				manualHelp: string;
 				manualInvalid: string;
+				multiSelectHint: string;
 				rangeErrors: {
 					invalidRange: string;
 					endBeforeStart: string;
 				};
 				slotRequired: string;
+				overlapBusy: string;
 			};
 			linking: {
 				title: string;
@@ -178,6 +180,22 @@ type Translation = {
 			statusIconLabel: {
 				fallback: string;
 			};
+			filters: {
+				title: string;
+				status: string;
+				allStatuses: string;
+				patient: string;
+				patientPlaceholder: string;
+				nutri: string;
+				nutriPlaceholder: string;
+				clinic: string;
+				allClinics: string;
+				from: string;
+				to: string;
+				reset: string;
+				resetHint: string;
+				summary: string;
+			};
 			schedule: {
 				title: string;
 				loadSlots: string;
@@ -191,6 +209,9 @@ type Translation = {
 				manualFallback: string;
 				manualInvalid: string;
 				validDateRequired: string;
+				multiSelectHint: string;
+				overlapBusy: string;
+				overlapSelected: string;
 			};
 			quickActions: {
 				title: string;
@@ -199,6 +220,14 @@ type Translation = {
 			};
 			loading: string;
 			loadingHint: string;
+			noFiltered: string;
+			pagination: {
+				page: string;
+				prev: string;
+				next: string;
+				perPage: string;
+				summary: string;
+			};
 		};
 		clinicAvailability: {
 			title: string;
@@ -261,6 +290,7 @@ type Translation = {
 		assignError: string;
 		appointmentsRefreshed: string;
 		appointmentRequested: string;
+		appointmentsRequestedMany: string;
 		linkRequired: string;
 		appointmentRequestError: string;
 		patientLinked: string;
@@ -478,11 +508,13 @@ const translations: Record<Locale, Translation> = {
 					manualLabel: 'Horario manual',
 					manualHelp: 'No hay slots libres en el rango seleccionado. Ingresá horario manual como fallback.',
 					manualInvalid: 'Ingresá fecha y hora válidas (AAAA-MM-DD HH:MM).',
+					multiSelectHint: 'Podés seleccionar varios slots (Ctrl/Cmd + click) para priorizar horarios.',
 					rangeErrors: {
 						invalidRange: 'Ingresá un rango válido para buscar slots.',
 						endBeforeStart: 'La fecha “hasta” debe ser mayor a “desde”.',
 					},
 					slotRequired: 'Seleccioná un horario disponible o ingresá uno manual.',
+					overlapBusy: 'Ese horario se superpone con un slot ocupado. Elegí otro.',
 				},
 				linking: {
 					title: 'Necesitás vincular tu paciente',
@@ -505,6 +537,22 @@ const translations: Record<Locale, Translation> = {
 				statusIconLabel: {
 					fallback: 'Estado',
 				},
+				filters: {
+					title: 'Filtros de turnos',
+					status: 'Estado',
+					allStatuses: 'Todos los estados',
+					patient: 'Paciente',
+					patientPlaceholder: 'ID, email o nombre',
+					nutri: 'Nutri',
+					nutriPlaceholder: 'UID de nutri',
+					clinic: 'Clínica',
+					allClinics: 'Todas',
+					from: 'Desde',
+					to: 'Hasta',
+					reset: 'Limpiar filtros',
+					resetHint: 'No hay turnos con los filtros actuales. Probá limpiar la búsqueda.',
+					summary: 'Mostrando {{shown}} de {{total}} turnos filtrados',
+				},
 				schedule: {
 					title: 'Programar o reprogramar',
 					loadSlots: 'Slots de nutri',
@@ -518,15 +566,26 @@ const translations: Record<Locale, Translation> = {
 					manualFallback: 'Fallback manual',
 					manualInvalid: 'Ingresá fecha y hora válidas (AAAA-MM-DD HH:MM).',
 					validDateRequired: 'Falta fecha válida para programar',
+					multiSelectHint: 'Podés elegir más de un slot para comparar horarios.',
+					overlapBusy: 'El slot elegido se superpone con horarios ocupados.',
+					overlapSelected: 'Ya usaste ese horario en otra selección de este nutri.',
 				},
-			quickActions: {
-				title: 'Acciones rápidas',
-				cancel: 'Cancelar',
-				complete: 'Completar',
+				quickActions: {
+					title: 'Acciones rápidas',
+					cancel: 'Cancelar',
+					complete: 'Completar',
+				},
+				loading: 'Cargando turnos...',
+				loadingHint: 'Actualizamos el listado y los estados. Podés seguir navegando.',
+				noFiltered: 'Sin resultados con los filtros aplicados.',
+				pagination: {
+					page: 'Página {{page}} de {{total}}',
+					prev: 'Anterior',
+					next: 'Siguiente',
+					perPage: 'Por página',
+					summary: 'Mostrando {{start}}-{{end}} de {{total}} turnos',
+				},
 			},
-			loading: 'Cargando turnos...',
-			loadingHint: 'Actualizamos el listado y los estados. Podés seguir navegando.',
-		},
 		clinicAvailability: {
 			title: 'Disponibilidad de la clínica (beta)',
 			description: 'Vista rápida de slots libres/ocupados para el nutri seleccionado. Próximamente podrás editar disponibilidad desde aquí.',
@@ -594,6 +653,7 @@ const translations: Record<Locale, Translation> = {
 			assignError: 'No se pudo asignar el nutri',
 			appointmentsRefreshed: 'Turnos actualizados',
 			appointmentRequested: 'Turno solicitado',
+			appointmentsRequestedMany: 'Solicitamos {{count}} turnos.',
 			linkRequired: 'Necesitás vincular tu paciente',
 			appointmentRequestError: 'No se pudo solicitar el turno',
 			patientLinked: 'Paciente vinculado',
@@ -809,11 +869,13 @@ const translations: Record<Locale, Translation> = {
 					manualLabel: 'Manual time',
 					manualHelp: 'No free slots in the selected range. Enter a manual time as fallback.',
 					manualInvalid: 'Enter a valid date and time (YYYY-MM-DD HH:MM).',
+					multiSelectHint: 'You can select multiple slots (Ctrl/Cmd + click) to prioritize times.',
 					rangeErrors: {
 						invalidRange: 'Enter a valid range to search for slots.',
 						endBeforeStart: 'The "to" date must be later than "from".',
 					},
 					slotRequired: 'Choose an available time or enter one manually.',
+					overlapBusy: 'That time conflicts with a busy slot. Pick another one.',
 				},
 				linking: {
 					title: 'You need to link your patient',
@@ -836,6 +898,22 @@ const translations: Record<Locale, Translation> = {
 				statusIconLabel: {
 					fallback: 'Status',
 				},
+				filters: {
+					title: 'Appointment filters',
+					status: 'Status',
+					allStatuses: 'All statuses',
+					patient: 'Patient',
+					patientPlaceholder: 'ID, email, or name',
+					nutri: 'Nutri',
+					nutriPlaceholder: 'Nutri UID',
+					clinic: 'Clinic',
+					allClinics: 'All',
+					from: 'From',
+					to: 'To',
+					reset: 'Clear filters',
+					resetHint: 'No appointments match the current filters. Try clearing the search.',
+					summary: 'Showing {{shown}} of {{total}} filtered appointments',
+				},
 				schedule: {
 					title: 'Schedule or reschedule',
 					loadSlots: 'Nutri slots',
@@ -845,19 +923,30 @@ const translations: Record<Locale, Translation> = {
 					noSlots: 'No free slots in range',
 					loadForNutri: 'Load slots for this nutri',
 					selectNutri: 'Choose nutri',
-					selectSlot: 'Load slots for this nutri',
-					manualFallback: 'Manual fallback',
-					manualInvalid: 'Enter a valid date and time (YYYY-MM-DD HH:MM).',
-					validDateRequired: 'A valid date is required to schedule',
-				},
-			quickActions: {
-				title: 'Quick actions',
-				cancel: 'Cancel',
-				complete: 'Complete',
+				selectSlot: 'Load slots for this nutri',
+				manualFallback: 'Manual fallback',
+				manualInvalid: 'Enter a valid date and time (YYYY-MM-DD HH:MM).',
+				validDateRequired: 'A valid date is required to schedule',
+				multiSelectHint: 'You can pick more than one slot to compare times.',
+				overlapBusy: 'The chosen slot overlaps with busy times.',
+				overlapSelected: 'That time is already selected for another appointment with this nutri.',
 			},
-			loading: 'Loading appointments...',
-			loadingHint: 'Refreshing the list and states. You can continue browsing.',
-		},
+				quickActions: {
+					title: 'Quick actions',
+					cancel: 'Cancel',
+					complete: 'Complete',
+				},
+				loading: 'Loading appointments...',
+				loadingHint: 'Refreshing the list and states. You can continue browsing.',
+				noFiltered: 'No results for the applied filters.',
+				pagination: {
+					page: 'Page {{page}} of {{total}}',
+					prev: 'Previous',
+					next: 'Next',
+					perPage: 'Per page',
+					summary: 'Showing {{start}}-{{end}} of {{total}} appointments',
+				},
+			},
 		clinicAvailability: {
 			title: 'Clinic availability (beta)',
 			description: 'Quick view of free/busy slots for the selected nutri. You will soon edit availability here.',
@@ -925,6 +1014,7 @@ const translations: Record<Locale, Translation> = {
 			assignError: 'Could not assign nutri',
 			appointmentsRefreshed: 'Appointments updated',
 			appointmentRequested: 'Appointment requested',
+			appointmentsRequestedMany: 'Requested {{count}} appointments.',
 			linkRequired: 'You need to link your patient',
 			appointmentRequestError: 'Could not request appointment',
 			patientLinked: 'Patient linked',
