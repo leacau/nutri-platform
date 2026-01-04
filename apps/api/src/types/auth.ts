@@ -1,19 +1,17 @@
-export type Role =
-	| 'platform_admin'
-	| 'clinic_admin'
-	| 'nutri'
-	| 'staff'
-	| 'patient';
+export type ClinicRole = 'clinic_admin' | 'nutri' | 'staff';
+
+export type Role = ClinicRole | 'platform_admin';
 
 export type AuthContext = {
 	uid: string;
 	email: string | null;
+	isPlatformAdmin: boolean;
 
-	/**
-	 * En Paso 2 NO hacemos enforcement de claims aún.
-	 * Esto queda opcional por ahora.
-	 * En Paso 3 se vuelve obligatorio para roles del equipo (clinic_admin/nutri/staff).
-	 */
-	role?: Role;
-	clinicId?: string;
+	role: Role | null;
+	clinicId: string | null;
+};
+
+export type PatientContext = {
+	patientId: string;
+	clinicId: string;
 };

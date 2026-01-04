@@ -1,7 +1,6 @@
-import type { ApiLogEntry } from '../api';
 import type { RoleCopy } from '../i18n';
 
-export type Claims = { role: string | null; clinicId: string | null };
+export type Claims = { isPlatformAdmin: boolean; role?: string | null; clinicId?: string | null };
 
 export type RoleTab = RoleCopy;
 
@@ -13,7 +12,7 @@ export type Toast = {
 
 export type ConfirmAction = { type: 'cancel' | 'complete'; apptId: string };
 
-export type LogEntry = ApiLogEntry;
+export type LogEntry = any;
 
 export type AuthedFetchResult =
 	| { ok: true; status: number; data: unknown; attempts: number; durationMs: number }
