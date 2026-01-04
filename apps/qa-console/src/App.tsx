@@ -1,1481 +1,926 @@
-import {
-	useEffect,
-	useCallback,
-	useMemo,
-	useRef,
-	useState,
-	lazy,
-	Suspense,
-	type ReactElement,
-} from 'react';
-import type { User } from 'firebase/auth';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import './App.css';
-import { fetchJSON } from './api';
-import { getCopy, supportedLocales, type Locale } from './i18n';
-import { ConfirmModal, ToastStack, Topbar } from './components';
-import { API_BASE_URL } from './config/env';
-const Landing = lazy(() => import('./pages/Landing'));
-const AuthPage = lazy(() => import('./pages/AuthPage'));
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-import type {
-	AuthedFetchResult,
-	BackendStatus,
-	ConfirmAction,
-	LogEntry,
-	RoleTab,
-	Toast,
-} from './types/app';
 import useAuthSession from './hooks/useAuthSession';
-import useDebouncedValue from './hooks/useDebouncedValue';
-import { formatAuditId, scrubPII } from './utils/privacy';
-import {
-	isValidDatetimeLocal,
-	isValidEmail,
-	isValidPhone,
-	toIsoFromDatetimeLocal,
-} from './utils/validation';
-import { createE2EStubApi } from './utils/e2eStubApi';
+import { getCopy, supportedLocales, type Locale } from './i18n';
 
-type ProtectedProps = {
-	user: User | null;
-	children: ReactElement;
+type ClinicRole = 'clinic_admin' | 'nutri' | 'staff';
+type Membership = { clinicId: string; clinicName: string | null; role: ClinicRole; uid?: string };
+
+type ApiLog = {
+	id: string;
+	ts: string;
+	method: string;
+	endpoint: string;
+	ok: boolean;
+	status: number;
+	request?: unknown;
+	response?: unknown;
 };
+
+type AuthedResult =
+	| { ok: true; status: number; data: any }
+	| { ok: false; status: number; error: string; data: any };
+
+type PatientForm = { name: string; email: string; phone: string };
+type SeedForm = { secret: string; clinicName: string; clinicId: string; users: string };
+type ScheduleForm = { when: string; nutriUid: string };
 
 function nowIso() {
 	return new Date().toISOString();
 }
 
-function createLogId() {
-	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-	return Math.random().toString(36).slice(2, 12);
+function randomId() {
+	return crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
 }
 
-function isoToDatetimeLocal(iso: string): string {
-	const d = new Date(iso);
-	if (!Number.isFinite(d.getTime())) return '';
-	const tzOffsetMinutes = d.getTimezoneOffset();
-	const localDate = new Date(d.getTime() - tzOffsetMinutes * 60 * 1000);
-	return localDate.toISOString().slice(0, 16);
-}
-
-function toReadableDate(v: unknown): string {
-	if (!v) return '—';
-	if (typeof v === 'string') {
-		const d = new Date(v);
-		return Number.isFinite(d.getTime()) ? d.toLocaleString() : v;
-	}
-	if (typeof v === 'object' && v !== null) {
-		const any = v as { _seconds?: number; _nanoseconds?: number };
-		if (typeof any._seconds === 'number') {
-			const ms = any._seconds * 1000 + Math.floor((any._nanoseconds ?? 0) / 1_000_000);
-			return new Date(ms).toLocaleString();
-		}
-	}
-	return String(v);
-}
-
-function toMillis(v: unknown): number | null {
-	if (typeof v === 'string') {
-		const ms = Date.parse(v);
-		return Number.isFinite(ms) ? ms : null;
-	}
-	if (typeof v === 'object' && v !== null) {
-		const any = v as { _seconds?: number; _nanoseconds?: number };
-		if (typeof any._seconds === 'number') {
-			return any._seconds * 1000 + Math.floor((any._nanoseconds ?? 0) / 1_000_000);
-		}
-	}
-	return null;
-}
-
-function getStringField(source: unknown, key: string): string | null {
-	if (source && typeof source === 'object' && key in source) {
-		const value = (source as Record<string, unknown>)[key];
-		return typeof value === 'string' ? value : null;
-	}
-	return null;
-}
-
-function getArrayField(source: unknown, key: string): unknown[] | null {
-	if (source && typeof source === 'object' && key in source) {
-		const value = (source as Record<string, unknown>)[key];
-		return Array.isArray(value) ? value : null;
-	}
-	return null;
-}
-
-function getObjectField(source: unknown, key: string): Record<string, unknown> | null {
-	if (source && typeof source === 'object' && key in source) {
-		const value = (source as Record<string, unknown>)[key];
-		return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
-	}
-	return null;
-}
-
-function defaultSlotWindow() {
-	const start = new Date();
-	const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-	return { fromIso: start.toISOString(), toIso: end.toISOString() };
-}
-
-function formatSlotLabel(iso: string) {
-	const d = new Date(iso);
-	if (!Number.isFinite(d.getTime())) return iso;
-	return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-}
-
-type AppointmentFilters = {
-	status: 'all' | 'requested' | 'scheduled' | 'completed' | 'cancelled';
-	patient: string;
-	nutri: string;
-	clinic: string;
-	from: string;
-	to: string;
-};
-
-type ScheduleSelection = {
-	slots: string[];
-	manualWhen?: string;
-	nutri: string;
-};
-
-function ProtectedRoute({ user, children }: ProtectedProps) {
+function ProtectedRoute({ user, children }: { user: unknown; children: ReactElement }) {
 	if (!user) return <Navigate to='/login' replace />;
 	return children;
 }
 
 export default function App() {
-	const API_BASE = API_BASE_URL;
-	const useE2EStubApi = import.meta.env.VITE_E2E_API_STUB === 'true';
-
 	const navigate = useNavigate();
-	const location = useLocation();
-
-	const {
-		user,
-		claims,
-		sessionError,
-		login,
-		register,
-		refreshClaims,
-		getValidIdToken,
-		logoutAndRevoke,
-		clearSessionError,
-	} = useAuthSession();
-	const [loading, setLoading] = useState(false);
-	const [patientsLoading, setPatientsLoading] = useState(false);
-	const [appointmentsLoading, setAppointmentsLoading] = useState(false);
-	const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-		if (typeof window === 'undefined') return 'light';
-		const stored = window.localStorage.getItem('qa-console-theme');
-		if (stored === 'light' || stored === 'dark') return stored;
-		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-	});
 	const [locale, setLocale] = useState<Locale>(() => {
-		if (typeof window === 'undefined') return 'es';
 		const stored = window.localStorage.getItem('qa-console-locale');
 		if (stored && supportedLocales.includes(stored as Locale)) return stored as Locale;
 		return 'es';
 	});
-	const copy = useMemo(() => getCopy(locale), [locale]);
+	const {
+		user,
+		isPlatformAdmin,
+		claims,
+		sessionError,
+		login,
+		register,
+		getValidIdToken,
+		logoutAndRevoke,
+		clearSessionError,
+	} = useAuthSession();
 
-	const authFieldRefs = useRef<{ email: HTMLInputElement | null; password: HTMLInputElement | null }>(
-		{ email: null, password: null }
+	const [sessionClinics, setSessionClinics] = useState<Membership[]>([]);
+	const [activeClinicId, setActiveClinicId] = useState<string | null>(() => {
+		return window.localStorage.getItem('qa-active-clinic') || null;
+	});
+	const activeMembership = useMemo(
+		() => sessionClinics.find((c) => c.clinicId === activeClinicId) ?? null,
+		[activeClinicId, sessionClinics]
 	);
-	const setAuthFieldRef = (field: 'email' | 'password', ref: HTMLInputElement | null) => {
-		authFieldRefs.current[field] = ref;
-	};
-	const patientNameInputRef = useRef<HTMLInputElement | null>(null);
-	const apptNutriSelectRef = useRef<HTMLSelectElement | null>(null);
-	const apptFromInputRef = useRef<HTMLInputElement | null>(null);
-	const [stickyAuthField, setStickyAuthField] = useState<'email' | 'password' | null>(null);
+	const effectiveRole: ClinicRole | 'platform_admin' | null = isPlatformAdmin
+		? 'platform_admin'
+		: activeMembership?.role ?? null;
 
-	const [email, setEmail] = useState('qa1@test.com');
-	const [password, setPassword] = useState('Passw0rd!');
-	const [showPassword, setShowPassword] = useState(false);
+	const API_BASE = import.meta.env.VITE_API_BASE_URL as string;
+
+	const [authEmail, setAuthEmail] = useState('qa1@test.com');
+	const [authPassword, setAuthPassword] = useState('Passw0rd!');
 	const [authPending, setAuthPending] = useState(false);
-	const [authActionError, setAuthActionError] = useState<string | null>(null);
-	const [emailError, setEmailError] = useState<string | null>(null);
-	const [passwordError, setPasswordError] = useState<string | null>(null);
-	const [authErrors, setAuthErrors] = useState<string[]>([]);
-	const sessionErrorRef = useRef<string | null>(null);
-	const [toasts, setToasts] = useState<Toast[]>([]);
-	const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+	const [authMessage, setAuthMessage] = useState<string | null>(null);
 
-	const [backendStatus, setBackendStatus] = useState<BackendStatus>({
-		state: 'unknown',
-		message: copy.dashboard.backend.unknown,
+	const [logs, setLogs] = useState<ApiLog[]>([]);
+
+	const [seedForm, setSeedForm] = useState<SeedForm>({
+		secret: '',
+		clinicId: '',
+		clinicName: 'Clinica Demo',
+		users: 'admin@test.com:clinic_admin,nutri@test.com:nutri,staff@test.com:staff',
 	});
-	const [apiErrorCount, setApiErrorCount] = useState(0);
-	const [logs, setLogs] = useState<LogEntry[]>([]);
 
-	const roleTabs = useMemo<RoleTab[]>(() => copy.roleTabs, [copy]);
-	const [activeRoleTab, setActiveRoleTab] = useState<RoleTab['key']>('patient');
-
-	// Pacientes
-	const [pName, setPName] = useState('Juan Perez');
-	const [pEmail, setPEmail] = useState('juan@test.com');
-	const [pPhone, setPPhone] = useState('+549341000000');
-	const [patientErrors, setPatientErrors] = useState<{ email: string | null; phone: string | null }>({
-		email: null,
-		phone: null,
+	const [patients, setPatients] = useState<any[]>([]);
+	const [patientsLoading, setPatientsLoading] = useState(false);
+	const [patientForm, setPatientForm] = useState<PatientForm>({
+		name: 'Paciente Demo',
+		email: 'paciente@test.com',
+		phone: '+549111111111',
 	});
-	const [patientAssignSelections, setPatientAssignSelections] = useState<
-		Record<string, string>
-	>({});
-	const [patients, setPatients] = useState<unknown[]>([]);
 
-	// Turnos
-	const defaultWindow = useMemo(() => defaultSlotWindow(), []);
-	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-	const [apptRequestSlots, setApptRequestSlots] = useState<string[]>([]);
-	const [apptManualSlot, setApptManualSlot] = useState('');
-	const [slotRangeFrom, setSlotRangeFrom] = useState(
-		isoToDatetimeLocal(defaultWindow.fromIso)
-	);
-	const [slotRangeTo, setSlotRangeTo] = useState(
-		isoToDatetimeLocal(defaultWindow.toIso)
-	);
-	const [apptSlots, setApptSlots] = useState<string[]>([]);
-	const [apptBusySlots, setApptBusySlots] = useState<string[]>([]);
-	const [loadingSlots, setLoadingSlots] = useState(false);
-	const [currentSlotsNutri, setCurrentSlotsNutri] = useState<string>('');
-	const [slotRangeError, setSlotRangeError] = useState<string | null>(null);
-	const [appointmentFormError, setAppointmentFormError] = useState<string | null>(null);
-	const [scheduleSelections, setScheduleSelections] = useState<
-		Record<string, ScheduleSelection>
-	>({});
-	const [auditRefs, setAuditRefs] = useState<Record<string, string>>({});
-	const [scheduleErrors, setScheduleErrors] = useState<Record<string, string | null>>({});
-	const [appointments, setAppointments] = useState<unknown[]>([]);
-	const [appointmentFilters, setAppointmentFilters] = useState<AppointmentFilters>({
-		status: 'all',
-		patient: '',
-		nutri: '',
-		clinic: '',
-		from: '',
-		to: '',
-	});
-	const [appointmentPage, setAppointmentPage] = useState(1);
-	const [appointmentsPerPage, setAppointmentsPerPage] = useState(5);
-	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
-		useState<string>('');
-	const [linkRequired, setLinkRequired] = useState<{ active: boolean; reason?: string }>({
-		active: false,
+	const [members, setMembers] = useState<Membership[]>([]);
+	const [appointments, setAppointments] = useState<any[]>([]);
+	const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+	const [scheduleForms, setScheduleForms] = useState<Record<string, ScheduleForm>>({});
+	const [profilePatientId, setProfilePatientId] = useState('');
+	const [profileData, setProfileData] = useState<Record<string, any>>({});
+	const [visitForm, setVisitForm] = useState<{ patientId: string; reason: string; notes: string }>({
+		patientId: '',
 		reason: '',
+		notes: '',
 	});
-	const [linkFlowMessage, setLinkFlowMessage] = useState<string | null>(null);
-	const [linking, setLinking] = useState(false);
-
-	const getBackendMessage = useCallback(
-		(state: BackendStatus['state']) => {
-			if (state === 'online') return copy.dashboard.backend.online;
-			if (state === 'offline') return copy.dashboard.backend.offline;
-			if (state === 'degraded') return copy.dashboard.backend.degraded;
-			return copy.dashboard.backend.unknown;
-		},
-		[copy.dashboard.backend.degraded, copy.dashboard.backend.offline, copy.dashboard.backend.online, copy.dashboard.backend.unknown]
-	);
-
-	const setBackendState = (state: BackendStatus['state']) => {
-		setBackendStatus({
-			state,
-			message: getBackendMessage(state),
-			lastChecked: nowIso(),
-		});
-	};
-
-	const sanitizeLogEntry = (entry: LogEntry): LogEntry => ({
-		...entry,
-		request: entry.request
-			? {
-					...entry.request,
-					body: scrubPII(entry.request.body),
-					headers: entry.request.headers,
-			  }
-			: undefined,
-		response: entry.response ? { ...entry.response, body: scrubPII(entry.response.body) } : undefined,
-		error: entry.error ? scrubPII(entry.error) : entry.error,
+	const [metricForm, setMetricForm] = useState<{ patientId: string; weightKg: string }>({
+		patientId: '',
+		weightKg: '',
+	});
+	const [planForm, setPlanForm] = useState<{ patientId: string; nutriUid: string; type: string }>({
+		patientId: '',
+		nutriUid: '',
+		type: 'weight_loss',
+	});
+	const [noteForm, setNoteForm] = useState<{ patientId: string; content: string; visibility: 'private' | 'shared' }>({
+		patientId: '',
+		content: '',
+		visibility: 'private',
 	});
 
-	const appendLog = (entry: LogEntry) => {
-		const safeEntry = sanitizeLogEntry(entry);
-		setLogs((prev) => [...prev.slice(-99), safeEntry]);
-	};
+	function pushLog(entry: Omit<ApiLog, 'id' | 'ts'>) {
+		setLogs((prev) => [
+			...prev.slice(-99),
+			{ ...entry, id: randomId(), ts: nowIso() },
+		]);
+	}
 
-	const logManual = (input: {
-		endpoint: string;
-		method?: string;
-		ok: boolean;
-		status?: number;
-		payload?: unknown;
-		data?: unknown;
-		error?: string;
-	}) =>
-		appendLog({
-			id: createLogId(),
-			ts: nowIso(),
-			method: input.method ?? 'APP',
-			endpoint: input.endpoint,
-			url: `${API_BASE}${input.endpoint}`,
-			ok: input.ok,
-			status: input.status,
-			durationMs: 0,
-			attempt: 1,
-			retries: 0,
-			request: input.payload ? { body: input.payload } : undefined,
-			response: input.data !== undefined ? { body: input.data } : undefined,
-			error: input.error,
+	async function authedFetch(
+		method: 'GET' | 'POST' | 'PATCH' | 'PUT',
+		endpoint: string,
+		body?: unknown,
+		opts?: { includeClinicHeader?: boolean }
+	): Promise<AuthedResult> {
+		const token = await getValidIdToken();
+		if (!token) {
+			return { ok: false, status: 401, error: 'No hay sesión activa', data: null };
+		}
+
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${token}`,
+		};
+		if (body !== undefined) headers['Content-Type'] = 'application/json';
+		if (opts?.includeClinicHeader !== false && activeClinicId && isPlatformAdmin) {
+			headers['X-Clinic-Id'] = activeClinicId;
+		}
+
+		let responseData: any = null;
+		let ok = false;
+		let status = 0;
+		let error: string | undefined;
+		try {
+			const res = await fetch(`${API_BASE}${endpoint}`, {
+				method,
+				headers,
+				body: body !== undefined ? JSON.stringify(body) : undefined,
+			});
+			status = res.status;
+			const text = await res.text();
+			try {
+				responseData = text ? JSON.parse(text) : null;
+			} catch {
+				responseData = text;
+			}
+			ok = res.ok;
+			if (!ok) {
+				error =
+					(typeof responseData === 'object' && responseData && 'message' in responseData
+						? (responseData as any).message
+						: null) ?? `Request failed with status ${status}`;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Network error';
+		}
+
+		pushLog({
+			method,
+			endpoint,
+			ok,
+			status,
+			request: body,
+			response: responseData ?? error,
 		});
 
-	const reversedLogs = useMemo(() => [...logs].reverse(), [logs]);
-	const isDark = theme === 'dark';
-	const toggleTheme = useCallback(() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light')), []);
+		if (ok) return { ok: true, status, data: responseData };
+		return { ok: false, status: status || 0, error: error ?? 'Unknown error', data: responseData };
+	}
 
-	const setValidatedPEmail: typeof setPEmail = (value) =>
-		setPEmail((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value;
-			setPatientErrors((prevErrors) => ({
-				...prevErrors,
-				email: next && !isValidEmail(next) ? copy.dashboard.patients.errors.emailInvalid : null,
-			}));
-			return next;
-		});
-
-	const setValidatedPPhone: typeof setPPhone = (value) =>
-		setPPhone((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value;
-			setPatientErrors((prevErrors) => ({
-				...prevErrors,
-				phone: next && !isValidPhone(next) ? copy.dashboard.patients.errors.phoneInvalid : null,
-			}));
-			return next;
-		});
-
-	const setSlotRangeFromInput: typeof setSlotRangeFrom = (value) =>
-		setSlotRangeFrom((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value;
-			setSlotRangeError(null);
-			return next;
-		});
-
-	const setSlotRangeToInput: typeof setSlotRangeTo = (value) =>
-		setSlotRangeTo((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value;
-			setSlotRangeError(null);
-			return next;
-		});
-
-	const setValidatedApptManualSlot: typeof setApptManualSlot = (value) =>
-		setApptManualSlot((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value;
-			const manualIssue = next
-				? isValidDatetimeLocal(next)
-					? null
-					: copy.dashboard.appointments.form.manualInvalid
-				: null;
-			setAppointmentFormError(manualIssue);
-			return next;
-		});
-
-	useEffect(() => {
-		setPatientErrors({
-			email: pEmail && !isValidEmail(pEmail) ? copy.dashboard.patients.errors.emailInvalid : null,
-			phone: pPhone && !isValidPhone(pPhone) ? copy.dashboard.patients.errors.phoneInvalid : null,
-		});
-	}, [copy, pEmail, pPhone]);
-
-	useEffect(() => {
-		if (location.pathname.startsWith('/login')) {
-			setStickyAuthField('email');
-			authFieldRefs.current.email?.focus({ preventScroll: true });
+	const refreshSession = async () => {
+		if (!user) return;
+		const res = await authedFetch('GET', '/session', undefined, { includeClinicHeader: false });
+		if (!res.ok) {
+			setAuthMessage(res.error ?? 'No se pudo cargar la sesión');
 			return;
 		}
-		if (location.pathname.startsWith('/dashboard')) {
-			if (patientNameInputRef.current) {
-				patientNameInputRef.current.focus({ preventScroll: true });
-			} else {
-				apptNutriSelectRef.current?.focus({ preventScroll: true });
-			}
+		const clinics = Array.isArray(res.data?.data?.clinics)
+			? (res.data.data.clinics as Membership[])
+			: [];
+		setSessionClinics(clinics);
+		if (!activeClinicId && clinics.length > 0) {
+			const first = clinics[0].clinicId;
+			setActiveClinicId(first);
+			window.localStorage.setItem('qa-active-clinic', first);
 		}
-	}, [location.pathname]);
+	};
 
 	useEffect(() => {
-		const ref = stickyAuthField ? authFieldRefs.current[stickyAuthField] : null;
-		ref?.focus({ preventScroll: true });
-	}, [stickyAuthField]);
-
-	useEffect(() => {
-		const inlineErrors: string[] = [];
-		if (emailError) inlineErrors.push(emailError);
-		if (passwordError) inlineErrors.push(passwordError);
-		if (authActionError) inlineErrors.push(authActionError);
-		if (sessionError) inlineErrors.push(sessionError);
-		setAuthErrors(inlineErrors);
-	}, [emailError, passwordError, authActionError, sessionError]);
-
-	useEffect(() => {
-		if (sessionError && sessionError !== sessionErrorRef.current) {
-			pushToast(sessionError, 'error');
-			sessionErrorRef.current = sessionError;
-		} else if (!sessionError) {
-			sessionErrorRef.current = null;
-		}
-	}, [sessionError]);
-
-	useEffect(() => {
-		document.documentElement.setAttribute('data-theme', theme);
-		window.localStorage.setItem('qa-console-theme', theme);
-	}, [theme]);
-
-	useEffect(() => {
-		document.documentElement.setAttribute('lang', locale);
-		window.localStorage.setItem('qa-console-locale', locale);
-	}, [locale]);
-
-	useEffect(() => {
-		const handleHotkeys = (event: KeyboardEvent) => {
-			if (!(event.shiftKey && (event.metaKey || event.ctrlKey))) return;
-			const key = event.key.toLowerCase();
-			if (['input', 'textarea', 'select'].includes((event.target as HTMLElement)?.tagName?.toLowerCase())) {
-				// allow hotkeys while typing without blocking text shortcuts
-				if (key !== 't') return;
-			}
-			event.preventDefault();
-			if (key === 't') toggleTheme();
-			else if (key === 'l') {
-				navigate('/login');
-				window.requestAnimationFrame(() => authFieldRefs.current.email?.focus({ preventScroll: true }));
-			} else if (key === 'd') {
-				navigate('/dashboard');
-			} else if (key === 'p') {
-				patientNameInputRef.current?.focus({ preventScroll: true });
-			} else if (key === 'a') {
-				(apptNutriSelectRef.current ?? apptFromInputRef.current)?.focus({ preventScroll: true });
-			}
-		};
-
-		window.addEventListener('keydown', handleHotkeys);
-		return () => window.removeEventListener('keydown', handleHotkeys);
-	}, [navigate, toggleTheme]);
-
-	useEffect(() => {
-		setBackendStatus((prev) => ({
-			...prev,
-			message: getBackendMessage(prev.state),
-		}));
-	}, [getBackendMessage]);
-
-	useEffect(() => {
-		if (apptRequestSlots.length > 0 || apptManualSlot) setAppointmentFormError(null);
-	}, [apptManualSlot, apptRequestSlots.length]);
-
-	useEffect(() => {
-		if (claims.role === 'patient') setActiveRoleTab('patient');
-		else if (claims.role === 'nutri') setActiveRoleTab('nutri');
-		else if (claims.role === 'clinic_admin') setActiveRoleTab('clinic_admin');
-		else if (claims.role === 'platform_admin') setActiveRoleTab('platform_admin');
-	}, [claims.role]);
-
-	const activeRoleContent = useMemo(
-		() => roleTabs.find((t) => t.key === activeRoleTab) ?? roleTabs[0],
-		[activeRoleTab, roleTabs]
-	);
-
-	const knownNutris = useMemo(() => {
-		const seed = new Set<string>(['nutri-demo-1', 'nutri-demo-2']);
-		if (claims.role === 'nutri' && user?.uid) seed.add(user.uid);
-		patients.forEach((p) => {
-			const n = getStringField(p, 'assignedNutriUid');
-			if (typeof n === 'string' && n) seed.add(n);
-		});
-		appointments.forEach((a) => {
-			const n = getStringField(a, 'nutriUid');
-			if (typeof n === 'string' && n) seed.add(n);
-		});
-		return Array.from(seed);
-	}, [patients, appointments, claims.role, user?.uid]);
-
-	useEffect(() => {
-		if (!apptRequestNutriUid && knownNutris.length > 0) {
-			setApptRequestNutriUid(knownNutris[0]);
-		}
-	}, [apptRequestNutriUid, knownNutris]);
-
-	const clinicOptions = useMemo(() => {
-		const seed = new Set<string>();
-		if (claims.clinicId) seed.add(claims.clinicId);
-		patients.forEach((p) => {
-			const cid = getStringField(p, 'clinicId');
-			if (typeof cid === 'string' && cid) seed.add(cid);
-		});
-		appointments.forEach((a) => {
-			const cid = getStringField(a, 'clinicId');
-			if (typeof cid === 'string' && cid) seed.add(cid);
-		});
-		return Array.from(seed);
-	}, [claims.clinicId, patients, appointments]);
-
-	const debouncedPatientFilter = useDebouncedValue(appointmentFilters.patient, 320);
-	const debouncedNutriFilter = useDebouncedValue(appointmentFilters.nutri, 320);
-
-	const filteredAppointments = useMemo(() => {
-		const fromIso = toIsoFromDatetimeLocal(appointmentFilters.from);
-		const toIso = toIsoFromDatetimeLocal(appointmentFilters.to);
-		const patientTerm = debouncedPatientFilter.trim().toLowerCase();
-		const nutriTerm = debouncedNutriFilter.trim().toLowerCase();
-		const clinicFilter = appointmentFilters.clinic.trim().toLowerCase();
-		const statusFilter = appointmentFilters.status;
-
-		return appointments.filter((a) => {
-			const appt = a as Record<string, unknown>;
-			const status = (appt.status as string) ?? 'requested';
-			if (statusFilter !== 'all' && status !== statusFilter) return false;
-
-			const clinicId = (appt.clinicId as string) ?? '';
-			if (clinicFilter && clinicId.toLowerCase() !== clinicFilter) return false;
-
-			if (patientTerm) {
-				const patientUid = getStringField(appt, 'patientUid') ?? '';
-				const patientId = getStringField(appt, 'patientId') ?? '';
-				const patientEmail = getStringField(appt, 'patientEmail') ?? '';
-				const patientName = getStringField(appt, 'patientName') ?? '';
-				const matchesPatient = [patientUid, patientId, patientEmail, patientName]
-					.filter(Boolean)
-					.some((value) => value.toLowerCase().includes(patientTerm));
-				if (!matchesPatient) return false;
-			}
-
-			if (nutriTerm) {
-				const nutriUid = getStringField(appt, 'nutriUid') ?? '';
-				if (!nutriUid.toLowerCase().includes(nutriTerm)) return false;
-			}
-
-			const compareDate =
-				toMillis((appt as Record<string, unknown>).scheduledFor) ??
-				toMillis((appt as Record<string, unknown>).requestedAt);
-			if (fromIso && compareDate !== null && compareDate < Date.parse(fromIso)) return false;
-			if (toIso && compareDate !== null && compareDate > Date.parse(toIso)) return false;
-
-			return true;
-		});
-	}, [
-		appointments,
-		appointmentFilters.clinic,
-		appointmentFilters.from,
-		appointmentFilters.status,
-		appointmentFilters.to,
-		debouncedNutriFilter,
-		debouncedPatientFilter,
-	]);
-
-	const totalAppointmentPages = useMemo(
-		() => Math.max(1, Math.ceil(filteredAppointments.length / Math.max(appointmentsPerPage, 1))),
-		[appointmentsPerPage, filteredAppointments.length]
-	);
-
-	useEffect(() => {
-		setAppointmentPage(1);
-	}, [appointmentFilters, appointmentsPerPage]);
-
-	useEffect(() => {
-		setAppointmentPage((prev) => Math.min(prev, totalAppointmentPages));
-	}, [totalAppointmentPages]);
-
-	const visibleAppointments = useMemo(() => {
-		const safePage = Math.min(appointmentPage, totalAppointmentPages);
-		const start = (safePage - 1) * Math.max(appointmentsPerPage, 1);
-		const end = start + Math.max(appointmentsPerPage, 1);
-		return filteredAppointments.slice(start, end);
-	}, [appointmentPage, appointmentsPerPage, filteredAppointments, totalAppointmentPages]);
-
-	useEffect(() => {
-		if (claims.clinicId) {
-			setSelectedClinicForNewPatient((prev) => prev || claims.clinicId || '');
-		}
-	}, [claims.clinicId]);
-
-	useEffect(() => {
-		setLinkRequired({ active: false, reason: '' });
-		setLinkFlowMessage(null);
-		setLinking(false);
-	}, [user?.uid]);
-
-	useEffect(() => {
-		if (!user) {
-			setSelectedClinicForNewPatient('');
+		if (user) {
+			void refreshSession();
+		} else {
+			setSessionClinics([]);
+			setActiveClinicId(null);
 		}
 	}, [user]);
 
 	useEffect(() => {
-		if (!selectedClinicForNewPatient && clinicOptions.length > 0) {
-			setSelectedClinicForNewPatient(clinicOptions[0]);
+		if (claims.clinicId && !activeClinicId) {
+			setActiveClinicId(claims.clinicId);
 		}
-	}, [clinicOptions, selectedClinicForNewPatient]);
+	}, [claims.clinicId, activeClinicId]);
 
-	useEffect(() => {
-		if (!apptRequestNutriUid && knownNutris.length > 0) {
-			setApptRequestNutriUid(knownNutris[0]);
+	const handleLogin = async (action: 'login' | 'register') => {
+		setAuthPending(true);
+		setAuthMessage(null);
+		const fn = action === 'login' ? login : register;
+		const res = await fn(authEmail, authPassword);
+		setAuthPending(false);
+		if (res.ok) {
+			setAuthMessage(null);
+			await refreshSession();
+			navigate('/dashboard');
+		} else {
+			setAuthMessage(res.error ?? 'Error');
 		}
-	}, [knownNutris, apptRequestNutriUid]);
+	};
 
-	useEffect(() => {
-		if (!apptRequestNutriUid) return;
-		handleLoadSlots(apptRequestNutriUid);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [apptRequestNutriUid]);
+	const handleLogout = async () => {
+		await logoutAndRevoke();
+		setSessionClinics([]);
+		setActiveClinicId(null);
+		setPatients([]);
+		setAppointments([]);
+	};
 
-	function pushToast(message: string, tone: Toast['tone'] = 'info') {
-		const id =
-			typeof crypto !== 'undefined' && 'randomUUID' in crypto
-				? crypto.randomUUID()
-				: Math.random().toString(36).slice(2);
-		setToasts((prev) => [...prev, { id, message, tone }]);
-		window.setTimeout(() => {
-			setToasts((prev) => prev.filter((t) => t.id !== id));
-		}, 3800);
-	}
-
-	const e2eApi = useMemo(() => (useE2EStubApi ? createE2EStubApi() : null), [useE2EStubApi]);
-
-	async function authedFetch(
-		method: 'GET' | 'POST' | 'PATCH',
-		endpoint: string,
-		body?: unknown
-	): Promise<AuthedFetchResult> {
-		if (!user) {
-			const error = copy.errors.unauthenticated;
-			logManual({ endpoint, payload: body, ok: false, status: 401, error });
-			return { ok: false, status: 401, data: null, error, attempts: 0, durationMs: 0 };
-		}
-
-		if (useE2EStubApi && e2eApi) {
-			const stubResult = e2eApi.handle(method, endpoint, body);
-			appendLog({
-				id: createLogId(),
-				ts: nowIso(),
-				method,
-				endpoint,
-				url: endpoint,
-				ok: stubResult.ok,
-				status: stubResult.status,
-				durationMs: stubResult.durationMs,
-				attempt: stubResult.attempts,
-				retries: Math.max(0, stubResult.attempts - 1),
-				request: body ? { body } : undefined,
-				response: stubResult.ok ? { body: stubResult.data } : undefined,
-				error: stubResult.ok ? undefined : stubResult.error,
+	const handleSeed = async () => {
+		const [adminEntry, ...rest] = seedForm.users.split(',').map((s) => s.trim()).filter(Boolean);
+		const usersPayload = [adminEntry, ...rest]
+			.filter(Boolean)
+			.map((entry) => {
+				const [email, role] = entry.split(':');
+				return { uid: email.trim(), email: email.trim(), roleInClinic: role?.trim() ?? 'staff' };
 			});
-			if (stubResult.ok) {
-				setBackendState('online');
-				return stubResult;
-			}
-			setApiErrorCount((prev) => prev + 1);
-			setBackendState('degraded');
-			return stubResult;
-		}
 
-		const token = await getValidIdToken();
-		if (!token) {
-			const error = sessionError ?? copy.errors.unauthenticated;
-			logManual({ endpoint, payload: body, ok: false, status: 401, error });
-			return { ok: false, status: 401, data: null, error, attempts: 0, durationMs: 0 };
-		}
+		const payload = {
+			secret: seedForm.secret,
+			clinic: { clinicId: seedForm.clinicId || undefined, name: seedForm.clinicName || 'Clinica Demo' },
+			users: usersPayload,
+		};
 
-		const result = await fetchJSON({
-			baseUrl: API_BASE,
-			endpoint,
-			method,
-			body,
-			headers: { Authorization: `Bearer ${token}` },
-			timeoutMs: 12_000,
-			retries: 2,
-			onLog: appendLog,
+		const res = await authedFetch('POST', '/dev/seed', payload, { includeClinicHeader: false });
+		if (res.ok) {
+			setAuthMessage('Seed OK');
+			await refreshSession();
+		} else {
+			setAuthMessage(res.error ?? 'Seed failed');
+		}
+	};
+
+	const loadMembers = async () => {
+		if (!activeClinicId) return;
+		const res = await authedFetch('GET', `/clinics/${activeClinicId}/members`);
+		if (res.ok) {
+			const items = Array.isArray(res.data?.data) ? res.data.data : [];
+			const mapped: Membership[] = items.map((m: any) => ({
+				clinicId: m.clinicId,
+				clinicName: null,
+				role: m.role,
+				uid: m.uid,
+			}));
+			setMembers(mapped);
+		}
+	};
+
+	const loadPatients = async () => {
+		if (!activeClinicId) {
+			setAuthMessage('Seleccioná una clínica activa');
+			return;
+		}
+		setPatientsLoading(true);
+		const res = await authedFetch('GET', '/patients');
+		setPatientsLoading(false);
+		if (res.ok) {
+			setPatients(Array.isArray(res.data?.data) ? res.data.data : []);
+		} else {
+			setAuthMessage(res.error ?? 'No se pudieron cargar pacientes');
+		}
+	};
+
+	const createPatient = async () => {
+		if (!activeClinicId) {
+			setAuthMessage('Seleccioná una clínica activa');
+			return;
+		}
+		const res = await authedFetch('POST', '/patients', {
+			name: patientForm.name,
+			email: patientForm.email || null,
+			phone: patientForm.phone || null,
 		});
-
-		if (result.ok) {
-			setBackendState('online');
-			return result;
+		if (res.ok) {
+			await loadPatients();
+		} else {
+			setAuthMessage(res.error ?? 'No se pudo crear paciente');
 		}
+	};
 
-		setApiErrorCount((prev) => prev + 1);
-		setBackendState(result.status === 0 ? 'offline' : 'degraded');
-		const fallbackError =
-			result.error ?? getStringField(result.data, 'message') ?? copy.errors.unknown;
-		return { ...result, error: fallbackError };
-	}
+	const assignNutri = async (patientId: string, nutriUid: string | null) => {
+		const res = await authedFetch('POST', `/patients/${patientId}/assign-nutri`, {
+			nutriUid,
+		});
+		if (res.ok) await loadPatients();
+	};
 
-function getEmailError(value: string) {
-	if (!value.trim()) return copy.auth.errors.emailRequired;
-	if (!isValidEmail(value)) return copy.auth.errors.emailInvalid;
-	return null;
-}
-
-	function getPasswordError(value: string) {
-		if (!value) return copy.auth.errors.passwordRequired;
-		if (value.length < 6) return copy.auth.errors.passwordLength;
-		return null;
-	}
-
-	function validateAuthForm() {
-		const emailIssue = getEmailError(email);
-		const passwordIssue = getPasswordError(password);
-		setEmailError(emailIssue);
-		setPasswordError(passwordIssue);
-		if (emailIssue) setStickyAuthField('email');
-		else if (passwordIssue) setStickyAuthField('password');
-		return !emailIssue && !passwordIssue;
-	}
-
-	async function handleLogin() {
-		if (!validateAuthForm()) return;
-		setLoading(true);
-		setAuthPending(true);
-		setAuthActionError(null);
-		clearSessionError();
-		try {
-			const result = await login(email, password);
-			if (result.ok && result.user) {
-				logManual({ endpoint: '/auth/login', method: 'AUTH', ok: true, payload: { email }, data: { uid: result.user.uid } });
-				pushToast(copy.toasts.sessionStarted, 'success');
-				navigate('/dashboard');
-			} else {
-				const msg = result.error ?? copy.errors.unknown;
-				setAuthActionError(msg);
-				logManual({ endpoint: '/auth/login', method: 'AUTH', ok: false, payload: { email }, error: msg });
-				pushToast(copy.toasts.loginError, 'error');
-				setStickyAuthField('email');
-			}
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : copy.errors.unknown;
-			setAuthActionError(msg);
-			logManual({ endpoint: '/auth/login', method: 'AUTH', ok: false, payload: { email }, error: msg });
-			pushToast(copy.toasts.loginError, 'error');
-			setStickyAuthField('email');
-		} finally {
-			setLoading(false);
-			setAuthPending(false);
-		}
-	}
-
-	async function handleRegister() {
-		if (!validateAuthForm()) return;
-		setLoading(true);
-		setAuthPending(true);
-		setAuthActionError(null);
-		clearSessionError();
-		try {
-			const result = await register(email, password);
-			if (result.ok && result.user) {
-				logManual({
-					endpoint: '/auth/register',
-					method: 'AUTH',
-					ok: true,
-					payload: { email },
-					data: { uid: result.user.uid },
-				});
-				pushToast(copy.toasts.accountCreated, 'success');
-				navigate('/dashboard');
-			} else {
-				const msg = result.error ?? copy.errors.unknown;
-				setAuthActionError(msg);
-				logManual({ endpoint: '/auth/register', method: 'AUTH', ok: false, payload: { email }, error: msg });
-				pushToast(copy.toasts.registerError, 'error');
-				setStickyAuthField('email');
-			}
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : copy.errors.unknown;
-			setAuthActionError(msg);
-			logManual({ endpoint: '/auth/register', method: 'AUTH', ok: false, payload: { email }, error: msg });
-			pushToast(copy.toasts.registerError, 'error');
-			setStickyAuthField('email');
-		} finally {
-			setLoading(false);
-			setAuthPending(false);
-		}
-	}
-
-	async function handleLogout() {
-		setLoading(true);
-		try {
-			const result = await logoutAndRevoke();
-			if (result.error) {
-				logManual({ endpoint: '/auth/logout', method: 'AUTH', ok: false, error: result.error });
-				pushToast(copy.errors.logoutRevoke, 'error');
-			} else {
-				logManual({ endpoint: '/auth/logout', method: 'AUTH', ok: true, data: { ok: true } });
-				pushToast(copy.toasts.logoutSuccess, 'info');
-			}
-			setPatients([]);
-			setAppointments([]);
-			setAuditRefs({});
-			navigate('/login');
-		} catch (err) {
-			logManual({
-				endpoint: '/auth/logout',
-				method: 'AUTH',
-				ok: false,
-				error: err instanceof Error ? err.message : copy.errors.unknown,
-			});
-			pushToast(copy.toasts.logoutError, 'error');
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleRefreshClaims() {
-		setLoading(true);
-		try {
-			if (!user) {
-				logManual({ endpoint: '/auth/refresh', method: 'AUTH', ok: false, error: 'Sin usuario logueado' });
-				return;
-			}
-			const ok = await refreshClaims();
-			if (ok) {
-				logManual({
-					endpoint: '/auth/refresh',
-					method: 'AUTH',
-					ok: true,
-					data: { role: claims.role, clinicId: claims.clinicId },
-				});
-				pushToast(copy.toasts.claimsRefreshed, 'success');
-			} else {
-				const error = sessionError ?? copy.errors.refreshSession;
-				logManual({ endpoint: '/auth/refresh', method: 'AUTH', ok: false, error });
-				pushToast(copy.toasts.claimsError, 'error');
-			}
-		} catch (err) {
-			logManual({
-				endpoint: '/auth/refresh',
-				method: 'AUTH',
-				ok: false,
-				error: err instanceof Error ? err.message : copy.errors.unknown,
-			});
-			pushToast(copy.toasts.claimsError, 'error');
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleGetMe() {
-		setLoading(true);
-		try {
-			await authedFetch('GET', '/users/me');
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleCreatePatient() {
-		const emailIssue = pEmail ? (!isValidEmail(pEmail) ? copy.dashboard.patients.errors.emailInvalid : null) : null;
-		const phoneIssue = pPhone ? (!isValidPhone(pPhone) ? copy.dashboard.patients.errors.phoneInvalid : null) : null;
-		setPatientErrors({ email: emailIssue, phone: phoneIssue });
-		if (emailIssue || phoneIssue) return;
-		setLoading(true);
-		setPatientsLoading(true);
-		try {
-			const created = await authedFetch('POST', '/patients', {
-				name: pName,
-				email: pEmail || null,
-				phone: pPhone || null,
-				clinicId: selectedClinicForNewPatient || undefined,
-			});
-			if (created.ok) {
-				await handleListPatients();
-				pushToast(copy.toasts.patientCreated, 'success');
-			} else {
-				pushToast(copy.toasts.patientError, 'error');
-			}
-		} finally {
-			setLoading(false);
-			setPatientsLoading(false);
-		}
-	}
-
-	async function handleListPatients() {
-		setLoading(true);
-		setPatientsLoading(true);
-		try {
-			const data = await authedFetch('GET', '/patients');
-			if (
-				data.ok &&
-				data.data &&
-				typeof data.data === 'object'
-			) {
-				const patientsList = getArrayField(data.data, 'data');
-				if (patientsList) setPatients(patientsList);
-			}
-		} finally {
-			setLoading(false);
-			setPatientsLoading(false);
-		}
-	}
-
-	async function handleAssignNutri(patientId: string) {
-		setLoading(true);
-		try {
-			const chosenNutri = patientAssignSelections[patientId];
-			if (!chosenNutri) {
-				logManual({
-					endpoint: '/patients/:id (assign)',
-					method: 'VALIDATION',
-					ok: false,
-					payload: { patientId },
-					error: copy.dashboard.patients.selectNutri,
-				});
-				return;
-			}
-			const res = await authedFetch('PATCH', `/patients/${patientId}`, {
-				assignedNutriUid: chosenNutri,
-			});
-			if (res.ok) {
-				await handleListPatients();
-				pushToast(copy.toasts.assignSuccess, 'success');
-			} else {
-				pushToast(copy.toasts.assignError, 'error');
-			}
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleListAppointments() {
-		setLoading(true);
+	const loadAppointments = async () => {
+		if (!activeClinicId) return;
 		setAppointmentsLoading(true);
-		try {
-			const data = await authedFetch('GET', '/appointments');
-			if (
-				data.ok &&
-				data.data &&
-				typeof data.data === 'object'
-			) {
-				const appointmentList = getArrayField(data.data, 'data');
-				if (appointmentList) setAppointments(appointmentList);
-				pushToast(copy.toasts.appointmentsRefreshed, 'info');
-			}
-		} finally {
-			setLoading(false);
-			setAppointmentsLoading(false);
+		const res = await authedFetch('GET', '/appointments');
+		setAppointmentsLoading(false);
+		if (res.ok) {
+			setAppointments(Array.isArray(res.data?.data) ? res.data.data : []);
+		} else {
+			setAuthMessage(res.error ?? 'No se pudieron cargar turnos');
 		}
-	}
+	};
 
-	async function handleLoadSlots(
-		nutriUid?: string,
-		range?: { fromIso?: string | null; toIso?: string | null }
-	) {
-		if (!nutriUid) {
-			setApptSlots([]);
-			setApptBusySlots([]);
-			setApptRequestSlots([]);
-			setCurrentSlotsNutri('');
+	const requestAppointment = async () => {
+		const res = await authedFetch('POST', '/appointments/request', {});
+		if (res.ok) {
+			await loadAppointments();
+		} else {
+			setAuthMessage(res.error ?? 'No se pudo solicitar turno');
+		}
+	};
+
+	const scheduleAppointment = async (id: string) => {
+		const form = scheduleForms[id];
+		if (!form?.nutriUid || !form?.when) {
+			setAuthMessage('Completa nutri y fecha');
 			return;
 		}
-		if (!user) return;
+		const iso = new Date(form.when).toISOString();
+		const res = await authedFetch('POST', `/appointments/${id}/schedule`, {
+			nutriUid: form.nutriUid,
+			scheduledFor: iso,
+		});
+		if (res.ok) await loadAppointments();
+		else setAuthMessage(res.error ?? 'No se pudo programar');
+	};
 
-		const fromIso = range?.fromIso ?? toIsoFromDatetimeLocal(slotRangeFrom);
-		const toIso = range?.toIso ?? toIsoFromDatetimeLocal(slotRangeTo);
+	const cancelAppointment = async (id: string) => {
+		const res = await authedFetch('POST', `/appointments/${id}/cancel`, {});
+		if (res.ok) await loadAppointments();
+		else setAuthMessage(res.error ?? 'No se pudo cancelar');
+	};
 
-		if (!fromIso || !toIso) {
-			setSlotRangeError(copy.dashboard.appointments.form.rangeErrors.invalidRange);
-			return;
-		}
+	const loadProfile = async () => {
+		if (!profilePatientId) return;
+		const res = await authedFetch('GET', `/patient-profiles/${profilePatientId}`);
+		if (res.ok) setProfileData(res.data?.data ?? {});
+	};
 
-		if (Date.parse(toIso) <= Date.parse(fromIso)) {
-			setSlotRangeError(copy.dashboard.appointments.form.rangeErrors.endBeforeStart);
-			return;
-		}
+	const saveProfile = async () => {
+		if (!profilePatientId) return;
+		const res = await authedFetch('PUT', `/patient-profiles/${profilePatientId}`, profileData);
+		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo guardar perfil');
+	};
 
-		setLoadingSlots(true);
-		try {
-			setSlotRangeError(null);
-			const query = `/appointments/slots?nutriUid=${encodeURIComponent(
-				nutriUid
-			)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
-			const res = await authedFetch('GET', query);
-			if (
-				res.ok &&
-				res.data &&
-				typeof res.data === 'object'
-			) {
-				const dataPayload = getObjectField(res.data, 'data');
-				const free =
-					getArrayField(dataPayload, 'free')?.filter(
-						(slot): slot is string => typeof slot === 'string'
-					) ?? [];
-				const busy =
-					getArrayField(dataPayload, 'busy')?.filter(
-						(slot): slot is string => typeof slot === 'string'
-					) ?? [];
-				setApptSlots(free);
-				setApptBusySlots(busy);
-				setCurrentSlotsNutri(nutriUid);
-				setApptRequestSlots((prev) => {
-					const valid = prev.filter((slot) => free.includes(slot));
-					if (valid.length > 0) return valid;
-					if (free[0]) return [free[0]];
-					return [];
-				});
-			}
-		} finally {
-			setLoadingSlots(false);
-		}
-	}
+	const createVisit = async () => {
+		const res = await authedFetch('POST', '/visits', {
+			patientId: visitForm.patientId,
+			reason: visitForm.reason,
+			clinicalNotes: visitForm.notes,
+		});
+		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear visita');
+	};
+
+	const createMetric = async () => {
+		const res = await authedFetch('POST', '/metrics', {
+			patientId: metricForm.patientId,
+			weightKg: metricForm.weightKg ? Number(metricForm.weightKg) : null,
+		});
+		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear métrica');
+	};
+
+	const createPlan = async () => {
+		const res = await authedFetch('POST', '/plans', {
+			patientId: planForm.patientId,
+			nutriUid: planForm.nutriUid,
+			type: planForm.type,
+		});
+		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear plan');
+	};
+
+	const createNote = async () => {
+		const res = await authedFetch('POST', '/notes', {
+			patientId: noteForm.patientId,
+			content: noteForm.content,
+			visibility: noteForm.visibility,
+		});
+		if (!res.ok) setAuthMessage(res.error ?? 'No se pudo crear nota');
+	};
 
 	useEffect(() => {
-		if (!apptRequestNutriUid) {
-			setApptSlots([]);
-			setApptBusySlots([]);
-			setCurrentSlotsNutri('');
-			return;
+		if (activeClinicId) {
+			window.localStorage.setItem('qa-active-clinic', activeClinicId);
+		} else {
+			window.localStorage.removeItem('qa-active-clinic');
 		}
-		const fromIso = toIsoFromDatetimeLocal(slotRangeFrom);
-		const toIso = toIsoFromDatetimeLocal(slotRangeTo);
-		if (!fromIso || !toIso) return;
-		handleLoadSlots(apptRequestNutriUid, { fromIso, toIso });
-		// handleLoadSlots depends on stateful values; avoid adding it to prevent infinite loops
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [apptRequestNutriUid, slotRangeFrom, slotRangeTo]);
+	}, [activeClinicId]);
 
-	async function handleRequestAppointment() {
-		if (!apptRequestNutriUid) {
-			logManual({
-				endpoint: '/appointments/request',
-				method: 'VALIDATION',
-				ok: false,
-				payload: { apptRequestNutriUid, apptRequestSlots },
-				error: 'Falta nutriUid para pedir turno',
-			});
-			return;
+	useEffect(() => {
+		if (activeClinicId) {
+			void loadMembers();
+			void loadPatients();
+			void loadAppointments();
 		}
-		const manualIso = apptManualSlot ? toIsoFromDatetimeLocal(apptManualSlot) : null;
-		if (apptManualSlot && !manualIso) {
-			setAppointmentFormError(copy.dashboard.appointments.form.manualInvalid);
-			return;
-		}
-		const candidates = [...apptRequestSlots];
-		if (manualIso) candidates.push(manualIso);
-		const uniqueSlots = Array.from(new Set(candidates.filter(Boolean)));
-		if (uniqueSlots.length === 0) {
-			setAppointmentFormError(copy.dashboard.appointments.form.slotRequired);
-			logManual({
-				endpoint: '/appointments/request',
-				method: 'VALIDATION',
-				ok: false,
-				payload: { apptRequestNutriUid, apptRequestSlots, manual: apptManualSlot },
-				error: copy.dashboard.appointments.form.slotRequired,
-			});
-			return;
-		}
+	}, [activeClinicId]);
 
-		const overlapWithBusy = uniqueSlots.find((slot) => apptBusySlots.includes(slot));
-		if (overlapWithBusy) {
-			setAppointmentFormError(copy.dashboard.appointments.form.overlapBusy);
-			return;
-		}
+	const clinicOptions = sessionClinics.map((c) => (
+		<option key={c.clinicId} value={c.clinicId}>
+			{c.clinicName ?? c.clinicId} ({c.role})
+		</option>
+	));
 
-		setAppointmentFormError(null);
-		setLoading(true);
-		try {
-			let successCount = 0;
-			let lastError: string | null = null;
-			for (const slot of uniqueSlots) {
-				const result = await authedFetch('POST', '/appointments/request', {
-					nutriUid: apptRequestNutriUid,
-					clinicId: claims.clinicId ?? undefined,
-					scheduledForIso: slot,
-				});
-				if (result.ok) {
-					successCount += 1;
-				} else if (result.status === 403 && claims.role === 'patient') {
-					const reason =
-						getStringField(result.data, 'message') ??
-						result.error ??
-						copy.dashboard.appointments.linking.description;
-					setLinkRequired({ active: true, reason });
-					pushToast(copy.toasts.linkRequired, 'warning');
-					break;
-				} else {
-					lastError = result.error ?? copy.dashboard.appointments.form.slotRequired;
-				}
-			}
+	const nutriOptions = members.filter((m: any) => m.role === 'nutri').map((m: any) => m.uid ?? m.clinicId);
 
-			if (successCount > 0) {
-				setLinkRequired({ active: false, reason: '' });
-				setLinkFlowMessage(null);
-				await handleListAppointments();
-				setApptRequestSlots([]);
-				setApptManualSlot('');
-				pushToast(
-					successCount > 1
-						? copy.toasts.appointmentsRequestedMany.replace('{{count}}', String(successCount))
-						: copy.toasts.appointmentRequested,
-					'success'
-				);
-			} else if (lastError) {
-				setAppointmentFormError(lastError);
-				pushToast(copy.toasts.appointmentRequestError, 'error');
-			}
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleLinkPatientAndRetry() {
-		if (!user) {
-			logManual({
-				endpoint: '/patients/link-and-retry',
-				method: 'VALIDATION',
-				ok: false,
-				error: copy.dashboard.appointments.linking.needAuth,
-			});
-			return;
-		}
-
-		const clinicIdForPatient = claims.clinicId || selectedClinicForNewPatient;
-		if (!clinicIdForPatient) {
-			setLinkFlowMessage(copy.dashboard.appointments.linking.needClinic);
-			return;
-		}
-
-		setLinking(true);
-		setLinkFlowMessage(null);
-
-		try {
-			let patientId: string | null = null;
-
-			const created = await authedFetch('POST', '/patients', {
-				name: pName || user.email || 'Paciente sin nombre',
-				email: pEmail || user.email || null,
-				phone: pPhone || null,
-				clinicId: clinicIdForPatient,
-			});
-			const createdData = getObjectField(created.data, 'data');
-			const createdId = getStringField(createdData, 'id');
-			if (created.ok && createdId) {
-				patientId = createdId;
-			} else if (!created.ok && created.status === 409 && createdId) {
-				patientId = createdId;
-			}
-
-			if (!patientId) {
-				setLinkFlowMessage(copy.dashboard.appointments.linking.createError);
-				return;
-			}
-
-			const linkRes = await authedFetch('PATCH', `/patients/${patientId}/link`, {
-				linkedUid: user.uid,
-			});
-			if (!linkRes.ok) {
-				setLinkFlowMessage(copy.dashboard.appointments.linking.linkError);
-				return;
-			}
-
-			setLinkRequired({ active: false, reason: '' });
-			setLinkFlowMessage(copy.dashboard.appointments.linking.success);
-			pushToast(copy.toasts.patientLinked, 'success');
-			await handleRequestAppointment();
-		} finally {
-			setLinking(false);
-		}
-	}
-
-	async function handleScheduleAppointment(apptId: string) {
-		const sched = scheduleSelections[apptId];
-		const manualIso = sched?.manualWhen ? toIsoFromDatetimeLocal(sched.manualWhen) : null;
-		if (sched?.manualWhen && !manualIso) {
-			setScheduleErrors((prev) => ({
-				...prev,
-				[apptId]: copy.dashboard.appointments.schedule.manualInvalid,
-			}));
-			return;
-		}
-		const candidates = [...(sched?.slots ?? [])];
-		if (manualIso) candidates.push(manualIso);
-		const uniqueSlots = Array.from(new Set(candidates.filter(Boolean)));
-		if (uniqueSlots.length === 0) {
-			setScheduleErrors((prev) => ({
-				...prev,
-				[apptId]: copy.dashboard.appointments.schedule.validDateRequired,
-			}));
-			return;
-		}
-
-		const conflictWithBusy = uniqueSlots.find((slot) => apptBusySlots.includes(slot));
-		if (conflictWithBusy) {
-			setScheduleErrors((prev) => ({
-				...prev,
-				[apptId]: copy.dashboard.appointments.schedule.overlapBusy,
-			}));
-			return;
-		}
-
-		const targetNutri = sched?.nutri || apptRequestNutriUid || '';
-		const conflictWithSelection = uniqueSlots.find((slot) =>
-			Object.entries(scheduleSelections).some(([otherId, other]) => {
-				if (otherId === apptId) return false;
-				const otherNutri = other?.nutri || apptRequestNutriUid || '';
-				if (otherNutri !== targetNutri) return false;
-				const otherManual = other?.manualWhen ? toIsoFromDatetimeLocal(other.manualWhen) : null;
-				const otherSlots = [...(other?.slots ?? []), ...(otherManual ? [otherManual] : [])];
-				return otherSlots.includes(slot);
-			})
-		);
-		if (conflictWithSelection) {
-			setScheduleErrors((prev) => ({
-				...prev,
-				[apptId]: copy.dashboard.appointments.schedule.overlapSelected,
-			}));
-			return;
-		}
-
-		const iso = [...uniqueSlots].sort((a, b) => Date.parse(a) - Date.parse(b))[0];
-		setScheduleErrors((prev) => ({ ...prev, [apptId]: null }));
-		setLoading(true);
-		try {
-			const res = await authedFetch('POST', `/appointments/${apptId}/schedule`, {
-				scheduledForIso: iso,
-				nutriUid: sched?.nutri || apptRequestNutriUid || '',
-			});
-			if (res.ok) {
-				await handleListAppointments();
-				pushToast(copy.toasts.appointmentScheduled, 'success');
-			} else {
-				pushToast(copy.toasts.appointmentScheduleError, 'error');
-			}
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleCancelAppointment(apptId: string) {
-		setLoading(true);
-		try {
-			const res = await authedFetch('POST', `/appointments/${apptId}/cancel`, {});
-			if (res.ok) {
-				const auditId = getStringField(res.data, 'auditId');
-				if (auditId) {
-					setAuditRefs((prev) => ({ ...prev, [apptId]: auditId }));
-					pushToast(
-						copy.toasts.auditLogged.replace('{{id}}', formatAuditId(auditId)),
-						'info'
-					);
-				}
-				await handleListAppointments();
-				pushToast(copy.toasts.appointmentCancelled, 'info');
-			} else {
-				pushToast(copy.toasts.appointmentCancelError, 'error');
-			}
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleCompleteAppointment(apptId: string) {
-		setLoading(true);
-		try {
-			const res = await authedFetch('POST', `/appointments/${apptId}/complete`, {});
-			if (res.ok) {
-				const auditId = getStringField(res.data, 'auditId');
-				if (auditId) {
-					setAuditRefs((prev) => ({ ...prev, [apptId]: auditId }));
-					pushToast(
-						copy.toasts.auditLogged.replace('{{id}}', formatAuditId(auditId)),
-						'success'
-					);
-				}
-				await handleListAppointments();
-				pushToast(copy.toasts.appointmentCompleted, 'success');
-			} else {
-				pushToast(copy.toasts.appointmentCompleteError, 'error');
-			}
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleConfirmAction() {
-		if (!confirmAction) return;
-		const { type, apptId } = confirmAction;
-		setConfirmAction(null);
-		if (type === 'cancel') {
-			await handleCancelAppointment(apptId);
-		} else if (type === 'complete') {
-			await handleCompleteAppointment(apptId);
-		}
-	}
-
-	const confirmCopy = useMemo<
-		Record<
-			ConfirmAction['type'],
-			{ title: string; body: string; confirmLabel: string; tone: 'warning' | 'success' }
-		>
-	>(
-		() => ({
-			cancel: {
-				title: copy.confirm.cancel.title,
-				body: copy.confirm.cancel.body,
-				confirmLabel: copy.confirm.cancel.confirm,
-				tone: 'warning',
-			},
-			complete: {
-				title: copy.confirm.complete.title,
-				body: copy.confirm.complete.body,
-				confirmLabel: copy.confirm.complete.confirm,
-				tone: 'success',
-			},
-		}),
-		[copy]
+	const Landing = (
+		<div className='page'>
+			<section className='hero'>
+				<div>
+					<p className='eyebrow'>Nutri Platform</p>
+					<h1>QA Console multi-clínica</h1>
+					<p className='lead'>
+						Seleccioná clínica activa, probá pacientes y turnos sin depender de curl.
+					</p>
+					<div className='actions'>
+						<Link className='btn primary' to='/login'>
+							Ingresar
+						</Link>
+						<Link className='btn ghost' to='/dashboard'>
+							Ir al dashboard
+						</Link>
+					</div>
+				</div>
+			</section>
+		</div>
 	);
 
-	const authPageProps = {
-		copy,
-		authErrors,
-		email,
-		password,
-		emailError,
-		passwordError,
-		showPassword,
-		authPending,
-		loading,
-		user,
-		claims,
-		setAuthFieldRef,
-		setEmail,
-		setPassword,
-		setShowPassword,
-		setAuthActionError,
-		setEmailError,
-		setPasswordError,
-		setStickyAuthField,
-		getEmailError,
-		getPasswordError,
-		handleLogin,
-		handleRegister,
-		handleLogout,
-		handleRefreshClaims,
-	};
+	const AuthPage = (
+		<div className='page narrow'>
+			<h2>Auth emulator</h2>
+			<div className='card'>
+				<label className='field'>
+					<span>Email</span>
+					<input
+						value={authEmail}
+						onChange={(e) => setAuthEmail(e.target.value)}
+						autoComplete='email'
+					/>
+				</label>
+				<label className='field'>
+					<span>Password</span>
+					<input
+						type='password'
+						value={authPassword}
+						onChange={(e) => setAuthPassword(e.target.value)}
+						autoComplete='current-password'
+					/>
+				</label>
+				<div className='actions'>
+					<button className='btn primary' disabled={authPending} onClick={() => handleLogin('login')}>
+						Login
+					</button>
+					<button className='btn' disabled={authPending} onClick={() => handleLogin('register')}>
+						Register
+					</button>
+					{user && (
+						<button className='btn ghost' onClick={handleLogout}>
+							Logout
+						</button>
+					)}
+				</div>
+				{authMessage && <p className='error-text'>{authMessage}</p>}
+					{sessionError && (
+						<p className='error-text'>
+							{sessionError}{' '}
+							<button className='link' onClick={clearSessionError}>
+								OK
+							</button>
+						</p>
+					)}
+					<div className='inline-info'>
+						<div>
+							<strong>UID</strong> <code>{user?.uid ?? '—'}</code>
+						</div>
+						<div>
+							<strong>Platform admin</strong> {isPlatformAdmin ? 'sí' : 'no'}
+						</div>
+						<div>
+							<strong>Role claim</strong> {claims.role ?? '—'}
+						</div>
+						<div>
+							<strong>clinicId claim</strong> {claims.clinicId ?? '—'}
+						</div>
+					</div>
+				</div>
+			</div>
+		);
 
-	const dashboardProps = {
-		copy,
-		user,
-		claims,
-		roleTabs,
-		activeRoleTab,
-		activeRoleContent,
-		setActiveRoleTab,
-		toggleTheme,
-		isDark,
-		loading,
-		loadingSlots,
-		handleRefreshClaims,
-		handleLogout,
-		handleGetMe,
-		authedFetch,
-		backendStatus,
-		apiErrorCount,
-		pName,
-		setPName,
-		pEmail,
-		setPEmail: setValidatedPEmail,
-		pPhone,
-		setPPhone: setValidatedPPhone,
-		patientErrors,
-		selectedClinicForNewPatient,
-		setSelectedClinicForNewPatient,
-		clinicOptions,
-		handleCreatePatient,
-		patients,
-		patientsLoading,
-		patientAssignSelections,
-		setPatientAssignSelections,
-		knownNutris,
-		handleAssignNutri,
-		handleListPatients,
-		appointments,
-		filteredAppointments,
-		visibleAppointments,
-		appointmentsLoading,
-		appointmentFilters,
-		setAppointmentFilters,
-		appointmentPage,
-		setAppointmentPage,
-		appointmentsPerPage,
-		setAppointmentsPerPage,
-		totalAppointmentPages,
-		handleScheduleAppointment,
-		apptRequestNutriUid,
-		setApptRequestNutriUid,
-		slotRangeFrom,
-		setSlotRangeFrom: setSlotRangeFromInput,
-		slotRangeTo,
-		setSlotRangeTo: setSlotRangeToInput,
-		apptRequestSlots,
-		setApptRequestSlots,
-		apptManualSlot,
-		setApptManualSlot: setValidatedApptManualSlot,
-		handleLoadSlots,
-		handleRequestAppointment,
-		handleListAppointments,
-		slotRangeError,
-		appointmentFormError,
-		setAppointmentFormError,
-		apptSlots,
-		apptBusySlots,
-		linkRequired,
-		linkFlowMessage,
-		linking,
-		handleLinkPatientAndRetry,
-		scheduleSelections,
-		setScheduleSelections,
-		scheduleErrors,
-		setScheduleErrors,
-		currentSlotsNutri,
-		formatSlotLabel,
-		toReadableDate,
-		toIsoFromDatetimeLocal,
-		setConfirmAction,
-		reversedLogs,
-		patientNameInputRef,
-		apptNutriSelectRef,
-		apptFromInputRef,
-		auditRefs,
-	};
+	const Dashboard = (
+		<div className='page'>
+			<div className='grid two'>
+				<div className='card'>
+					<h3>Sesión</h3>
+					<p>Seleccioná clínica activa y refrescá.</p>
+					<div className='field'>
+						<span>Idioma</span>
+						<select value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
+							{supportedLocales.map((loc) => {
+								const locCopy = getCopy(loc);
+								return (
+									<option key={loc} value={loc}>
+										{locCopy.languageName}
+									</option>
+								);
+							})}
+						</select>
+					</div>
+					<label className='field'>
+						<span>Clínica activa</span>
+						<select value={activeClinicId ?? ''} onChange={(e) => setActiveClinicId(e.target.value || null)}>
+							<option value=''>Elegir...</option>
+							{clinicOptions}
+						</select>
+					</label>
+					<div className='actions'>
+						<button className='btn' onClick={refreshSession}>
+							Refrescar sesión
+						</button>
+						<button className='btn ghost' onClick={loadPatients} disabled={!activeClinicId}>
+							Listar pacientes
+						</button>
+						<button className='btn ghost' onClick={loadAppointments} disabled={!activeClinicId}>
+							Listar turnos
+						</button>
+					</div>
+					<div className='inline-info'>
+						<div>
+							<strong>Rol efectivo</strong> {effectiveRole ?? '—'}
+						</div>
+						<div>
+							<strong>Clinics</strong> {sessionClinics.length}
+						</div>
+					</div>
+				</div>
+
+				<div className='card'>
+					<h3>Dev tools / seed</h3>
+					<label className='field'>
+						<span>Secret</span>
+						<input
+							value={seedForm.secret}
+							onChange={(e) => setSeedForm((p) => ({ ...p, secret: e.target.value }))}
+						/>
+					</label>
+					<label className='field'>
+						<span>Clinic ID (opcional)</span>
+						<input
+							value={seedForm.clinicId}
+							onChange={(e) => setSeedForm((p) => ({ ...p, clinicId: e.target.value }))}
+						/>
+					</label>
+					<label className='field'>
+						<span>Clinic name</span>
+						<input
+							value={seedForm.clinicName}
+							onChange={(e) => setSeedForm((p) => ({ ...p, clinicName: e.target.value }))}
+						/>
+					</label>
+					<label className='field'>
+						<span>Users (email:role, email:role)</span>
+						<input
+							value={seedForm.users}
+							onChange={(e) => setSeedForm((p) => ({ ...p, users: e.target.value }))}
+						/>
+					</label>
+					<button className='btn' onClick={handleSeed}>
+						Seed clinic + members
+					</button>
+				</div>
+			</div>
+
+			<div className='grid two'>
+				<div className='card'>
+					<h3>Pacientes</h3>
+					<div className='field'>
+						<span>Nombre</span>
+						<input
+							value={patientForm.name}
+							onChange={(e) => setPatientForm((p) => ({ ...p, name: e.target.value }))}
+						/>
+					</div>
+					<div className='field'>
+						<span>Email</span>
+						<input
+							value={patientForm.email}
+							onChange={(e) => setPatientForm((p) => ({ ...p, email: e.target.value }))}
+						/>
+					</div>
+					<div className='field'>
+						<span>Phone</span>
+						<input
+							value={patientForm.phone}
+							onChange={(e) => setPatientForm((p) => ({ ...p, phone: e.target.value }))}
+						/>
+					</div>
+					<div className='actions'>
+						<button className='btn primary' onClick={createPatient} disabled={!activeClinicId}>
+							Crear paciente
+						</button>
+						<button className='btn ghost' onClick={loadPatients} disabled={!activeClinicId || patientsLoading}>
+							Refrescar
+						</button>
+					</div>
+					{patientsLoading && <p className='muted'>Cargando...</p>}
+					{patients.length === 0 && <p className='muted'>Sin pacientes</p>}
+					<div className='list'>
+						{patients.map((p) => {
+							const id = (p as any).id;
+							return (
+								<div className='inline-info' key={id}>
+									<div>
+										<strong>{(p as any).name}</strong>
+										<div className='muted small'>{id}</div>
+									</div>
+									<div>
+										<div className='field-inline'>
+											<span className='muted small'>Nutri asignado</span>
+											<select
+												value={(p as any).assignedNutriUid ?? ''}
+												onChange={(e) => assignNutri(id, e.target.value || null)}
+											>
+												<option value=''>No asignado</option>
+												{nutriOptions.map((n) => (
+													<option key={n} value={n}>
+														{n}
+													</option>
+												))}
+											</select>
+										</div>
+										<div className='muted small'>linkedUid: {(p as any).linkedUid ?? '—'}</div>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+
+				<div className='card'>
+					<h3>Turnos</h3>
+					<div className='actions wrap'>
+						<button className='btn' onClick={requestAppointment} disabled={!activeClinicId}>
+							Solicitar turno (paciente vinculado)
+						</button>
+						<button className='btn ghost' onClick={loadAppointments} disabled={!activeClinicId || appointmentsLoading}>
+							Refrescar
+						</button>
+					</div>
+					{appointmentsLoading && <p className='muted'>Cargando...</p>}
+					{appointments.length === 0 && <p className='muted'>Sin turnos</p>}
+					<div className='list'>
+						{appointments.map((a) => {
+							const id = (a as any).id;
+							const status = (a as any).status;
+							const sched = (a as any).scheduledFor?._seconds
+								? new Date((a as any).scheduledFor._seconds * 1000).toISOString()
+								: null;
+							return (
+								<div className='appt-card' key={id}>
+									<div className='appt-head'>
+										<div>
+											<strong>{status}</strong>
+											<div className='muted small'>{id}</div>
+										</div>
+										<div className='muted small'>patientUid: {(a as any).patientUid}</div>
+										<div className='muted small'>nutriUid: {(a as any).nutriUid ?? '—'}</div>
+									</div>
+									<div className='grid two'>
+										<div className='field'>
+											<span>Fecha/hora</span>
+											<input
+												type='datetime-local'
+												value={scheduleForms[id]?.when ?? ''}
+												onChange={(e) =>
+													setScheduleForms((prev) => ({
+														...prev,
+														[id]: { ...(prev[id] ?? { nutriUid: (a as any).nutriUid ?? '' }), when: e.target.value },
+													}))
+												}
+											/>
+										</div>
+										<div className='field'>
+											<span>Nutri</span>
+											<input
+												value={scheduleForms[id]?.nutriUid ?? (a as any).nutriUid ?? ''}
+												onChange={(e) =>
+													setScheduleForms((prev) => ({
+														...prev,
+														[id]: { ...(prev[id] ?? { when: sched ?? '' }), nutriUid: e.target.value },
+													}))
+												}
+												placeholder='nutri uid'
+											/>
+										</div>
+									</div>
+									<div className='actions wrap'>
+										<button className='btn' onClick={() => scheduleAppointment(id)}>
+											Programar
+										</button>
+										<button className='btn ghost' onClick={() => cancelAppointment(id)}>
+											Cancelar
+										</button>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			</div>
+
+			<div className='grid two'>
+				<div className='card'>
+					<h3>Perfil del paciente</h3>
+					<div className='field'>
+						<span>PatientId</span>
+						<input value={profilePatientId} onChange={(e) => setProfilePatientId(e.target.value)} />
+					</div>
+					<div className='actions'>
+						<button className='btn ghost' onClick={loadProfile} disabled={!profilePatientId}>
+							Cargar perfil
+						</button>
+						<button className='btn' onClick={saveProfile} disabled={!profilePatientId}>
+							Guardar perfil
+						</button>
+					</div>
+					<textarea
+						value={JSON.stringify(profileData, null, 2)}
+						onChange={(e) => {
+							try {
+								setProfileData(JSON.parse(e.target.value));
+							} catch {
+								// ignore parse errors
+							}
+						}}
+						rows={8}
+					/>
+				</div>
+
+				<div className='card'>
+					<h3>Visitas y métricas</h3>
+					<div className='field'>
+						<span>PatientId</span>
+						<input
+							value={visitForm.patientId}
+							onChange={(e) => {
+								setVisitForm((p) => ({ ...p, patientId: e.target.value }));
+								setMetricForm((m) => ({ ...m, patientId: e.target.value }));
+								setPlanForm((pl) => ({ ...pl, patientId: e.target.value }));
+								setNoteForm((n) => ({ ...n, patientId: e.target.value }));
+							}}
+						/>
+					</div>
+					<div className='field'>
+						<span>Motivo</span>
+						<input value={visitForm.reason} onChange={(e) => setVisitForm((p) => ({ ...p, reason: e.target.value }))} />
+					</div>
+					<div className='field'>
+						<span>Notas clínicas</span>
+						<textarea value={visitForm.notes} onChange={(e) => setVisitForm((p) => ({ ...p, notes: e.target.value }))} />
+					</div>
+					<div className='actions wrap'>
+						<button className='btn' onClick={createVisit}>
+							Crear visita
+						</button>
+						<div className='field-inline'>
+							<span className='muted small'>Peso (kg)</span>
+							<input
+								value={metricForm.weightKg}
+								onChange={(e) => setMetricForm((p) => ({ ...p, weightKg: e.target.value }))}
+								style={{ width: '120px' }}
+							/>
+						</div>
+						<button className='btn ghost' onClick={createMetric}>
+							Crear métrica
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<div className='grid two'>
+				<div className='card'>
+					<h3>Plan nutricional</h3>
+					<div className='field'>
+						<span>PatientId</span>
+						<input value={planForm.patientId} onChange={(e) => setPlanForm((p) => ({ ...p, patientId: e.target.value }))} />
+					</div>
+					<div className='field'>
+						<span>Nutri UID</span>
+						<input value={planForm.nutriUid} onChange={(e) => setPlanForm((p) => ({ ...p, nutriUid: e.target.value }))} />
+					</div>
+					<div className='field'>
+						<span>Tipo</span>
+						<input value={planForm.type} onChange={(e) => setPlanForm((p) => ({ ...p, type: e.target.value }))} />
+					</div>
+					<button className='btn' onClick={createPlan}>
+						Crear plan
+					</button>
+				</div>
+
+				<div className='card'>
+					<h3>Notas clínicas</h3>
+					<div className='field'>
+						<span>PatientId</span>
+						<input value={noteForm.patientId} onChange={(e) => setNoteForm((p) => ({ ...p, patientId: e.target.value }))} />
+					</div>
+					<div className='field'>
+						<span>Contenido</span>
+						<textarea value={noteForm.content} onChange={(e) => setNoteForm((p) => ({ ...p, content: e.target.value }))} />
+					</div>
+					<div className='field-inline'>
+						<span className='muted small'>Visibilidad</span>
+						<select
+							value={noteForm.visibility}
+							onChange={(e) => setNoteForm((p) => ({ ...p, visibility: e.target.value as 'private' | 'shared' }))}
+						>
+							<option value='private'>Privada</option>
+							<option value='shared'>Compartida</option>
+						</select>
+					</div>
+					<button className='btn' onClick={createNote}>
+						Crear nota
+					</button>
+				</div>
+			</div>
+
+			<div className='card'>
+				<h3>Logs</h3>
+				{logs.length === 0 && <p className='muted'>Sin logs</p>}
+				<ul className='log'>
+					{[...logs].reverse().map((l) => (
+						<li key={l.id}>
+							<div className='log-head'>
+								<code>{l.ts}</code>
+								<strong>{l.endpoint}</strong>
+								<span className={l.ok ? 'pill ok' : 'pill error'}>
+									{l.ok ? 'OK' : 'ERR'} {l.status}
+								</span>
+							</div>
+							{l.request !== undefined && (
+								<div className='log-body'>
+									<small>req</small> <code>{JSON.stringify(l.request)}</code>
+								</div>
+							)}
+							<div className='log-body'>
+								<small>res</small> <code>{JSON.stringify(l.response)}</code>
+							</div>
+						</li>
+					))}
+				</ul>
+			</div>
+		</div>
+	);
 
 	return (
 		<div>
-			<ToastStack toasts={toasts} />
-			<ConfirmModal
-				confirmAction={confirmAction}
-				confirmCopy={confirmCopy}
-				copy={copy}
-				onCancel={() => setConfirmAction(null)}
-				onConfirm={handleConfirmAction}
-			/>
-			<Topbar
-				copy={copy}
-				locale={locale}
-				setLocale={setLocale}
-				supportedLocales={supportedLocales}
-				user={user}
-				loading={loading}
-				onLogout={handleLogout}
-			/>
-			<Suspense fallback={<div className='app-loading'>Cargando consola…</div>}>
-				<Routes>
-					<Route path='/' element={<Landing copy={copy} />} />
-					<Route path='/login' element={<AuthPage {...authPageProps} />} />
-					<Route
-						path='/dashboard'
-						element={
-							<ProtectedRoute user={user}>
-								<Dashboard {...dashboardProps} />
-							</ProtectedRoute>
-						}
-					/>
-					<Route path='*' element={<Navigate to='/' />} />
-				</Routes>
-			</Suspense>
+			<nav className='topbar'>
+				<div className='actions'>
+					<Link to='/' className='brand'>
+						Nutri QA Console
+					</Link>
+					<span className='badge'>multi-clínica</span>
+				</div>
+				<div className='top-actions'>
+					<Link to='/' className='link'>
+						Inicio
+					</Link>
+					<Link to='/dashboard' className='link'>
+						Dashboard
+					</Link>
+					{user ? (
+						<button className='btn ghost sm' onClick={handleLogout}>
+							Logout
+						</button>
+					) : (
+						<Link to='/login' className='btn sm'>
+							Login
+						</Link>
+					)}
+				</div>
+			</nav>
+			<Routes>
+				<Route path='/' element={Landing} />
+				<Route path='/login' element={AuthPage} />
+				<Route
+					path='/dashboard'
+					element={
+						<ProtectedRoute user={user}>
+							{Dashboard}
+						</ProtectedRoute>
+					}
+				/>
+				<Route path='*' element={<Navigate to='/' />} />
+			</Routes>
 		</div>
 	);
 }

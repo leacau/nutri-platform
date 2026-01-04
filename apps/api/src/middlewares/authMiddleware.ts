@@ -34,12 +34,14 @@ export async function authMiddleware(
 
 		const role = decoded.role as Role | undefined;
 		const clinicId = decoded.clinicId as string | undefined;
+		const isPlatformAdmin = decoded.platformAdmin === true || role === 'platform_admin';
 
 		const ctx: AuthContext = {
 			uid: decoded.uid,
 			email: decoded.email ?? null,
-			...(role ? { role } : {}),
-			...(clinicId ? { clinicId } : {}),
+			isPlatformAdmin,
+			role: role ?? null,
+			clinicId: clinicId ?? null,
 		};
 
 		req.auth = ctx;

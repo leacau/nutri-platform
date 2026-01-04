@@ -11,13 +11,15 @@ import { auth, firebaseConfig } from '../firebase';
 import type { Claims } from '../types/app';
 
 const getClaimsFromResult = (tokenRes: Awaited<ReturnType<typeof getIdTokenResult>>): Claims => {
-	const role = typeof tokenRes.claims.role === 'string' ? tokenRes.claims.role : null;
-	const clinicId = typeof tokenRes.claims.clinicId === 'string' ? tokenRes.claims.clinicId : null;
-	return { role, clinicId };
+	const role = typeof tokenRes.claims.role === 'string' ? (tokenRes.claims.role as string) : null;
+	const clinicId = typeof tokenRes.claims.clinicId === 'string' ? (tokenRes.claims.clinicId as string) : null;
+	const isPlatformAdmin = tokenRes.claims.platformAdmin === true || role === 'platform_admin';
+	return { isPlatformAdmin, role, clinicId };
 };
 
 type AuthSessionResult = {
 	user: User | null;
+	isPlatformAdmin: boolean;
 	claims: Claims;
 	sessionError: string | null;
 	login: (email: string, password: string) => Promise<{ ok: boolean; user?: User; error?: string }>;
@@ -34,7 +36,7 @@ export function useAuthSession(): AuthSessionResult {
 	}
 
 	const [user, setUser] = useState<User | null>(auth.currentUser);
-	const [claims, setClaims] = useState<Claims>({ role: null, clinicId: null });
+	const [claims, setClaims] = useState<Claims>({ isPlatformAdmin: false, role: null, clinicId: null });
 	const [sessionError, setSessionError] = useState<string | null>(null);
 	const [idToken, setIdToken] = useState<string | null>(null);
 	const [tokenExpiryMs, setTokenExpiryMs] = useState<number | null>(null);
@@ -53,7 +55,7 @@ export function useAuthSession(): AuthSessionResult {
 			const currentUser = auth.currentUser;
 			if (!currentUser) {
 				setUser(null);
-				setClaims({ role: null, clinicId: null });
+				setClaims({ isPlatformAdmin: false, role: null, clinicId: null });
 				setIdToken(null);
 				setTokenExpiryMs(null);
 				setSessionError(null);
@@ -82,9 +84,7 @@ export function useAuthSession(): AuthSessionResult {
 				return tokenRes.token;
 			} catch (err) {
 				const message =
-					err instanceof Error
-						? err.message
-						: 'Session refresh failed. Please sign in again.';
+					err instanceof Error ? err.message : 'Session refresh failed. Please sign in again.';
 				setSessionError(message);
 				setIdToken(null);
 				setTokenExpiryMs(null);
@@ -166,15 +166,14 @@ export function useAuthSession(): AuthSessionResult {
 					setSessionError(revokeError);
 				}
 			} catch (err) {
-				revokeError =
-					err instanceof Error ? err.message : 'Could not revoke the session in the emulator.';
+				revokeError = err instanceof Error ? err.message : 'Could not revoke the session in the emulator.';
 				setSessionError(revokeError);
 			}
 		}
 
 		await signOut(auth);
 		setUser(null);
-		setClaims({ role: null, clinicId: null });
+		setClaims({ isPlatformAdmin: false, role: null, clinicId: null });
 		setIdToken(null);
 		setTokenExpiryMs(null);
 		clearRefreshTimer();
@@ -204,6 +203,7 @@ export function useAuthSession(): AuthSessionResult {
 
 	return {
 		user,
+		isPlatformAdmin: claims.isPlatformAdmin,
 		claims,
 		sessionError,
 		login,
@@ -218,10 +218,11 @@ export function useAuthSession(): AuthSessionResult {
 function useMockAuthSession(): AuthSessionResult {
 	const [user, setUser] = useState<User | null>(null);
 	const [sessionError, setSessionError] = useState<string | null>(null);
-	const [claims, setClaims] = useState<Claims>(() => ({
-		role: import.meta.env.VITE_E2E_ROLE ?? 'clinic_admin',
-		clinicId: import.meta.env.VITE_E2E_CLINIC_ID ?? 'demo-clinic',
-	}));
+	const claims: Claims = {
+		isPlatformAdmin: false,
+		role: import.meta.env.VITE_E2E_ROLE ?? null,
+		clinicId: import.meta.env.VITE_E2E_CLINIC_ID ?? null,
+	};
 
 	const mockUser = useMemo(
 		() =>
@@ -266,7 +267,6 @@ function useMockAuthSession(): AuthSessionResult {
 	const logoutAndRevoke = useCallback(async () => {
 		setUser(null);
 		setSessionError(null);
-		setClaims({ role: import.meta.env.VITE_E2E_ROLE ?? 'clinic_admin', clinicId: import.meta.env.VITE_E2E_CLINIC_ID ?? 'demo-clinic' });
 		return { ok: true, error: null };
 	}, []);
 
@@ -274,6 +274,7 @@ function useMockAuthSession(): AuthSessionResult {
 
 	return {
 		user,
+		isPlatformAdmin: claims.isPlatformAdmin,
 		claims,
 		sessionError,
 		login,
