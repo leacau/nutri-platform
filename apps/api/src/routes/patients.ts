@@ -106,6 +106,7 @@ patientsRouter.post(
 		const now = Timestamp.now();
 		const doc: PatientDoc = {
 			clinicId,
+			assignedNutriUid: parsed.data.assignedNutriUid ?? null,
 			name: parsed.data.name,
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
@@ -189,6 +190,9 @@ patientsRouter.patch(
 			} else {
 				update.assignedNutriUid = parsed.data.assignedNutriUid ?? null;
 			}
+		}
+		if (parsed.data.status !== undefined && auth.role !== 'staff') {
+			update.status = parsed.data.status;
 		}
 
 		await db.collection('patients').doc(patientId).update(update);

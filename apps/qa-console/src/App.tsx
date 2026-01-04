@@ -106,7 +106,7 @@ const {
 	}
 
 	async function authedFetch(
-		method: 'GET' | 'POST' | 'PATCH',
+		method: 'GET' | 'POST' | 'PATCH' | 'PUT',
 		endpoint: string,
 		body?: unknown,
 		opts?: { includeClinicHeader?: boolean }
