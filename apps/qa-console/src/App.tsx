@@ -22,6 +22,7 @@ import type {
 	Toast,
 } from './types/app';
 import useAuthSession from './hooks/useAuthSession';
+import useDebouncedValue from './hooks/useDebouncedValue';
 import {
 	isValidDatetimeLocal,
 	isValidEmail,
@@ -67,6 +68,20 @@ function toReadableDate(v: unknown): string {
 	return String(v);
 }
 
+function toMillis(v: unknown): number | null {
+	if (typeof v === 'string') {
+		const ms = Date.parse(v);
+		return Number.isFinite(ms) ? ms : null;
+	}
+	if (typeof v === 'object' && v !== null) {
+		const any = v as { _seconds?: number; _nanoseconds?: number };
+		if (typeof any._seconds === 'number') {
+			return any._seconds * 1000 + Math.floor((any._nanoseconds ?? 0) / 1_000_000);
+		}
+	}
+	return null;
+}
+
 function getStringField(source: unknown, key: string): string | null {
 	if (source && typeof source === 'object' && key in source) {
 		const value = (source as Record<string, unknown>)[key];
@@ -102,6 +117,21 @@ function formatSlotLabel(iso: string) {
 	if (!Number.isFinite(d.getTime())) return iso;
 	return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
+
+type AppointmentFilters = {
+	status: 'all' | 'requested' | 'scheduled' | 'completed' | 'cancelled';
+	patient: string;
+	nutri: string;
+	clinic: string;
+	from: string;
+	to: string;
+};
+
+type ScheduleSelection = {
+	slots: string[];
+	manualWhen?: string;
+	nutri: string;
+};
 
 function ProtectedRoute({ user, children }: ProtectedProps) {
 	if (!user) return <Navigate to='/login' replace />;
@@ -191,7 +221,7 @@ export default function App() {
 	// Turnos
 	const defaultWindow = useMemo(() => defaultSlotWindow(), []);
 	const [apptRequestNutriUid, setApptRequestNutriUid] = useState('');
-	const [apptRequestSlot, setApptRequestSlot] = useState('');
+	const [apptRequestSlots, setApptRequestSlots] = useState<string[]>([]);
 	const [apptManualSlot, setApptManualSlot] = useState('');
 	const [slotRangeFrom, setSlotRangeFrom] = useState(
 		isoToDatetimeLocal(defaultWindow.fromIso)
@@ -206,10 +236,20 @@ export default function App() {
 	const [slotRangeError, setSlotRangeError] = useState<string | null>(null);
 	const [appointmentFormError, setAppointmentFormError] = useState<string | null>(null);
 	const [scheduleSelections, setScheduleSelections] = useState<
-		Record<string, { when: string; manualWhen?: string; nutri: string }>
+		Record<string, ScheduleSelection>
 	>({});
 	const [scheduleErrors, setScheduleErrors] = useState<Record<string, string | null>>({});
 	const [appointments, setAppointments] = useState<unknown[]>([]);
+	const [appointmentFilters, setAppointmentFilters] = useState<AppointmentFilters>({
+		status: 'all',
+		patient: '',
+		nutri: '',
+		clinic: '',
+		from: '',
+		to: '',
+	});
+	const [appointmentPage, setAppointmentPage] = useState(1);
+	const [appointmentsPerPage, setAppointmentsPerPage] = useState(5);
 	const [selectedClinicForNewPatient, setSelectedClinicForNewPatient] =
 		useState<string>('');
 	const [linkRequired, setLinkRequired] = useState<{ active: boolean; reason?: string }>({
@@ -405,8 +445,8 @@ export default function App() {
 	}, [getBackendMessage]);
 
 	useEffect(() => {
-		if (apptRequestSlot) setAppointmentFormError(null);
-	}, [apptRequestSlot]);
+		if (apptRequestSlots.length > 0 || apptManualSlot) setAppointmentFormError(null);
+	}, [apptManualSlot, apptRequestSlots.length]);
 
 	useEffect(() => {
 		if (claims.role === 'patient') setActiveRoleTab('patient');
@@ -453,6 +493,79 @@ export default function App() {
 		});
 		return Array.from(seed);
 	}, [claims.clinicId, patients, appointments]);
+
+	const debouncedPatientFilter = useDebouncedValue(appointmentFilters.patient, 320);
+	const debouncedNutriFilter = useDebouncedValue(appointmentFilters.nutri, 320);
+
+	const filteredAppointments = useMemo(() => {
+		const fromIso = toIsoFromDatetimeLocal(appointmentFilters.from);
+		const toIso = toIsoFromDatetimeLocal(appointmentFilters.to);
+		const patientTerm = debouncedPatientFilter.trim().toLowerCase();
+		const nutriTerm = debouncedNutriFilter.trim().toLowerCase();
+		const clinicFilter = appointmentFilters.clinic.trim().toLowerCase();
+		const statusFilter = appointmentFilters.status;
+
+		return appointments.filter((a) => {
+			const appt = a as Record<string, unknown>;
+			const status = (appt.status as string) ?? 'requested';
+			if (statusFilter !== 'all' && status !== statusFilter) return false;
+
+			const clinicId = (appt.clinicId as string) ?? '';
+			if (clinicFilter && clinicId.toLowerCase() !== clinicFilter) return false;
+
+			if (patientTerm) {
+				const patientUid = getStringField(appt, 'patientUid') ?? '';
+				const patientId = getStringField(appt, 'patientId') ?? '';
+				const patientEmail = getStringField(appt, 'patientEmail') ?? '';
+				const patientName = getStringField(appt, 'patientName') ?? '';
+				const matchesPatient = [patientUid, patientId, patientEmail, patientName]
+					.filter(Boolean)
+					.some((value) => value.toLowerCase().includes(patientTerm));
+				if (!matchesPatient) return false;
+			}
+
+			if (nutriTerm) {
+				const nutriUid = getStringField(appt, 'nutriUid') ?? '';
+				if (!nutriUid.toLowerCase().includes(nutriTerm)) return false;
+			}
+
+			const compareDate =
+				toMillis((appt as Record<string, unknown>).scheduledFor) ??
+				toMillis((appt as Record<string, unknown>).requestedAt);
+			if (fromIso && compareDate !== null && compareDate < Date.parse(fromIso)) return false;
+			if (toIso && compareDate !== null && compareDate > Date.parse(toIso)) return false;
+
+			return true;
+		});
+	}, [
+		appointments,
+		appointmentFilters.clinic,
+		appointmentFilters.from,
+		appointmentFilters.status,
+		appointmentFilters.to,
+		debouncedNutriFilter,
+		debouncedPatientFilter,
+	]);
+
+	const totalAppointmentPages = useMemo(
+		() => Math.max(1, Math.ceil(filteredAppointments.length / Math.max(appointmentsPerPage, 1))),
+		[appointmentsPerPage, filteredAppointments.length]
+	);
+
+	useEffect(() => {
+		setAppointmentPage(1);
+	}, [appointmentFilters, appointmentsPerPage]);
+
+	useEffect(() => {
+		setAppointmentPage((prev) => Math.min(prev, totalAppointmentPages));
+	}, [totalAppointmentPages]);
+
+	const visibleAppointments = useMemo(() => {
+		const safePage = Math.min(appointmentPage, totalAppointmentPages);
+		const start = (safePage - 1) * Math.max(appointmentsPerPage, 1);
+		const end = start + Math.max(appointmentsPerPage, 1);
+		return filteredAppointments.slice(start, end);
+	}, [appointmentPage, appointmentsPerPage, filteredAppointments, totalAppointmentPages]);
 
 	useEffect(() => {
 		if (claims.clinicId) {
@@ -801,7 +914,7 @@ function getEmailError(value: string) {
 		if (!nutriUid) {
 			setApptSlots([]);
 			setApptBusySlots([]);
-			setApptRequestSlot('');
+			setApptRequestSlots([]);
 			setCurrentSlotsNutri('');
 			return;
 		}
@@ -844,7 +957,12 @@ function getEmailError(value: string) {
 				setApptSlots(free);
 				setApptBusySlots(busy);
 				setCurrentSlotsNutri(nutriUid);
-				setApptRequestSlot((prev) => (free.includes(prev) ? prev : free[0] || ''));
+				setApptRequestSlots((prev) => {
+					const valid = prev.filter((slot) => free.includes(slot));
+					if (valid.length > 0) return valid;
+					if (free[0]) return [free[0]];
+					return [];
+				});
 			}
 		} finally {
 			setLoadingSlots(false);
@@ -872,47 +990,77 @@ function getEmailError(value: string) {
 				endpoint: '/appointments/request',
 				method: 'VALIDATION',
 				ok: false,
-				payload: { apptRequestNutriUid, apptRequestSlot },
+				payload: { apptRequestNutriUid, apptRequestSlots },
 				error: 'Falta nutriUid para pedir turno',
 			});
 			return;
 		}
 		const manualIso = apptManualSlot ? toIsoFromDatetimeLocal(apptManualSlot) : null;
-		if (!apptRequestSlot && apptManualSlot && !manualIso) {
+		if (apptManualSlot && !manualIso) {
 			setAppointmentFormError(copy.dashboard.appointments.form.manualInvalid);
 			return;
 		}
-		const scheduledIso = apptRequestSlot || manualIso;
-		if (!scheduledIso) {
+		const candidates = [...apptRequestSlots];
+		if (manualIso) candidates.push(manualIso);
+		const uniqueSlots = Array.from(new Set(candidates.filter(Boolean)));
+		if (uniqueSlots.length === 0) {
 			setAppointmentFormError(copy.dashboard.appointments.form.slotRequired);
 			logManual({
 				endpoint: '/appointments/request',
 				method: 'VALIDATION',
 				ok: false,
-				payload: { apptRequestNutriUid, apptRequestSlot, manual: apptManualSlot },
+				payload: { apptRequestNutriUid, apptRequestSlots, manual: apptManualSlot },
 				error: copy.dashboard.appointments.form.slotRequired,
 			});
 			return;
 		}
+
+		const overlapWithBusy = uniqueSlots.find((slot) => apptBusySlots.includes(slot));
+		if (overlapWithBusy) {
+			setAppointmentFormError(copy.dashboard.appointments.form.overlapBusy);
+			return;
+		}
+
 		setAppointmentFormError(null);
 		setLoading(true);
 		try {
-			const result = await authedFetch('POST', '/appointments/request', {
-				nutriUid: apptRequestNutriUid,
-				clinicId: claims.clinicId ?? undefined,
-				scheduledForIso: scheduledIso,
-			});
-			if (result.ok) {
+			let successCount = 0;
+			let lastError: string | null = null;
+			for (const slot of uniqueSlots) {
+				const result = await authedFetch('POST', '/appointments/request', {
+					nutriUid: apptRequestNutriUid,
+					clinicId: claims.clinicId ?? undefined,
+					scheduledForIso: slot,
+				});
+				if (result.ok) {
+					successCount += 1;
+				} else if (result.status === 403 && claims.role === 'patient') {
+					const reason =
+						getStringField(result.data, 'message') ??
+						result.error ??
+						copy.dashboard.appointments.linking.description;
+					setLinkRequired({ active: true, reason });
+					pushToast(copy.toasts.linkRequired, 'warning');
+					break;
+				} else {
+					lastError = result.error ?? copy.dashboard.appointments.form.slotRequired;
+				}
+			}
+
+			if (successCount > 0) {
 				setLinkRequired({ active: false, reason: '' });
 				setLinkFlowMessage(null);
 				await handleListAppointments();
-				pushToast(copy.toasts.appointmentRequested, 'success');
-			} else if (result.status === 403 && claims.role === 'patient') {
-				const reason =
-					getStringField(result.data, 'message') ?? result.error ?? copy.dashboard.appointments.linking.description;
-				setLinkRequired({ active: true, reason });
-				pushToast(copy.toasts.linkRequired, 'warning');
-			} else {
+				setApptRequestSlots([]);
+				setApptManualSlot('');
+				pushToast(
+					successCount > 1
+						? copy.toasts.appointmentsRequestedMany.replace('{{count}}', String(successCount))
+						: copy.toasts.appointmentRequested,
+					'success'
+				);
+			} else if (lastError) {
+				setAppointmentFormError(lastError);
 				pushToast(copy.toasts.appointmentRequestError, 'error');
 			}
 		} finally {
@@ -981,23 +1129,54 @@ function getEmailError(value: string) {
 
 	async function handleScheduleAppointment(apptId: string) {
 		const sched = scheduleSelections[apptId];
-		const hasSelectedSlot = !!sched?.when;
 		const manualIso = sched?.manualWhen ? toIsoFromDatetimeLocal(sched.manualWhen) : null;
-		if (!hasSelectedSlot && sched?.manualWhen && !manualIso) {
+		if (sched?.manualWhen && !manualIso) {
 			setScheduleErrors((prev) => ({
 				...prev,
 				[apptId]: copy.dashboard.appointments.schedule.manualInvalid,
 			}));
 			return;
 		}
-		const iso = sched?.when || manualIso || '';
-		if (!iso) {
+		const candidates = [...(sched?.slots ?? [])];
+		if (manualIso) candidates.push(manualIso);
+		const uniqueSlots = Array.from(new Set(candidates.filter(Boolean)));
+		if (uniqueSlots.length === 0) {
 			setScheduleErrors((prev) => ({
 				...prev,
 				[apptId]: copy.dashboard.appointments.schedule.validDateRequired,
 			}));
 			return;
 		}
+
+		const conflictWithBusy = uniqueSlots.find((slot) => apptBusySlots.includes(slot));
+		if (conflictWithBusy) {
+			setScheduleErrors((prev) => ({
+				...prev,
+				[apptId]: copy.dashboard.appointments.schedule.overlapBusy,
+			}));
+			return;
+		}
+
+		const targetNutri = sched?.nutri || apptRequestNutriUid || '';
+		const conflictWithSelection = uniqueSlots.find((slot) =>
+			Object.entries(scheduleSelections).some(([otherId, other]) => {
+				if (otherId === apptId) return false;
+				const otherNutri = other?.nutri || apptRequestNutriUid || '';
+				if (otherNutri !== targetNutri) return false;
+				const otherManual = other?.manualWhen ? toIsoFromDatetimeLocal(other.manualWhen) : null;
+				const otherSlots = [...(other?.slots ?? []), ...(otherManual ? [otherManual] : [])];
+				return otherSlots.includes(slot);
+			})
+		);
+		if (conflictWithSelection) {
+			setScheduleErrors((prev) => ({
+				...prev,
+				[apptId]: copy.dashboard.appointments.schedule.overlapSelected,
+			}));
+			return;
+		}
+
+		const iso = [...uniqueSlots].sort((a, b) => Date.parse(a) - Date.parse(b))[0];
 		setScheduleErrors((prev) => ({ ...prev, [apptId]: null }));
 		setLoading(true);
 		try {
@@ -1145,7 +1324,16 @@ function getEmailError(value: string) {
 		handleAssignNutri,
 		handleListPatients,
 		appointments,
+		filteredAppointments,
+		visibleAppointments,
 		appointmentsLoading,
+		appointmentFilters,
+		setAppointmentFilters,
+		appointmentPage,
+		setAppointmentPage,
+		appointmentsPerPage,
+		setAppointmentsPerPage,
+		totalAppointmentPages,
 		handleScheduleAppointment,
 		apptRequestNutriUid,
 		setApptRequestNutriUid,
@@ -1153,8 +1341,8 @@ function getEmailError(value: string) {
 		setSlotRangeFrom: setSlotRangeFromInput,
 		slotRangeTo,
 		setSlotRangeTo: setSlotRangeToInput,
-		apptRequestSlot,
-		setApptRequestSlot,
+		apptRequestSlots,
+		setApptRequestSlots,
 		apptManualSlot,
 		setApptManualSlot: setValidatedApptManualSlot,
 		handleLoadSlots,

@@ -15,8 +15,16 @@ import { StateBlock } from '../components';
 
 type Copy = ReturnType<typeof getCopy>;
 
-type ScheduleSelection = { when: string; manualWhen?: string; nutri: string };
+type ScheduleSelection = { slots: string[]; manualWhen?: string; nutri: string };
 type PatientFieldErrors = { email: string | null; phone: string | null };
+type AppointmentFilters = {
+	status: 'all' | 'requested' | 'scheduled' | 'completed' | 'cancelled';
+	patient: string;
+	nutri: string;
+	clinic: string;
+	from: string;
+	to: string;
+};
 
 type DashboardProps = {
 	copy: Copy;
@@ -59,7 +67,16 @@ type DashboardProps = {
 	handleAssignNutri: (patientId: string) => Promise<void>;
 	handleListPatients: () => Promise<void>;
 	appointments: unknown[];
+	filteredAppointments: unknown[];
+	visibleAppointments: unknown[];
 	appointmentsLoading: boolean;
+	appointmentFilters: AppointmentFilters;
+	setAppointmentFilters: Dispatch<SetStateAction<AppointmentFilters>>;
+	appointmentPage: number;
+	setAppointmentPage: Dispatch<SetStateAction<number>>;
+	appointmentsPerPage: number;
+	setAppointmentsPerPage: Dispatch<SetStateAction<number>>;
+	totalAppointmentPages: number;
 	handleScheduleAppointment: (apptId: string) => Promise<void>;
 	apptRequestNutriUid: string;
 	setApptRequestNutriUid: Dispatch<SetStateAction<string>>;
@@ -67,8 +84,8 @@ type DashboardProps = {
 	setSlotRangeFrom: Dispatch<SetStateAction<string>>;
 	slotRangeTo: string;
 	setSlotRangeTo: Dispatch<SetStateAction<string>>;
-	apptRequestSlot: string;
-	setApptRequestSlot: Dispatch<SetStateAction<string>>;
+	apptRequestSlots: string[];
+	setApptRequestSlots: Dispatch<SetStateAction<string[]>>;
 	apptManualSlot: string;
 	setApptManualSlot: Dispatch<SetStateAction<string>>;
 	handleLoadSlots: (
@@ -137,7 +154,16 @@ export default function Dashboard({
 	handleAssignNutri,
 	handleListPatients,
 	appointments,
+	filteredAppointments,
+	visibleAppointments,
 	appointmentsLoading,
+	appointmentFilters,
+	setAppointmentFilters,
+	appointmentPage,
+	setAppointmentPage,
+	appointmentsPerPage,
+	setAppointmentsPerPage,
+	totalAppointmentPages,
 	handleScheduleAppointment,
 	apptRequestNutriUid,
 	setApptRequestNutriUid,
@@ -145,8 +171,8 @@ export default function Dashboard({
 	setSlotRangeFrom,
 	slotRangeTo,
 	setSlotRangeTo,
-	apptRequestSlot,
-	setApptRequestSlot,
+	apptRequestSlots,
+	setApptRequestSlots,
 	apptManualSlot,
 	setApptManualSlot,
 	handleLoadSlots,
@@ -548,14 +574,7 @@ export default function Dashboard({
 				/>
 			)}
 
-			{appointments.length === 0 && !appointmentsLoading && (
-				<StateBlock
-					icon='📅'
-					title={copy.dashboard.appointments.noAppointments}
-					description={copy.dashboard.appointments.patientRoleReminder}
-				/>
-			)}
-				<div className='grid three'>
+			<div className='grid three'>
 					<label className='field'>
 						<span>{copy.dashboard.appointments.form.selectNutri}</span>
 						<select
@@ -601,9 +620,16 @@ export default function Dashboard({
 					<label className='field'>
 						<span>{copy.dashboard.appointments.form.slotLabel}</span>
 						<select
-							value={apptRequestSlot}
-							onChange={(e) => setApptRequestSlot(e.target.value)}
+							multiple
+							value={apptRequestSlots}
+							onChange={(e) => {
+								const values = Array.from(e.target.selectedOptions).map((opt) => opt.value);
+								setAppointmentFormError(null);
+								setApptRequestSlots(values);
+							}}
+							size={Math.min(Math.max(apptSlots.length, 3), 6)}
 							disabled={loadingSlots || apptSlots.length === 0}
+							aria-multiselectable='true'
 						>
 							{apptSlots.length === 0 && (
 								<option value=''>{copy.dashboard.appointments.form.noSlots}</option>
@@ -614,6 +640,7 @@ export default function Dashboard({
 								</option>
 							))}
 						</select>
+						<small className='muted'>{copy.dashboard.appointments.form.multiSelectHint}</small>
 					</label>
 					<button
 						className='btn ghost'
@@ -624,7 +651,13 @@ export default function Dashboard({
 					</button>
 					<button
 						className='btn primary'
-						disabled={loading || linking || !isPatient || knownNutris.length === 0 || !apptRequestSlot}
+						disabled={
+							loading ||
+							linking ||
+							!isPatient ||
+							knownNutris.length === 0 ||
+							(apptRequestSlots.length === 0 && !apptManualSlot)
+						}
 						onClick={handleRequestAppointment}
 					>
 						{copy.dashboard.appointments.form.request}
@@ -637,6 +670,12 @@ export default function Dashboard({
 				{slotRangeError && (
 					<p className='muted' role='status' aria-live='assertive' id={slotRangeErrorId}>
 						{slotRangeError}
+					</p>
+				)}
+
+				{appointmentFormError && apptSlots.length > 0 && (
+					<p className='error-text' id={manualSlotErrorId} role='status' aria-live='assertive'>
+						{appointmentFormError}
 					</p>
 				)}
 
@@ -683,16 +722,142 @@ export default function Dashboard({
 					</div>
 				)}
 
-			{appointments.length > 0 && (
-				<div className='appointments' aria-busy={appointmentsLoading} aria-live='polite'>
-					{appointmentsLoading && (
-						<StateBlock
-							loading
-							title={copy.dashboard.appointments.loading}
-							description={copy.dashboard.appointments.loadingHint}
-						/>
-					)}
-					{appointments.map((a, idx) => {
+				<div
+					className='card'
+					style={{
+						background: 'var(--surface-muted, #f7f7f7)',
+						margin: '16px 0',
+						border: '1px solid var(--border, #dcdcdc)',
+					}}
+				>
+					<h4 style={{ marginTop: 0 }}>{copy.dashboard.appointments.filters.title}</h4>
+					<div className='grid three'>
+						<label className='field'>
+							<span>{copy.dashboard.appointments.filters.status}</span>
+							<select
+								value={appointmentFilters.status}
+								onChange={(e) =>
+									setAppointmentFilters((prev) => ({
+										...prev,
+										status: e.target.value as AppointmentFilters['status'],
+									}))
+								}
+							>
+								<option value='all'>{copy.dashboard.appointments.filters.allStatuses}</option>
+								{(Object.keys(copy.dashboard.appointments.statusLabel) as AppointmentFilters['status'][]).map(
+									(status) => (
+										<option key={status} value={status}>
+											{copy.dashboard.appointments.statusLabel[status] ?? status}
+										</option>
+									)
+								)}
+							</select>
+						</label>
+						<label className='field'>
+							<span>{copy.dashboard.appointments.filters.patient}</span>
+							<input
+								type='text'
+								value={appointmentFilters.patient}
+								onChange={(e) => setAppointmentFilters((prev) => ({ ...prev, patient: e.target.value }))}
+								placeholder={copy.dashboard.appointments.filters.patientPlaceholder}
+							/>
+						</label>
+						<label className='field'>
+							<span>{copy.dashboard.appointments.filters.nutri}</span>
+							<input
+								type='text'
+								value={appointmentFilters.nutri}
+								onChange={(e) => setAppointmentFilters((prev) => ({ ...prev, nutri: e.target.value }))}
+								placeholder={copy.dashboard.appointments.filters.nutriPlaceholder}
+							/>
+						</label>
+						<label className='field'>
+							<span>{copy.dashboard.appointments.filters.clinic}</span>
+							<select
+								value={appointmentFilters.clinic}
+								onChange={(e) => setAppointmentFilters((prev) => ({ ...prev, clinic: e.target.value }))}
+							>
+								<option value=''>{copy.dashboard.appointments.filters.allClinics}</option>
+								{clinicOptions.map((c) => (
+									<option key={c} value={c}>
+										{c}
+									</option>
+								))}
+							</select>
+						</label>
+						<label className='field'>
+							<span>{copy.dashboard.appointments.filters.from}</span>
+							<input
+								type='datetime-local'
+								inputMode='numeric'
+								pattern={DATETIME_LOCAL_PATTERN.source}
+								value={appointmentFilters.from}
+								onChange={(e) => setAppointmentFilters((prev) => ({ ...prev, from: e.target.value }))}
+							/>
+						</label>
+						<label className='field'>
+							<span>{copy.dashboard.appointments.filters.to}</span>
+							<input
+								type='datetime-local'
+								inputMode='numeric'
+								pattern={DATETIME_LOCAL_PATTERN.source}
+								value={appointmentFilters.to}
+								onChange={(e) => setAppointmentFilters((prev) => ({ ...prev, to: e.target.value }))}
+							/>
+						</label>
+					</div>
+					<div className='actions wrap'>
+						<span className='pill subtle'>
+							{copy.dashboard.appointments.filters.summary
+								.replace('{{shown}}', String(visibleAppointments.length))
+								.replace('{{total}}', String(filteredAppointments.length))}
+						</span>
+						<button
+							className='btn ghost sm'
+							onClick={() =>
+								setAppointmentFilters((prev) => ({
+									...prev,
+									patient: '',
+									nutri: '',
+									from: '',
+									to: '',
+									clinic: '',
+									status: 'all',
+								}))
+							}
+						>
+							{copy.dashboard.appointments.filters.reset}
+						</button>
+					</div>
+				</div>
+
+			{filteredAppointments.length === 0 && !appointmentsLoading && appointments.length === 0 && (
+				<StateBlock
+					icon='📅'
+					title={copy.dashboard.appointments.noAppointments}
+					description={copy.dashboard.appointments.patientRoleReminder}
+				/>
+			)}
+
+			{filteredAppointments.length === 0 && appointments.length > 0 && !appointmentsLoading && (
+				<StateBlock
+					icon='🔍'
+					title={copy.dashboard.appointments.noFiltered}
+					description={copy.dashboard.appointments.filters.resetHint}
+				/>
+			)}
+
+			{filteredAppointments.length > 0 && (
+				<>
+					<div className='appointments' aria-busy={appointmentsLoading} aria-live='polite'>
+						{appointmentsLoading && (
+							<StateBlock
+								loading
+								title={copy.dashboard.appointments.loading}
+								description={copy.dashboard.appointments.loadingHint}
+							/>
+						)}
+						{visibleAppointments.map((a, idx) => {
 							const appt = a as Record<string, unknown>;
 							const appointmentId = (appt.id as string) ?? undefined;
 							const appointmentKey = appointmentId ?? String(idx);
@@ -704,7 +869,7 @@ export default function Dashboard({
 							const appointmentStatus = (appt.status as string) ?? 'requested';
 							const sched =
 								scheduleSelections[appointmentKey] ?? {
-									when: '',
+									slots: [],
 									manualWhen: '',
 									nutri: appointmentNutri || apptRequestNutriUid || '',
 								};
@@ -797,7 +962,7 @@ export default function Dashboard({
 																...prev,
 																[appointmentKey]: {
 																	...prev[appointmentKey],
-																	when: '',
+																	slots: [],
 																	manualWhen: '',
 																	nutri: e.target.value,
 																},
@@ -812,7 +977,8 @@ export default function Dashboard({
 														))}
 													</select>
 													<select
-														value={sched.when}
+														multiple
+														value={sched.slots ?? []}
 														disabled={
 															loadingSlots ||
 															!sched.nutri ||
@@ -820,16 +986,20 @@ export default function Dashboard({
 															apptSlots.length === 0
 														}
 														onChange={(e) => {
+															const values = Array.from(e.target.selectedOptions).map((opt) => opt.value);
 															setScheduleErrors((prev) => ({ ...prev, [appointmentKey]: null }));
 															setScheduleSelections((prev) => ({
 																...prev,
 																[appointmentKey]: {
 																	...prev[appointmentKey],
-																	when: e.target.value,
+																	slots: values,
 																	nutri: sched.nutri,
+																	manualWhen: prev[appointmentKey]?.manualWhen ?? '',
 																},
 															}));
 														}}
+														size={Math.min(Math.max(apptSlots.length, 3), 6)}
+														aria-multiselectable='true'
 													>
 														{currentSlotsNutri !== sched.nutri && (
 															<option value=''>{copy.dashboard.appointments.schedule.selectSlot}</option>
@@ -844,6 +1014,7 @@ export default function Dashboard({
 																</option>
 															))}
 													</select>
+													<small className='muted'>{copy.dashboard.appointments.schedule.multiSelectHint}</small>
 													<input
 														type='datetime-local'
 														inputMode='numeric'
@@ -857,6 +1028,7 @@ export default function Dashboard({
 																	...prev[appointmentKey],
 																	manualWhen: e.target.value,
 																	nutri: sched.nutri,
+																	slots: prev[appointmentKey]?.slots ?? [],
 																},
 															}));
 														}}
@@ -885,7 +1057,7 @@ export default function Dashboard({
 													</button>
 													<button
 														className='btn'
-														disabled={loading || (!sched.when && !sched.manualWhen)}
+														disabled={loading || ((sched.slots?.length ?? 0) === 0 && !sched.manualWhen)}
 														onClick={() => handleScheduleAppointment(appointmentKey)}
 													>
 														{copy.dashboard.appointments.schedule.program}
@@ -919,8 +1091,49 @@ export default function Dashboard({
 							);
 						})}
 					</div>
-				)}
-			</div>
+					<div className='actions wrap between'>
+						<div className='muted'>
+							{copy.dashboard.appointments.pagination.summary
+								.replace('{{start}}', String(filteredAppointments.length === 0 ? 0 : (appointmentPage - 1) * appointmentsPerPage + 1))
+								.replace('{{end}}', String(filteredAppointments.length === 0 ? 0 : Math.min(filteredAppointments.length, (appointmentPage - 1) * appointmentsPerPage + visibleAppointments.length)))
+								.replace('{{total}}', String(filteredAppointments.length))}
+						</div>
+						<div className='actions wrap'>
+							<label className='field'>
+								<span>{copy.dashboard.appointments.pagination.perPage}</span>
+								<select
+									value={appointmentsPerPage}
+									onChange={(e) => setAppointmentsPerPage(Number(e.target.value) || 5)}
+								>
+									<option value={5}>5</option>
+									<option value={10}>10</option>
+									<option value={20}>20</option>
+								</select>
+							</label>
+							<button
+								className='btn ghost'
+								disabled={appointmentPage <= 1}
+								onClick={() => setAppointmentPage((prev) => Math.max(1, prev - 1))}
+							>
+								{copy.dashboard.appointments.pagination.prev}
+							</button>
+							<span className='pill subtle'>
+								{copy.dashboard.appointments.pagination.page
+									.replace('{{page}}', String(appointmentPage))
+									.replace('{{total}}', String(totalAppointmentPages))}
+							</span>
+							<button
+								className='btn'
+								disabled={appointmentPage >= totalAppointmentPages}
+								onClick={() => setAppointmentPage((prev) => Math.min(totalAppointmentPages, prev + 1))}
+							>
+								{copy.dashboard.appointments.pagination.next}
+							</button>
+						</div>
+					</div>
+				</>
+			)}
+		</div>
 
 		{(role === 'clinic_admin' || role === 'nutri') && (
 			<div className='card'>
