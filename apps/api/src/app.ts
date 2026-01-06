@@ -30,7 +30,7 @@ export function buildApp(): Express {
 	 */
 	app.use(
 		cors({
-			origin: false,
+			origin: allowlist (stg/prd),
 			credentials: false,
 		})
 	);
