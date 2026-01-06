@@ -2,7 +2,6 @@ import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 
-import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
 import { denyAuthz } from '../security/authz.js';
@@ -27,6 +26,7 @@ const patchPatientSchema = z.object({
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
 	assignedNutriUid: z.string().min(1).optional().nullable(),
+	status: z.string().optional(),
 });
 
 const assignNutriSchema = z.object({
@@ -38,14 +38,14 @@ function clinicScopedUnlessPlatformAdmin(req: Request, res: Response, next: () =
 	return requireClinicContext(req, res, next);
 }
 
+// Nota: authMiddleware removido porque 'patientsRouter' se monta bajo '/api' que ya tiene requireAuth.
+
 patientsRouter.get(
 	'/',
-	authMiddleware,
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
-		const auth = req.auth;
-		if (!auth) return res.status(401).json({ success: false, message: 'Unauthenticated' });
-
+		const auth = req.auth!; // Garantizado por requireAuth
+		
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
 
@@ -80,7 +80,6 @@ patientsRouter.get(
 
 patientsRouter.post(
 	'/',
-	authMiddleware,
 	requireClinicContext,
 	requireRole('clinic_admin', 'nutri', 'staff', 'platform_admin'),
 	async (req: Request, res: Response) => {
@@ -111,7 +110,6 @@ patientsRouter.post(
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
-			assignedNutriUid: parsed.data.assignedNutriUid ?? null,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -133,7 +131,6 @@ patientsRouter.post(
 
 patientsRouter.patch(
 	'/:id',
-	authMiddleware,
 	clinicScopedUnlessPlatformAdmin,
 	requireRole('clinic_admin', 'nutri', 'staff', 'platform_admin'),
 	async (req: Request, res: Response) => {
@@ -210,7 +207,6 @@ patientsRouter.patch(
 
 patientsRouter.post(
 	'/:id/assign-nutri',
-	authMiddleware,
 	requireClinicContext,
 	requireRole('clinic_admin', 'staff', 'platform_admin'),
 	async (req: Request, res: Response) => {
