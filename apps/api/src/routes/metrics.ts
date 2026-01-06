@@ -2,7 +2,6 @@ import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 
-import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
 import { denyAuthz } from '../security/authz.js';
@@ -28,7 +27,6 @@ const createMetricSchema = z.object({
 
 router.post(
 	'/',
-	authMiddleware,
 	requireClinicContext,
 	requireRole('clinic_admin', 'nutri'),
 	async (req: Request, res: Response) => {
@@ -69,7 +67,6 @@ router.post(
 
 router.get(
 	'/',
-	authMiddleware,
 	requireClinicContext,
 	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin'),
 	async (req: Request, res: Response) => {
