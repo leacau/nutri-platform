@@ -1,6 +1,10 @@
 export type ClinicRole = 'clinic_admin' | 'nutri' | 'staff';
 
-export type Role = ClinicRole | 'platform_admin';
+// Agregamos rol del portal
+export type PortalRole = 'patient';
+
+// Actualizamos la unión de roles para incluir PortalRole
+export type Role = ClinicRole | PortalRole | 'platform_admin';
 
 export type AuthContext = {
 	uid: string;
