@@ -4,7 +4,6 @@ import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
 import { clinicsRouter } from './clinics.js';
 import { logEvent } from '../observability/eventLogger.js';
-import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { ClinicMembershipDoc } from '../types/clinics.js';
 import type { ClinicRole } from '../types/auth.js';
@@ -21,7 +20,9 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
 	});
 });
 
-apiRouter.get('/session', authMiddleware, async (req: Request, res: Response) => {
+// requireAuth ya es aplicado en app.ts a /api
+apiRouter.get('/session', async (req: Request, res: Response) => {
+	// req.auth está garantizado por requireAuth padre, pero TS puede requerir check o !
 	if (!req.auth) {
 		return res.status(401).json({ success: false, message: 'Unauthenticated' });
 	}
