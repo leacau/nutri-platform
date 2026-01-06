@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
+import { resolveSessionContext } from '../middlewares/resolveSessionContext.js'; // <--- Nuevo
 import { denyAuthz } from '../security/authz.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import { getDocInClinic } from '../security/getDocInClinic.js';
@@ -11,6 +12,10 @@ import type { PatientDoc } from '../types/patients.js';
 import type { MetricDoc } from '../types/metrics.js';
 
 const router = Router();
+
+// Aplicar resolución de sesión para todas las rutas de métricas
+// Esto habilita el soporte de Patient Portal (req.patientContext)
+router.use(resolveSessionContext);
 
 const createMetricSchema = z.object({
 	patientId: z.string().min(1),
@@ -31,22 +36,22 @@ router.post(
 	requireRole('clinic_admin', 'nutri'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
-		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
-		if (!clinicId) return denyAuthz(req, res, 'Missing clinicId for metrics');
-
+		const clinicId = auth.clinicId; 
+		// clinicId garantizado por requireClinicContext (que corre despues de resolveSessionContext)
+		
 		const parsed = createMetricSchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({ success: false, message: 'Invalid body', errors: parsed.error.flatten() });
 		}
 
 		const db = getFirestoreDb();
-		const patient = await getDocInClinic<PatientDoc>(db, 'patients', parsed.data.patientId, clinicId);
+		const patient = await getDocInClinic<PatientDoc>(db, 'patients', parsed.data.patientId, clinicId!);
 		if (!patient) return res.status(404).json({ success: false, message: 'Patient not found in clinic' });
 		const safePatient = patient as PatientDoc & { id: string };
 
 		const now = Timestamp.now();
 		const doc: MetricDoc = {
-			clinicId,
+			clinicId: clinicId!,
 			patientId: safePatient.id,
 			visitId: parsed.data.visitId ?? null,
 			measuredAt: parsed.data.measuredAt ? Timestamp.fromMillis(Date.parse(parsed.data.measuredAt)) : now,
@@ -71,8 +76,7 @@ router.get(
 	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
-		const clinicId = auth.isPlatformAdmin ? auth.clinicId ?? req.header('x-clinic-id') ?? null : auth.clinicId;
-		if (!clinicId && !auth.isPlatformAdmin) return denyAuthz(req, res, 'Missing clinicId for metrics listing');
+		const clinicId = auth.clinicId!; // requireClinicContext asegura esto
 
 		const patientIdFilter = (req.query.patientId as string | undefined) ?? null;
 		const db = getFirestoreDb();
@@ -83,19 +87,17 @@ router.get(
 		} else if (clinicId) {
 			query = query.where('clinicId', '==', clinicId);
 		}
-		if (patientIdFilter) query = query.where('patientId', '==', patientIdFilter);
-
+		
+		// Seguridad para Paciente: Forzar filtro a SU propio ID
 		if (auth.role === 'patient') {
-			const patientSnap = await db
-				.collection('patients')
-				.where('linkedUid', '==', auth.uid)
-				.where('clinicId', '==', clinicId)
-				.limit(1)
-				.get();
-			if (patientSnap.empty) return denyAuthz(req, res, 'Patient not linked');
-			const first = patientSnap.docs[0];
-			if (!first) return denyAuthz(req, res, 'Patient not linked');
-			query = query.where('patientId', '==', first.id);
+			if (!req.patientContext?.patientId) {
+				return denyAuthz(req, res, 'Patient context not resolved');
+			}
+			// Sobreescribimos cualquier filtro que venga del front con el ID real del paciente logueado
+			query = query.where('patientId', '==', req.patientContext.patientId);
+		} else {
+			// Para staff, filtro opcional
+			if (patientIdFilter) query = query.where('patientId', '==', patientIdFilter);
 		}
 
 		const snap = await query.get();
