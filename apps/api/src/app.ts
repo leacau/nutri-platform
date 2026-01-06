@@ -18,11 +18,6 @@ export function buildApp(): Express {
 	const app = express();
 	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 
-	const isAllowedOrigin = (origin: string | undefined): boolean => {
-		if (!origin) return true;
-		return allowedOrigins.includes(origin);
-	};
-
 	// Seguridad: headers básicos
 	app.use(helmet());
 
@@ -36,20 +31,19 @@ export function buildApp(): Express {
 	app.use(express.json({ limit: '256kb' }));
 
 	// CORS con allowlist basado en ALLOWED_ORIGINS
-	app.use((req: Request, res: Response, next) => {
-		const origin = req.header('Origin');
-		if (isAllowedOrigin(origin)) {
-			return next();
-		}
-		return res
-			.status(403)
-			.json({ success: false, message: 'Origin not allowed' });
-	});
-
+	// Se permite request sin origin (server-to-server / curl) y origins listados.
 	app.use(
 		cors({
-			origin: allowlist (stg/prd),
-			credentials: false,
+			origin: (origin, callback) => {
+				if (!origin) return callback(null, true);
+				if (allowedOrigins.includes(origin)) {
+					return callback(null, true);
+				}
+				return callback(null, false);
+			},
+			credentials: false, // Token Bearer no usa cookies
+			methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+			allowedHeaders: ['Content-Type', 'Authorization', 'x-clinic-id'],
 		})
 	);
 
@@ -69,6 +63,7 @@ export function buildApp(): Express {
 	});
 
 	// API routes bajo /api
+	// requireAuth protege todo /api, evitando redundancia en sub-rutas
 	app.use('/api', requireAuth, apiRouter);
 
 	// 404 consistente (evita HTML default)
