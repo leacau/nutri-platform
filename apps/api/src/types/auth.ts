@@ -15,3 +15,9 @@ export type PatientContext = {
 	patientId: string;
 	clinicId: string;
 };
+
+export type AuthenticatedUser = {
+	uid: string;
+	email: string | null;
+	claims: Record<string, unknown>;
+};

@@ -6,9 +6,22 @@ import morgan from 'morgan';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { apiRouter } from './routes/api.js';
 import { metricsMiddleware, metricsRegistry } from './middlewares/metrics.js';
+import { requireAuth } from './middlewares/requireAuth.js';
+
+const parseAllowedOrigins = (value: string | undefined): string[] =>
+	(value ?? '')
+		.split(',')
+		.map((origin) => origin.trim())
+		.filter((origin) => origin.length > 0);
 
 export function buildApp(): Express {
 	const app = express();
+	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+
+	const isAllowedOrigin = (origin: string | undefined): boolean => {
+		if (!origin) return true;
+		return allowedOrigins.includes(origin);
+	};
 
 	// Seguridad: headers básicos
 	app.use(helmet());
@@ -22,12 +35,17 @@ export function buildApp(): Express {
 	// JSON (limit bajo para reducir riesgo DoS)
 	app.use(express.json({ limit: '256kb' }));
 
-	/**
-	 * CORS:
-	 * - En dev NO lo necesitamos si usamos proxy de Vite (/api -> backend).
-	 * - Por defecto BLOQUEAMOS cross-origin (origin:false).
-	 * - Si algún día querés correr sin proxy, vas a habilitar un origin explícito.
-	 */
+	// CORS con allowlist basado en ALLOWED_ORIGINS
+	app.use((req: Request, res: Response, next) => {
+		const origin = req.header('Origin');
+		if (isAllowedOrigin(origin)) {
+			return next();
+		}
+		return res
+			.status(403)
+			.json({ success: false, message: 'Origin not allowed' });
+	});
+
 	app.use(
 		cors({
 			origin: allowlist (stg/prd),
@@ -51,7 +69,7 @@ export function buildApp(): Express {
 	});
 
 	// API routes bajo /api
-	app.use('/api', apiRouter);
+	app.use('/api', requireAuth, apiRouter);
 
 	// 404 consistente (evita HTML default)
 	app.use((_req: Request, res: Response) => {

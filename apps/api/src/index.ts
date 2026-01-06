@@ -8,7 +8,7 @@ function mustGetEnv(name: string): string {
 	return v;
 }
 
-const PORT = Number(process.env.PORT ?? '8081');
+const PORT = Number(process.env.PORT ?? '8080');
 if (!Number.isFinite(PORT)) {
 	throw new Error('PORT must be a valid number');
 }
