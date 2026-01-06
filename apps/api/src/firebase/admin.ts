@@ -19,27 +19,18 @@ export function getFirebaseAdmin(): FirebaseAdminContext {
 
 	const projectId = mustGetEnv('FIREBASE_PROJECT_ID');
 
-	/**
-	 * Emulator-first:
-	 * - Auth emulator: FIREBASE_AUTH_EMULATOR_HOST
-	 * - Firestore emulator: FIRESTORE_EMULATOR_HOST
-	 *
-	 * En emuladores, NO queremos credenciales reales.
-	 * initializeApp({ projectId }) alcanza.
-	 */
 	if (admin.apps.length === 0) {
-		admin.initializeApp({ projectId });
+		admin.initializeApp({
+			credential: admin.credential.applicationDefault(),
+			projectId,
+		});
 	}
 
-	// Aseguramos project id también para libs que miran GCLOUD_PROJECT
 	process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? projectId;
 
 	const app = admin.app();
 	const auth = admin.auth(app);
-
 	const firestore = admin.firestore(app);
-	// Firestore emulator suele necesitar esto para evitar warnings/behaviors raros
-	firestore.settings({ ignoreUndefinedProperties: true });
 
 	ctx = { app, auth, firestore };
 	return ctx;
