@@ -48,10 +48,8 @@ export function buildApp(): Express {
 
 	app.use(
 		cors({
-			origin(origin, callback) {
-				callback(null, isAllowedOrigin(origin ?? undefined));
-			},
-			credentials: true,
+			origin: allowlist (stg/prd),
+			credentials: false,
 		})
 	);
 
