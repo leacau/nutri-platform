@@ -13,7 +13,7 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 
 # Instalamos SOLO lo necesario para el workspace api
-RUN npm ci --workspace apps/api --include-workspace-root=false
+RUN npm ci --legacy-peer-deps --workspace apps/api --include-workspace-root=false
 
 # ---------- build ----------
 FROM base AS build
@@ -32,7 +32,7 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 
 # Instalamos SOLO deps de runtime
-RUN npm ci --omit=dev --workspace apps/api --include-workspace-root=false
+RUN npm ci --legacy-peer-deps --omit=dev --workspace apps/api --include-workspace-root=false
 
 # Copiamos build
 COPY --from=build /app/apps/api/dist ./apps/api/dist
