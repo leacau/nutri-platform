@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+**/.vercel
+**/.firebase
+.env
+.env.*
+.DS_Store
