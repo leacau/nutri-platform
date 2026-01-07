@@ -5,26 +5,37 @@ WORKDIR /app
 
 # ---------- deps ----------
 FROM base AS deps
-COPY package*.json ./
-RUN npm ci
+
+# Copiamos package.json + package-lock.json del ROOT
+COPY package.json package-lock.json ./
+
+# Copiamos el package.json del workspace
+COPY apps/api/package.json apps/api/package.json
+
+# Instalamos SOLO lo necesario para el workspace api
+RUN npm ci --workspace apps/api --include-workspace-root=false
 
 # ---------- build ----------
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN npm --workspace apps/api run build
 
 # ---------- runtime ----------
 FROM node:22-slim AS runner
 WORKDIR /app
-
 ENV NODE_ENV=production
 ENV PORT=8080
 
-COPY package*.json ./
-RUN npm ci --omit=dev
+# Copiamos manifests
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/package.json
 
-COPY --from=build /app/dist ./dist
+# Instalamos SOLO deps de runtime
+RUN npm ci --omit=dev --workspace apps/api --include-workspace-root=false
+
+# Copiamos build
+COPY --from=build /app/apps/api/dist ./apps/api/dist
 
 EXPOSE 8080
-CMD ["node", "dist/index.js"]
+CMD ["node", "apps/api/dist/index.js"]
