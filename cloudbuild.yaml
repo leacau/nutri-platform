@@ -1,0 +1,14 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-t',
+        'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/amsa-api:stg',
+        '-f',
+        'apps/api/Dockerfile',
+        '.',
+      ]
+
+images:
+  - 'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/amsa-api:stg'
