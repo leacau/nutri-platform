@@ -57,7 +57,8 @@ router.post('/seed', async (req: Request, res: Response) => {
 
 	const db = getFirestoreDb();
 	const now = Timestamp.now();
-	const clinicId = parsed.data.clinic.clinicId ?? db.collection('clinics').doc().id;
+	const clinicId =
+		parsed.data.clinic.clinicId ?? db.collection('clinics').doc().id;
 
 	const clinicDoc: ClinicDoc = {
 		name: parsed.data.clinic.name,
@@ -120,6 +121,7 @@ router.post('/seed', async (req: Request, res: Response) => {
 				phone: p.phone ?? null,
 				linkedUid: p.linkedUid ?? null,
 				assignedNutriUid: p.assignedNutriUid ?? null,
+				status: 'active',
 				createdAt: now,
 				updatedAt: now,
 			};
@@ -172,7 +174,8 @@ router.post('/set-platform-admin', async (req: Request, res: Response) => {
 			data: { uid: parsed.data.uid, platformAdmin: parsed.data.platformAdmin },
 		});
 	} catch (err) {
-		const msg = err instanceof Error ? err.message : 'Unknown error setting claims';
+		const msg =
+			err instanceof Error ? err.message : 'Unknown error setting claims';
 		return res.status(500).json({
 			success: false,
 			message: msg,

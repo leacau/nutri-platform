@@ -33,7 +33,11 @@ const assignNutriSchema = z.object({
 	nutriUid: z.string().min(1).nullable(),
 });
 
-function clinicScopedUnlessPlatformAdmin(req: Request, res: Response, next: () => void) {
+function clinicScopedUnlessPlatformAdmin(
+	req: Request,
+	res: Response,
+	next: () => void
+) {
 	if (req.auth?.isPlatformAdmin) return next();
 	return requireClinicContext(req, res, next);
 }
@@ -45,12 +49,15 @@ patientsRouter.get(
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
 		const auth = req.auth!; // Garantizado por requireAuth
-		
+
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
 
 		if (auth.isPlatformAdmin) {
-			clinicId = req.header('x-clinic-id') ?? (req.query.clinicId as string | undefined) ?? null;
+			clinicId =
+				req.header('x-clinic-id') ??
+				(req.query.clinicId as string | undefined) ??
+				null;
 			if (!clinicId) {
 				return res.status(400).json({
 					success: false,
@@ -69,11 +76,16 @@ patientsRouter.get(
 		}
 
 		const snap = await query.limit(100).get();
-		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as PatientDoc) }));
+		const items = snap.docs.map((d) => ({
+			id: d.id,
+			...(d.data() as PatientDoc),
+		}));
 
 		return res.status(200).json({
 			success: true,
-			data: items.map((p) => sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p)),
+			data: items.map((p) =>
+				sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p)
+			),
 		});
 	}
 );
@@ -95,7 +107,11 @@ patientsRouter.post(
 
 		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
 		if (!clinicId) {
-			return denyAuthz(req, res, 'Missing clinic context when creating patient');
+			return denyAuthz(
+				req,
+				res,
+				'Missing clinic context when creating patient'
+			);
 		}
 
 		if (auth.role === 'staff' && parsed.data.assignedNutriUid !== undefined) {
@@ -110,6 +126,7 @@ patientsRouter.post(
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
+			status: 'active',
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -124,7 +141,10 @@ patientsRouter.post(
 		return res.status(201).json({
 			success: true,
 			message: 'Patient created',
-			data: sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, created),
+			data: sanitizePatientForRole(
+				(auth.role ?? 'platform_admin') as Role,
+				created
+			),
 		});
 	}
 );
@@ -145,12 +165,16 @@ patientsRouter.patch(
 		}
 
 		const db = getFirestoreDb();
-		const clinicIdHeader = auth.isPlatformAdmin ? req.header('x-clinic-id') : auth.clinicId;
+		const clinicIdHeader = auth.isPlatformAdmin
+			? req.header('x-clinic-id')
+			: auth.clinicId;
 		const clinicId = clinicIdHeader ?? null;
 		const patientId = req.params.id;
 
 		if (!patientId) {
-			return res.status(400).json({ success: false, message: 'Missing patient id' });
+			return res
+				.status(400)
+				.json({ success: false, message: 'Missing patient id' });
 		}
 
 		let current: (PatientDoc & { id: string }) | null = null;
@@ -160,11 +184,18 @@ patientsRouter.patch(
 				current = { id: snap.id, ...(snap.data() as PatientDoc) };
 			}
 		} else if (clinicId) {
-			current = await getDocInClinic<PatientDoc>(db, 'patients', patientId, clinicId);
+			current = await getDocInClinic<PatientDoc>(
+				db,
+				'patients',
+				patientId,
+				clinicId
+			);
 		}
 
 		if (!current) {
-			return res.status(404).json({ success: false, message: 'Patient not found' });
+			return res
+				.status(404)
+				.json({ success: false, message: 'Patient not found' });
 		}
 
 		if (auth.role === 'staff' && parsed.data.assignedNutriUid !== undefined) {
@@ -172,15 +203,24 @@ patientsRouter.patch(
 		}
 
 		if (auth.role === 'nutri' && parsed.data.assignedNutriUid !== undefined) {
-			if (parsed.data.assignedNutriUid && parsed.data.assignedNutriUid !== auth.uid) {
-				return denyAuthz(req, res, 'Nutri cannot assign patient to another nutri');
+			if (
+				parsed.data.assignedNutriUid &&
+				parsed.data.assignedNutriUid !== auth.uid
+			) {
+				return denyAuthz(
+					req,
+					res,
+					'Nutri cannot assign patient to another nutri'
+				);
 			}
 		}
 
 		const update: Record<string, unknown> = { updatedAt: Timestamp.now() };
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
-		if (parsed.data.email !== undefined) update.email = parsed.data.email ?? null;
-		if (parsed.data.phone !== undefined) update.phone = parsed.data.phone ?? null;
+		if (parsed.data.email !== undefined)
+			update.email = parsed.data.email ?? null;
+		if (parsed.data.phone !== undefined)
+			update.phone = parsed.data.phone ?? null;
 		if (parsed.data.assignedNutriUid !== undefined) {
 			if (auth.role === 'nutri') {
 				update.assignedNutriUid = auth.uid;
@@ -200,7 +240,10 @@ patientsRouter.patch(
 		return res.status(200).json({
 			success: true,
 			message: 'Patient updated',
-			data: sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, fresh),
+			data: sanitizePatientForRole(
+				(auth.role ?? 'platform_admin') as Role,
+				fresh
+			),
 		});
 	}
 );
@@ -212,10 +255,14 @@ patientsRouter.post(
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId;
-		if (!clinicId) return denyAuthz(req, res, 'Missing clinic context on assign');
+		if (!clinicId)
+			return denyAuthz(req, res, 'Missing clinic context on assign');
 
 		const patientId = req.params.id;
-		if (!patientId) return res.status(400).json({ success: false, message: 'Missing patient id' });
+		if (!patientId)
+			return res
+				.status(400)
+				.json({ success: false, message: 'Missing patient id' });
 
 		const parsed = assignNutriSchema.safeParse(req.body);
 		if (!parsed.success) {
@@ -227,9 +274,16 @@ patientsRouter.post(
 		}
 
 		const db = getFirestoreDb();
-		const patient = await getDocInClinic<PatientDoc>(db, 'patients', patientId, clinicId);
+		const patient = await getDocInClinic<PatientDoc>(
+			db,
+			'patients',
+			patientId,
+			clinicId
+		);
 		if (!patient) {
-			return res.status(404).json({ success: false, message: 'Patient not found in clinic' });
+			return res
+				.status(404)
+				.json({ success: false, message: 'Patient not found in clinic' });
 		}
 
 		const nutriUid = parsed.data.nutriUid;
@@ -251,10 +305,13 @@ patientsRouter.post(
 			}
 		}
 
-		await db.collection('patients').doc(patientId).update({
-			assignedNutriUid: nutriUid ?? null,
-			updatedAt: Timestamp.now(),
-		});
+		await db
+			.collection('patients')
+			.doc(patientId)
+			.update({
+				assignedNutriUid: nutriUid ?? null,
+				updatedAt: Timestamp.now(),
+			});
 
 		return res.status(200).json({
 			success: true,
