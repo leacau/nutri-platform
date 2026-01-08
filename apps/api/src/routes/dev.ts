@@ -1,8 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
-
-import { denyAuthz } from '../security/authz.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { ClinicMembershipDoc, ClinicDoc } from '../types/clinics.js';
 import type { PatientDoc } from '../types/patients.js';
@@ -10,8 +8,9 @@ import { getFirebaseAdmin } from '../firebase/admin.js';
 
 const router = Router();
 
+// Schema sin 'secret'
 const seedSchema = z.object({
-	secret: z.string().min(1),
+	// secret: z.string().min(1), <--- Eliminado
 	clinic: z.object({
 		clinicId: z.string().optional(),
 		name: z.string().min(1),
@@ -38,9 +37,7 @@ const seedSchema = z.object({
 });
 
 router.post('/seed', async (req: Request, res: Response) => {
-	if (process.env.NODE_ENV === 'production') {
-		return res.status(404).json({ success: false, message: 'Not found' });
-	}
+	// Nota: La validación de NODE_ENV y x-dev-secret ya se hizo en app.ts
 
 	const parsed = seedSchema.safeParse(req.body ?? {});
 	if (!parsed.success) {
@@ -49,10 +46,6 @@ router.post('/seed', async (req: Request, res: Response) => {
 			message: 'Invalid body',
 			errors: parsed.error.flatten(),
 		});
-	}
-
-	if (parsed.data.secret !== process.env.DEV_ADMIN_SECRET) {
-		return denyAuthz(req, res, 'Invalid dev secret');
 	}
 
 	const db = getFirestoreDb();
@@ -101,13 +94,14 @@ router.post('/seed', async (req: Request, res: Response) => {
 			membershipIds.push(ref.id);
 		} else {
 			const ref = existing.docs[0]?.ref;
-			if (!ref) continue;
-			await ref.update({
-				role: u.roleInClinic,
-				isActive: u.isActive ?? true,
-				updatedAt: now,
-			});
-			membershipIds.push(ref.id);
+			if (ref) {
+				await ref.update({
+					role: u.roleInClinic,
+					isActive: u.isActive ?? true,
+					updatedAt: now,
+				});
+				membershipIds.push(ref.id);
+			}
 		}
 	}
 
@@ -138,17 +132,14 @@ router.post('/seed', async (req: Request, res: Response) => {
 	});
 });
 
+// Schema sin 'secret'
 const setPlatformAdminSchema = z.object({
-	secret: z.string().min(1),
+	// secret: z.string().min(1), <--- Eliminado
 	uid: z.string().min(1),
 	platformAdmin: z.boolean(),
 });
 
 router.post('/set-platform-admin', async (req: Request, res: Response) => {
-	if (process.env.NODE_ENV === 'production') {
-		return res.status(404).json({ success: false, message: 'Not found' });
-	}
-
 	const parsed = setPlatformAdminSchema.safeParse(req.body ?? {});
 	if (!parsed.success) {
 		return res.status(400).json({
@@ -156,10 +147,6 @@ router.post('/set-platform-admin', async (req: Request, res: Response) => {
 			message: 'Invalid body',
 			errors: parsed.error.flatten(),
 		});
-	}
-
-	if (parsed.data.secret !== process.env.DEV_ADMIN_SECRET) {
-		return denyAuthz(req, res, 'Invalid dev secret');
 	}
 
 	const { auth } = getFirebaseAdmin();

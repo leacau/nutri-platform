@@ -1,24 +1,17 @@
 import { Router, type Request, type Response } from 'express';
-import { devRouter } from './dev.js';
+// Eliminado: import { devRouter } from './dev.js';
 import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
 import { clinicsRouter } from './clinics.js';
 import { metricsRouter } from './metrics.js';
 import { logEvent } from '../observability/eventLogger.js';
 import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
-import { requireAuth } from '../middlewares/requireAuth.js'; // Aseguramos import
+// requireAuth ya no se necesita importar aquí explícitamente para montar subrutas,
+// pero el router asume que el request ya pasó por requireAuth en app.ts.
 
 export const apiRouter = Router();
 
-apiRouter.get('/health', (_req: Request, res: Response) => {
-	res.status(200).json({
-		success: true,
-		data: {
-			ok: true,
-		},
-		message: 'api healthy',
-	});
-});
+// GET /health eliminado de aquí porque app.ts lo intercepta primero.
 
 /**
  * GET /session
@@ -31,16 +24,15 @@ apiRouter.get('/session', async (req: Request, res: Response) => {
 
 	try {
 		const xClinicId = req.header('x-clinic-id') as string | undefined;
-		// Usamos la misma lógica que el middleware
 		const analysis = await analyzeUserSession(req.auth.uid, xClinicId);
 
 		logEvent('session', {
 			req,
 			clinicId: analysis.resolved.clinicId,
-			data: { 
+			data: {
 				staffClinicsCount: analysis.staffClinics.length,
 				patientClinicsCount: analysis.patientClinics.length,
-				resolvedRole: analysis.resolved.role
+				resolvedRole: analysis.resolved.role,
 			},
 		});
 
@@ -52,13 +44,14 @@ apiRouter.get('/session', async (req: Request, res: Response) => {
 				isPlatformAdmin: req.auth.isPlatformAdmin,
 				staffClinics: analysis.staffClinics,
 				patientClinics: analysis.patientClinics,
-				resolved: analysis.resolved
+				resolved: analysis.resolved,
 			},
 		});
-
 	} catch (error) {
 		console.error('Session error:', error);
-		return res.status(500).json({ success: false, message: 'Internal session error' });
+		return res
+			.status(500)
+			.json({ success: false, message: 'Internal session error' });
 	}
 });
 
@@ -74,5 +67,4 @@ apiRouter.use('/clinics', clinicsRouter);
 // Metrics
 apiRouter.use('/metrics', metricsRouter);
 
-// DEV only
-apiRouter.use('/dev', devRouter);
+// Eliminado: apiRouter.use('/dev', devRouter);
