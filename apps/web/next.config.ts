@@ -1,20 +1,10 @@
-import type { NextConfig } from "next";
-
-const API_PROXY_TARGET = process.env.BACKEND_PROXY_TARGET || "http://localhost:8081";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  reactStrictMode: true,
-  async rewrites() {
-    if (process.env.NEXT_PUBLIC_API_BASE_URL === "/api") {
-      return [
-        {
-          source: "/api/:path*",
-          destination: `${API_PROXY_TARGET}/:path*`,
-        },
-      ];
-    }
-    return [];
-  },
+	async rewrites() {
+		const target = process.env.BACKEND_PROXY_TARGET || 'http://localhost:3001';
+		return [{ source: '/api/:path*', destination: `${target}/api/:path*` }];
+	},
 };
 
 export default nextConfig;

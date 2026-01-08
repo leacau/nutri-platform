@@ -66,5 +66,3 @@ apiRouter.use('/clinics', clinicsRouter);
 
 // Metrics
 apiRouter.use('/metrics', metricsRouter);
-
-// Eliminado: apiRouter.use('/dev', devRouter);
