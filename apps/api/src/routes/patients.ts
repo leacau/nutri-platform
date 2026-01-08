@@ -118,10 +118,15 @@ patientsRouter.post(
 			return denyAuthz(req, res, 'Staff cannot assign nutri on creation');
 		}
 
+		let assignedNutri = parsed.data.assignedNutriUid ?? null;
+		if (auth.role === 'nutri') {
+			assignedNutri = auth.uid;
+		}
+
 		const now = Timestamp.now();
 		const doc: PatientDoc = {
 			clinicId,
-			assignedNutriUid: parsed.data.assignedNutriUid ?? null,
+			assignedNutriUid: assignedNutri ?? null,
 			name: parsed.data.name,
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
