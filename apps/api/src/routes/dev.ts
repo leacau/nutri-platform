@@ -115,6 +115,7 @@ router.post('/seed', async (req: Request, res: Response) => {
 				const patient: PatientDoc = {
 					clinicId,
 					name: p.name,
+					dni: Math.floor(10000000 + Math.random() * 90000000), // DNI aleatorio de 8 dígitos
 					email: p.email ?? null,
 					phone: p.phone ?? null,
 					linkedUid: p.linkedUid ?? null,

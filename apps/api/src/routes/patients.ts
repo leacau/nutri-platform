@@ -16,7 +16,7 @@ export const patientsRouter = Router();
 
 const createPatientSchema = z.object({
 	name: z.string().min(2),
-	dni: z.string().min(6), // Requerido y mínimo 6 caracteres
+	dni: z.string().min(6),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
 	assignedNutriUid: z.string().min(1).optional().nullable(),
@@ -44,12 +44,12 @@ function clinicScopedUnlessPlatformAdmin(
 	return requireClinicContext(req, res, next);
 }
 
-// GET / (Listado normal por clínica)
 patientsRouter.get(
 	'/',
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
-		const auth = req.auth!;
+		const auth = req.auth!; // Garantizado por requireAuth
+
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
 
@@ -90,7 +90,6 @@ patientsRouter.get(
 	}
 );
 
-// GET /:id (Ficha individual - Acceso global si es el médico asignado)
 patientsRouter.get('/:id', async (req: Request, res: Response) => {
 	const auth = req.auth!;
 	const patientId = req.params.id;
@@ -102,7 +101,6 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 	}
 
 	const db = getFirestoreDb();
-	// 1. Buscar el paciente globalmente por ID (sin filtrar por clínica aún)
 	const snap = await db.collection('patients').doc(patientId).get();
 
 	if (!snap.exists) {
@@ -113,19 +111,13 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 
 	const patient = { id: snap.id, ...(snap.data() as PatientDoc) };
 
-	// 2. Lógica de Autorización "indefectiblemente de la clínica"
 	let isAllowed = false;
 
-	// A. Platform Admin siempre puede
 	if (auth.isPlatformAdmin) {
 		isAllowed = true;
-	}
-	// B. Si soy el Nutri asignado, puedo verlo (aunque esté navegando en otra clínica)
-	else if (auth.role === 'nutri' && patient.assignedNutriUid === auth.uid) {
+	} else if (auth.role === 'nutri' && patient.assignedNutriUid === auth.uid) {
 		isAllowed = true;
-	}
-	// C. Si no soy el asignado, verifico si tengo rol válido en la clínica DEL PACIENTE
-	else {
+	} else {
 		const membershipSnap = await db
 			.collection('clinic_memberships')
 			.where('clinicId', '==', patient.clinicId)
@@ -135,9 +127,8 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 			.get();
 
 		if (!membershipSnap.empty) {
-			const mem = membershipSnap.docs[0].data();
-			// Clinic Admin y Staff pueden ver cualquier paciente de SU clínica
-			if (['clinic_admin', 'staff'].includes(mem.role)) {
+			const mem = membershipSnap.docs[0]?.data();
+			if (mem && ['clinic_admin', 'staff'].includes(mem.role)) {
 				isAllowed = true;
 			}
 		}
@@ -151,7 +142,6 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 		);
 	}
 
-	// 3. Devolver el paciente
 	return res.status(200).json({
 		success: true,
 		data: sanitizePatientForRole(
@@ -161,7 +151,6 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 	});
 });
 
-// POST / (Crear o Reasignar por DNI)
 patientsRouter.post(
 	'/',
 	requireClinicContext,
@@ -200,20 +189,18 @@ patientsRouter.post(
 			.get();
 
 		if (!existingDniSnap.empty) {
-			// --- LÓGICA DE REASIGNACIÓN ---
-			const existingDoc = existingDniSnap.docs[0];
+			// CORRECCIÓN: Usar "!" para asegurar que el objeto existe, ya que checkeamos empty
+			const existingDoc = existingDniSnap.docs[0]!;
 			const existingData = existingDoc.data() as PatientDoc;
 
 			const updateData: Partial<PatientDoc> = {
 				updatedAt: Timestamp.now(),
 			};
 
-			// Si quien carga es Nutri, se lo asignamos a él automáticamente
 			if (auth.role === 'nutri') {
 				updateData.assignedNutriUid = auth.uid;
 			}
 
-			// Lo traemos a la clínica activa actual
 			if (existingData.clinicId !== clinicId) {
 				updateData.clinicId = clinicId;
 			}
@@ -238,7 +225,6 @@ patientsRouter.post(
 			});
 		}
 
-		// --- LÓGICA DE CREACIÓN NUEVA ---
 		let assignedNutri = parsed.data.assignedNutriUid ?? null;
 		if (auth.role === 'nutri') {
 			assignedNutri = auth.uid;
@@ -249,7 +235,7 @@ patientsRouter.post(
 			clinicId,
 			assignedNutriUid: assignedNutri ?? null,
 			name: parsed.data.name,
-			dni: parsed.data.dni, // Guardamos el DNI
+			dni: parseInt(parsed.data.dni, 10),
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
@@ -341,9 +327,10 @@ patientsRouter.patch(
 			}
 		}
 
-		const update: Record<string, unknown> = { updatedAt: Timestamp.now() };
+		const update: Partial<PatientDoc> = { updatedAt: Timestamp.now() };
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
-		if (parsed.data.dni !== undefined) update.dni = parsed.data.dni;
+		if (parsed.data.dni !== undefined)
+			update.dni = parseInt(parsed.data.dni, 10);
 		if (parsed.data.email !== undefined)
 			update.email = parsed.data.email ?? null;
 		if (parsed.data.phone !== undefined)
@@ -356,7 +343,11 @@ patientsRouter.patch(
 			}
 		}
 		if (parsed.data.status !== undefined && auth.role !== 'staff') {
-			update.status = parsed.data.status;
+			// Cast to string first if Zod validates it as string, then to specific union type
+			update.status = parsed.data.status as
+				| 'active'
+				| 'inactive'
+				| 'discharged';
 		}
 
 		await db.collection('patients').doc(patientId).update(update);

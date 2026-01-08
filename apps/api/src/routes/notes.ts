@@ -31,20 +31,14 @@ router.post(
 
 		const parsed = createNoteSchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
-			return res
-				.status(400)
-				.json({
-					success: false,
-					message: 'Invalid body',
-					errors: parsed.error.flatten(),
-				});
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
 		}
 
 		const db = getFirestoreDb();
-		// NOTA: Aquí podríamos relajar getDocInClinic si queremos permitir notas sobre pacientes de otras clínicas,
-		// pero por seguridad al CREAR, mantenemos que el paciente debe estar visible en la clínica actual o asignado.
-		// Si falla, es porque el paciente no está en la clínica activa.
-		// Dado que el POST /patients reasigna la clínica, esto debería funcionar bien.
 		const patient = await getDocInClinic<PatientDoc>(
 			db,
 			'patients',
@@ -52,12 +46,15 @@ router.post(
 			clinicId
 		);
 
-		// Si no lo encuentra en la clínica, y soy el nutri asignado, podríamos buscarlo globalmente:
-		let safePatient: (PatientDoc & { id: string }) | null = patient
-			? { id: parsed.data.patientId, ...patient }
-			: null;
+		let safePatient: (PatientDoc & { id: string }) | null = null;
 
-		if (!safePatient) {
+		if (patient) {
+			// Corrección: Construimos el objeto explícitamente para evitar conflictos de tipo con 'id'
+			safePatient = {
+				...patient,
+				id: parsed.data.patientId,
+			};
+		} else {
 			// Intento de búsqueda global si soy el nutri asignado
 			const globalSnap = await db
 				.collection('patients')
@@ -66,7 +63,10 @@ router.post(
 			if (globalSnap.exists) {
 				const pData = globalSnap.data() as PatientDoc;
 				if (auth.role === 'nutri' && pData.assignedNutriUid === auth.uid) {
-					safePatient = { id: globalSnap.id, ...pData };
+					safePatient = {
+						...pData,
+						id: globalSnap.id,
+					};
 				}
 			}
 		}
@@ -81,7 +81,7 @@ router.post(
 
 		const now = Timestamp.now();
 		const note: ClinicalNoteDoc = {
-			clinicId, // Se guarda con la clínica donde se crea (la activa)
+			clinicId,
 			patientId: safePatient.id,
 			nutriUid:
 				auth.role === 'nutri'
@@ -93,10 +93,6 @@ router.post(
 		};
 
 		const ref = await db.collection('notes').add(note);
-		// Autor: siempre quien está logueado
-		// (Asegurate de que ClinicalNoteDoc tenga authorUid si quieres trackearlo explícitamente,
-		// aunque nutriUid suele actuar de autor en este modelo simple)
-
 		return res
 			.status(201)
 			.json({
@@ -110,7 +106,7 @@ router.post(
 router.get(
 	'/',
 	authMiddleware,
-	// Quitamos requireClinicContext estricto para permitir búsqueda global de "mis notas"
+	// Sin requireClinicContext estricto para permitir búsqueda global
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const db = getFirestoreDb();
@@ -125,7 +121,7 @@ router.get(
 				});
 		}
 
-		// Consulta base: Notas del paciente
+		// Consulta base
 		const query = db
 			.collection('notes')
 			.where('patientId', '==', patientId)
@@ -134,24 +130,19 @@ router.get(
 
 		const snap = await query.get();
 
-		// Filtrado en memoria:
-		// 1. Si yo la creé (nutriUid == auth.uid), la veo.
-		// 2. Si soy admin/staff de la clínica DONDE se creó la nota, la veo.
-		// 3. Si soy paciente y es visibility 'shared', la veo.
-
 		const items = snap.docs
 			.map((d) => ({ id: d.id, ...(d.data() as ClinicalNoteDoc) }))
 			.filter((note) => {
-				// Caso Platform Admin
+				// 1. Platform Admin siempre ve todo
 				if (auth.isPlatformAdmin) return true;
 
-				// Caso Nutri (Dueño de la nota) -> REGLA 3: Traerse todas las fichas creadas por él.
+				// 2. Nutri: ve todas las notas que él creó (sin importar la clínica)
 				if (auth.role === 'nutri' && note.nutriUid === auth.uid) return true;
 
-				// Caso Colaboración (Misma clínica activa)
+				// 3. Colaboración: ve notas creadas en su clínica activa actual
 				if (auth.clinicId && note.clinicId === auth.clinicId) return true;
 
-				// Caso Paciente
+				// 4. Paciente: ve notas compartidas
 				if (auth.role === 'patient' && note.visibility === 'shared')
 					return true;
 
