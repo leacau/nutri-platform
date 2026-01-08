@@ -10,7 +10,7 @@ import morgan from 'morgan';
 
 import { errorHandler } from './middlewares/errorHandler.js';
 import { apiRouter } from './routes/api.js';
-import { devRouter } from './routes/dev.js'; // Importamos el router de dev
+import { devRouter } from './routes/dev.js';
 import { metricsMiddleware, metricsRegistry } from './middlewares/metrics.js';
 import { requireAuth } from './middlewares/requireAuth.js';
 
@@ -24,7 +24,6 @@ export function buildApp(): Express {
 	const app = express();
 	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 
-	// 1. Middlewares Globales
 	app.use(helmet());
 	app.use(morgan('dev'));
 	app.use(metricsMiddleware);
@@ -46,37 +45,24 @@ export function buildApp(): Express {
 				'Authorization',
 				'x-clinic-id',
 				'x-dev-secret',
-			], // Agregamos x-dev-secret
+			],
 		})
 	);
 
-	// 2. Rutas Públicas (Sin Auth)
-	// Prometheus metrics
 	app.get('/metrics', async (_req: Request, res: Response) => {
 		res.setHeader('Content-Type', metricsRegistry.contentType);
 		res.send(await metricsRegistry.metrics());
 	});
 
-	// Health Root
 	app.get('/health', (_req: Request, res: Response) => {
-		res.status(200).json({
-			success: true,
-			data: { ok: true },
-			message: 'healthy',
-		});
+		res.status(200).json({ success: true, message: 'healthy' });
 	});
 
-	// Health API (Requisito explícito: público)
 	app.get('/api/health', (_req: Request, res: Response) => {
-		res.status(200).json({
-			success: true,
-			data: { ok: true },
-			message: 'api healthy',
-		});
+		res.status(200).json({ success: true, message: 'api healthy' });
 	});
 
-	// 3. Rutas de Desarrollo (NODE_ENV != production)
-	// Se montan ANTES de /api protegido. No usan requireAuth, usan validación de header.
+	// Rutas de Desarrollo (Excluidas de Auth Firebase, protegidas por Secret)
 	if (process.env.NODE_ENV !== 'production') {
 		app.use(
 			'/api/dev',
@@ -93,11 +79,9 @@ export function buildApp(): Express {
 		);
 	}
 
-	// 4. API Protegida (Firebase Auth)
-	// Todo lo que caiga bajo /api (y no haya sido capturado arriba) requiere token.
+	// API Principal Protegida
 	app.use('/api', requireAuth, apiRouter);
 
-	// 5. Manejo de errores
 	app.use((_req: Request, res: Response) => {
 		res.status(404).json({ success: false, message: 'Not found' });
 	});
