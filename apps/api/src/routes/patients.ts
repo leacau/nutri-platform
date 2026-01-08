@@ -16,6 +16,7 @@ export const patientsRouter = Router();
 
 const createPatientSchema = z.object({
 	name: z.string().min(2),
+	dni: z.string().min(6), // Requerido y mínimo 6 caracteres
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
 	assignedNutriUid: z.string().min(1).optional().nullable(),
@@ -23,6 +24,7 @@ const createPatientSchema = z.object({
 
 const patchPatientSchema = z.object({
 	name: z.string().min(2).optional(),
+	dni: z.string().min(6).optional(),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
 	assignedNutriUid: z.string().min(1).optional().nullable(),
@@ -42,14 +44,12 @@ function clinicScopedUnlessPlatformAdmin(
 	return requireClinicContext(req, res, next);
 }
 
-// Nota: authMiddleware removido porque 'patientsRouter' se monta bajo '/api' que ya tiene requireAuth.
-
+// GET / (Listado normal por clínica)
 patientsRouter.get(
 	'/',
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
-		const auth = req.auth!; // Garantizado por requireAuth
-
+		const auth = req.auth!;
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
 
@@ -90,6 +90,78 @@ patientsRouter.get(
 	}
 );
 
+// GET /:id (Ficha individual - Acceso global si es el médico asignado)
+patientsRouter.get('/:id', async (req: Request, res: Response) => {
+	const auth = req.auth!;
+	const patientId = req.params.id;
+
+	if (!patientId) {
+		return res
+			.status(400)
+			.json({ success: false, message: 'Missing patient id' });
+	}
+
+	const db = getFirestoreDb();
+	// 1. Buscar el paciente globalmente por ID (sin filtrar por clínica aún)
+	const snap = await db.collection('patients').doc(patientId).get();
+
+	if (!snap.exists) {
+		return res
+			.status(404)
+			.json({ success: false, message: 'Patient not found' });
+	}
+
+	const patient = { id: snap.id, ...(snap.data() as PatientDoc) };
+
+	// 2. Lógica de Autorización "indefectiblemente de la clínica"
+	let isAllowed = false;
+
+	// A. Platform Admin siempre puede
+	if (auth.isPlatformAdmin) {
+		isAllowed = true;
+	}
+	// B. Si soy el Nutri asignado, puedo verlo (aunque esté navegando en otra clínica)
+	else if (auth.role === 'nutri' && patient.assignedNutriUid === auth.uid) {
+		isAllowed = true;
+	}
+	// C. Si no soy el asignado, verifico si tengo rol válido en la clínica DEL PACIENTE
+	else {
+		const membershipSnap = await db
+			.collection('clinic_memberships')
+			.where('clinicId', '==', patient.clinicId)
+			.where('uid', '==', auth.uid)
+			.where('isActive', '==', true)
+			.limit(1)
+			.get();
+
+		if (!membershipSnap.empty) {
+			const mem = membershipSnap.docs[0].data();
+			// Clinic Admin y Staff pueden ver cualquier paciente de SU clínica
+			if (['clinic_admin', 'staff'].includes(mem.role)) {
+				isAllowed = true;
+			}
+		}
+	}
+
+	if (!isAllowed) {
+		return denyAuthz(
+			req,
+			res,
+			'You do not have permission to view this patient'
+		);
+	}
+
+	// 3. Devolver el paciente
+	return res.status(200).json({
+		success: true,
+		data: sanitizePatientForRole(
+			(auth.role ?? 'platform_admin') as Role,
+			patient
+		),
+	});
+});
+
+// POST / (Crear o Reasignar por DNI)
 patientsRouter.post(
 	'/',
 	requireClinicContext,
@@ -118,6 +190,55 @@ patientsRouter.post(
 			return denyAuthz(req, res, 'Staff cannot assign nutri on creation');
 		}
 
+		const db = getFirestoreDb();
+
+		// 1. Verificar si ya existe un paciente con ese DNI
+		const existingDniSnap = await db
+			.collection('patients')
+			.where('dni', '==', parsed.data.dni)
+			.limit(1)
+			.get();
+
+		if (!existingDniSnap.empty) {
+			// --- LÓGICA DE REASIGNACIÓN ---
+			const existingDoc = existingDniSnap.docs[0];
+			const existingData = existingDoc.data() as PatientDoc;
+
+			const updateData: Partial<PatientDoc> = {
+				updatedAt: Timestamp.now(),
+			};
+
+			// Si quien carga es Nutri, se lo asignamos a él automáticamente
+			if (auth.role === 'nutri') {
+				updateData.assignedNutriUid = auth.uid;
+			}
+
+			// Lo traemos a la clínica activa actual
+			if (existingData.clinicId !== clinicId) {
+				updateData.clinicId = clinicId;
+			}
+
+			await existingDoc.ref.update(updateData);
+
+			logEvent('patient_reassigned', {
+				req,
+				clinicId,
+				data: { patientId: existingDoc.id, dni: parsed.data.dni },
+			});
+
+			return res.status(200).json({
+				success: true,
+				message:
+					'Patient exists. Reassigned to current clinic and professional.',
+				data: sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, {
+					id: existingDoc.id,
+					...existingData,
+					...updateData,
+				}),
+			});
+		}
+
+		// --- LÓGICA DE CREACIÓN NUEVA ---
 		let assignedNutri = parsed.data.assignedNutriUid ?? null;
 		if (auth.role === 'nutri') {
 			assignedNutri = auth.uid;
@@ -128,6 +249,7 @@ patientsRouter.post(
 			clinicId,
 			assignedNutriUid: assignedNutri ?? null,
 			name: parsed.data.name,
+			dni: parsed.data.dni, // Guardamos el DNI
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
@@ -136,7 +258,6 @@ patientsRouter.post(
 			updatedAt: now,
 		};
 
-		const db = getFirestoreDb();
 		const ref = db.collection('patients').doc();
 		await ref.set(doc);
 
@@ -222,6 +343,7 @@ patientsRouter.patch(
 
 		const update: Record<string, unknown> = { updatedAt: Timestamp.now() };
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
+		if (parsed.data.dni !== undefined) update.dni = parsed.data.dni;
 		if (parsed.data.email !== undefined)
 			update.email = parsed.data.email ?? null;
 		if (parsed.data.phone !== undefined)

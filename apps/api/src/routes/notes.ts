@@ -31,65 +31,133 @@ router.post(
 
 		const parsed = createNoteSchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
-			return res.status(400).json({ success: false, message: 'Invalid body', errors: parsed.error.flatten() });
+			return res
+				.status(400)
+				.json({
+					success: false,
+					message: 'Invalid body',
+					errors: parsed.error.flatten(),
+				});
 		}
 
 		const db = getFirestoreDb();
-		const patient = await getDocInClinic<PatientDoc>(db, 'patients', parsed.data.patientId, clinicId);
-		if (!patient) return res.status(404).json({ success: false, message: 'Patient not found in clinic' });
-		const safePatient = patient as PatientDoc & { id: string };
+		// NOTA: Aquí podríamos relajar getDocInClinic si queremos permitir notas sobre pacientes de otras clínicas,
+		// pero por seguridad al CREAR, mantenemos que el paciente debe estar visible en la clínica actual o asignado.
+		// Si falla, es porque el paciente no está en la clínica activa.
+		// Dado que el POST /patients reasigna la clínica, esto debería funcionar bien.
+		const patient = await getDocInClinic<PatientDoc>(
+			db,
+			'patients',
+			parsed.data.patientId,
+			clinicId
+		);
+
+		// Si no lo encuentra en la clínica, y soy el nutri asignado, podríamos buscarlo globalmente:
+		let safePatient: (PatientDoc & { id: string }) | null = patient
+			? { id: parsed.data.patientId, ...patient }
+			: null;
+
+		if (!safePatient) {
+			// Intento de búsqueda global si soy el nutri asignado
+			const globalSnap = await db
+				.collection('patients')
+				.doc(parsed.data.patientId)
+				.get();
+			if (globalSnap.exists) {
+				const pData = globalSnap.data() as PatientDoc;
+				if (auth.role === 'nutri' && pData.assignedNutriUid === auth.uid) {
+					safePatient = { id: globalSnap.id, ...pData };
+				}
+			}
+		}
+
+		if (!safePatient)
+			return res
+				.status(404)
+				.json({
+					success: false,
+					message: 'Patient not found or access denied',
+				});
 
 		const now = Timestamp.now();
 		const note: ClinicalNoteDoc = {
-			clinicId,
+			clinicId, // Se guarda con la clínica donde se crea (la activa)
 			patientId: safePatient.id,
-			nutriUid: auth.role === 'nutri' ? auth.uid : safePatient.assignedNutriUid ?? auth.uid,
+			nutriUid:
+				auth.role === 'nutri'
+					? auth.uid
+					: safePatient.assignedNutriUid ?? auth.uid,
 			content: parsed.data.content,
 			visibility: parsed.data.visibility,
 			createdAt: now,
 		};
 
 		const ref = await db.collection('notes').add(note);
-		return res.status(201).json({ success: true, message: 'Note added', data: { id: ref.id, ...note } });
+		// Autor: siempre quien está logueado
+		// (Asegurate de que ClinicalNoteDoc tenga authorUid si quieres trackearlo explícitamente,
+		// aunque nutriUid suele actuar de autor en este modelo simple)
+
+		return res
+			.status(201)
+			.json({
+				success: true,
+				message: 'Note added',
+				data: { id: ref.id, ...note },
+			});
 	}
 );
 
 router.get(
 	'/',
 	authMiddleware,
-	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin'),
+	// Quitamos requireClinicContext estricto para permitir búsqueda global de "mis notas"
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
-		const clinicId = auth.isPlatformAdmin ? auth.clinicId ?? req.header('x-clinic-id') ?? null : auth.clinicId;
-		if (!clinicId && !auth.isPlatformAdmin) return denyAuthz(req, res, 'Missing clinicId for notes');
-
-		const patientIdFilter = (req.query.patientId as string | undefined) ?? null;
 		const db = getFirestoreDb();
-		let query = db.collection('notes').orderBy('createdAt', 'desc').limit(100);
+		const patientId = req.query.patientId as string | undefined;
 
-		if (!auth.isPlatformAdmin) {
-			query = query.where('clinicId', '==', clinicId);
-		} else if (clinicId) {
-			query = query.where('clinicId', '==', clinicId);
+		if (!patientId) {
+			return res
+				.status(400)
+				.json({
+					success: false,
+					message: 'patientId is required to list notes',
+				});
 		}
-		if (patientIdFilter) query = query.where('patientId', '==', patientIdFilter);
 
-		if (auth.role === 'patient') {
-			const patientSnap = await db
-				.collection('patients')
-				.where('linkedUid', '==', auth.uid)
-				.where('clinicId', '==', clinicId)
-				.limit(1)
-				.get();
-			if (patientSnap.empty) return denyAuthz(req, res, 'Patient not linked');
-			const first = patientSnap.docs[0];
-			if (!first) return denyAuthz(req, res, 'Patient not linked');
-			query = query.where('patientId', '==', first.id).where('visibility', '==', 'shared');
-		}
+		// Consulta base: Notas del paciente
+		const query = db
+			.collection('notes')
+			.where('patientId', '==', patientId)
+			.orderBy('createdAt', 'desc')
+			.limit(100);
 
 		const snap = await query.get();
-		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as ClinicalNoteDoc) }));
+
+		// Filtrado en memoria:
+		// 1. Si yo la creé (nutriUid == auth.uid), la veo.
+		// 2. Si soy admin/staff de la clínica DONDE se creó la nota, la veo.
+		// 3. Si soy paciente y es visibility 'shared', la veo.
+
+		const items = snap.docs
+			.map((d) => ({ id: d.id, ...(d.data() as ClinicalNoteDoc) }))
+			.filter((note) => {
+				// Caso Platform Admin
+				if (auth.isPlatformAdmin) return true;
+
+				// Caso Nutri (Dueño de la nota) -> REGLA 3: Traerse todas las fichas creadas por él.
+				if (auth.role === 'nutri' && note.nutriUid === auth.uid) return true;
+
+				// Caso Colaboración (Misma clínica activa)
+				if (auth.clinicId && note.clinicId === auth.clinicId) return true;
+
+				// Caso Paciente
+				if (auth.role === 'patient' && note.visibility === 'shared')
+					return true;
+
+				return false;
+			});
+
 		return res.status(200).json({ success: true, data: items });
 	}
 );

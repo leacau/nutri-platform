@@ -25,10 +25,10 @@ import { usePermissions } from '../../../../hooks/use-permissions';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-// 1. Importar useAuth para obtener el token
-
+// Schema actualizado con DNI
 const patientSchema = z.object({
-	name: z.string().min(2),
+	name: z.string().min(2, 'El nombre es requerido'),
+	dni: z.string().min(6, 'El DNI es requerido (mínimo 6 caracteres)'),
 	email: z.string().email().optional().or(z.literal('')),
 	phone: z.string().optional().or(z.literal('')),
 	sexo: z.enum(['male', 'female', 'other']),
@@ -41,7 +41,6 @@ type PatientForm = z.infer<typeof patientSchema>;
 
 export default function PatientsPage() {
 	const { activeClinicId } = useClinic();
-	// 2. Obtener el idToken
 	const { idToken } = useAuth();
 	const perms = usePermissions();
 	const qc = useQueryClient();
@@ -61,16 +60,17 @@ export default function PatientsPage() {
 	const mutation = useMutation({
 		mutationFn: async (data: PatientForm) => {
 			if (!activeClinicId) throw new Error('Sin clínica activa');
-			// 3. Pasar el idToken a la función de creación
 			return apiClient.createPatient(
 				activeClinicId,
 				data,
 				idToken ?? undefined
 			);
 		},
-		onSuccess: () => {
+		onSuccess: (data) => {
+			// Invalida la lista para que aparezca el nuevo (o reasignado) paciente
 			qc.invalidateQueries({ queryKey: ['patients', activeClinicId] });
 			reset();
+			// Opcional: mostrar toast de éxito o reasignación
 		},
 	});
 
@@ -78,7 +78,7 @@ export default function PatientsPage() {
 		register,
 		handleSubmit,
 		reset,
-		formState: { isSubmitting },
+		formState: { isSubmitting, errors },
 	} = useForm<PatientForm>({
 		resolver: zodResolver(patientSchema),
 		defaultValues: { sexo: 'female' },
@@ -181,6 +181,21 @@ export default function PatientsPage() {
 						className='space-y-3'
 						onSubmit={handleSubmit((data) => mutation.mutateAsync(data))}
 					>
+						{/* CAMPO DNI AGREGADO */}
+						<div className='space-y-1'>
+							<Label>DNI / Identificación</Label>
+							<Input
+								placeholder='Número de documento'
+								{...register('dni')}
+								required
+							/>
+							{errors.dni && (
+								<span className='text-xs text-red-500'>
+									{errors.dni.message}
+								</span>
+							)}
+						</div>
+
 						<div className='space-y-1'>
 							<Label>Nombre</Label>
 							<Input
@@ -188,6 +203,11 @@ export default function PatientsPage() {
 								{...register('name')}
 								required
 							/>
+							{errors.name && (
+								<span className='text-xs text-red-500'>
+									{errors.name.message}
+								</span>
+							)}
 						</div>
 						<div className='space-y-1'>
 							<Label>Email</Label>
