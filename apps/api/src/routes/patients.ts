@@ -14,25 +14,64 @@ import type { Role } from '../types/auth.js';
 
 export const patientsRouter = Router();
 
+async function upsertUserForPatient(
+	dni: number,
+	name: string,
+	email: string | null,
+	phone: string | null
+) {
+	const db = getFirestoreDb();
+	const now = Timestamp.now();
+
+	const existing = await db
+		.collection('users')
+		.where('dni', '==', dni)
+		.limit(1)
+		.get();
+
+	if (!existing.empty) {
+		const userDoc = existing.docs[0];
+		if (!userDoc) throw new Error('Unexpected null doc');
+		await userDoc.ref.update({
+			name,
+			email,
+			phone,
+			updatedAt: now,
+		});
+		return userDoc.id;
+	}
+
+	const ref = db.collection('users').doc();
+	await ref.set({
+		name,
+		email,
+		phone,
+		dni,
+		createdAt: now,
+		updatedAt: now,
+	});
+	return ref.id;
+}
+
 const createPatientSchema = z.object({
 	name: z.string().min(2),
-	dni: z.string().min(6),
+	dni: z.string().min(7).max(8),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
-	assignedNutriUid: z.string().min(1).optional().nullable(),
+	assignedProfessionalUids: z.array(z.string().min(1)).optional().nullable(),
 });
 
 const patchPatientSchema = z.object({
 	name: z.string().min(2).optional(),
-	dni: z.string().min(6).optional(),
+	dni: z.string().min(7).max(8).optional(),
 	email: z.string().email().optional().nullable(),
 	phone: z.string().min(5).optional().nullable(),
-	assignedNutriUid: z.string().min(1).optional().nullable(),
+	assignedProfessionalUids: z.array(z.string().min(1)).optional().nullable(),
 	status: z.string().optional(),
 });
 
-const assignNutriSchema = z.object({
-	nutriUid: z.string().min(1).nullable(),
+const assignProfessionalSchema = z.object({
+	professionalUid: z.string().min(1).nullable(),
 });
 
 function clinicScopedUnlessPlatformAdmin(
@@ -52,6 +91,12 @@ patientsRouter.get(
 		const dniVal = parseInt(req.query.dni as string, 10);
 		if (isNaN(dniVal))
 			return res.status(400).json({ success: false, message: 'Invalid DNI' });
+		if (dniVal < 1000000 || dniVal > 99999999) {
+			return res.status(400).json({
+				success: false,
+				message: 'DNI must be between 1000000 and 99999999',
+			});
+		}
 
 		const db = getFirestoreDb();
 		// Búsqueda exacta numérica
@@ -81,7 +126,7 @@ patientsRouter.get(
 				email: data.email,
 				phone: data.phone,
 				clinicId: data.clinicId,
-				assignedNutriUid: data.assignedNutriUid,
+				assignedProfessionalUids: data.assignedProfessionalUids,
 			},
 		});
 	}
@@ -113,9 +158,13 @@ patientsRouter.get(
 			return denyAuthz(req, res, 'Missing clinicId for clinic listing');
 		}
 
-		// FIX: Permitir a Nutris ver todos los pacientes de la clínica
-		// Esto cumple el REQ 1: "permitir que el nutricionista los asigne"
-		const query = db.collection('patients').where('clinicId', '==', clinicId);
+		const query =
+			auth.role === 'professional'
+				? db
+						.collection('patients')
+						.where('clinicId', '==', clinicId)
+						.where('assignedProfessionalUids', 'array-contains', auth.uid)
+				: db.collection('patients').where('clinicId', '==', clinicId);
 
 		const snap = await query.limit(100).get();
 		const items = snap.docs.map((d) => ({
@@ -157,7 +206,10 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 
 	if (auth.isPlatformAdmin) {
 		isAllowed = true;
-	} else if (auth.role === 'nutri' && patient.assignedNutriUid === auth.uid) {
+	} else if (
+		auth.role === 'professional' &&
+		(patient.assignedProfessionalUids ?? []).includes(auth.uid)
+	) {
 		isAllowed = true;
 	} else {
 		// Verificar si el usuario pertenece a la misma clínica que el paciente
@@ -171,8 +223,7 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 
 		if (!membershipSnap.empty) {
 			const mem = membershipSnap.docs[0]?.data();
-			// FIX: Permitir a Nutri ver paciente aunque no esté asignado
-			if (mem && ['clinic_admin', 'staff', 'nutri'].includes(mem.role)) {
+			if (mem && ['clinic_admin', 'staff'].includes(mem.role)) {
 				isAllowed = true;
 			}
 		}
@@ -198,7 +249,7 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 patientsRouter.post(
 	'/',
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'staff', 'platform_admin'),
+	requireRole('clinic_admin', 'professional', 'staff', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const parsed = createPatientSchema.safeParse(req.body);
@@ -219,12 +270,14 @@ patientsRouter.post(
 			);
 		}
 
-		if (auth.role === 'staff' && parsed.data.assignedNutriUid !== undefined) {
-			return denyAuthz(req, res, 'Staff cannot assign nutri on creation');
-		}
-
 		const db = getFirestoreDb();
 		const dniVal = parseInt(parsed.data.dni, 10);
+		if (isNaN(dniVal) || dniVal < 1000000 || dniVal > 99999999) {
+			return res.status(400).json({
+				success: false,
+				message: 'DNI must be between 1000000 and 99999999',
+			});
+		}
 
 		// FIX: Buscar por valor numérico para evitar duplicados
 		const existingDniSnap = await db
@@ -234,16 +287,32 @@ patientsRouter.post(
 			.get();
 
 		if (!existingDniSnap.empty) {
-			// FIX: Validación explícita
 			const existingDoc = existingDniSnap.docs[0]!;
 			const existingData = existingDoc.data() as PatientDoc;
+			const userId = await upsertUserForPatient(
+				dniVal,
+				parsed.data.name,
+				parsed.data.email ?? null,
+				parsed.data.phone ?? null
+			);
 
 			const updateData: Partial<PatientDoc> = {
 				updatedAt: Timestamp.now(),
+				userId,
 			};
 
-			if (auth.role === 'nutri') {
-				updateData.assignedNutriUid = auth.uid;
+			const existingProfessionals = existingData.assignedProfessionalUids ?? [];
+			if (auth.role === 'professional') {
+				updateData.assignedProfessionalUids = Array.from(
+					new Set([...existingProfessionals, auth.uid])
+				);
+			} else if (parsed.data.assignedProfessionalUids) {
+				updateData.assignedProfessionalUids = Array.from(
+					new Set([
+						...existingProfessionals,
+						...parsed.data.assignedProfessionalUids,
+					])
+				);
 			}
 
 			if (existingData.clinicId !== clinicId) {
@@ -270,15 +339,23 @@ patientsRouter.post(
 			});
 		}
 
-		let assignedNutri = parsed.data.assignedNutriUid ?? null;
-		if (auth.role === 'nutri') {
-			assignedNutri = auth.uid;
-		}
+		const userId = await upsertUserForPatient(
+			dniVal,
+			parsed.data.name,
+			parsed.data.email ?? null,
+			parsed.data.phone ?? null
+		);
+
+		const assignedProfessionalUids =
+			auth.role === 'professional'
+				? [auth.uid]
+				: (parsed.data.assignedProfessionalUids ?? []);
 
 		const now = Timestamp.now();
 		const doc: PatientDoc = {
 			clinicId,
-			assignedNutriUid: assignedNutri ?? null,
+			assignedProfessionalUids,
+			userId,
 			name: parsed.data.name,
 			dni: dniVal,
 			email: parsed.data.email ?? null,
@@ -309,7 +386,7 @@ patientsRouter.post(
 patientsRouter.patch(
 	'/:id',
 	clinicScopedUnlessPlatformAdmin,
-	requireRole('clinic_admin', 'nutri', 'staff', 'platform_admin'),
+	requireRole('clinic_admin', 'professional', 'staff', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const parsed = patchPatientSchema.safeParse(req.body);
@@ -355,43 +432,65 @@ patientsRouter.patch(
 				.json({ success: false, message: 'Patient not found' });
 		}
 
-		if (auth.role === 'staff' && parsed.data.assignedNutriUid !== undefined) {
-			return denyAuthz(req, res, 'Staff cannot reassign nutricionists');
-		}
-
-		if (auth.role === 'nutri' && parsed.data.assignedNutriUid !== undefined) {
-			if (
-				parsed.data.assignedNutriUid &&
-				parsed.data.assignedNutriUid !== auth.uid
-			) {
-				return denyAuthz(
-					req,
-					res,
-					'Nutri cannot assign patient to another nutri'
-				);
-			}
-		}
-
 		const update: Partial<PatientDoc> = { updatedAt: Timestamp.now() };
+		const nextName = parsed.data.name ?? current.name;
+		const nextEmail =
+			parsed.data.email !== undefined ? parsed.data.email ?? null : current.email;
+		const nextPhone =
+			parsed.data.phone !== undefined ? parsed.data.phone ?? null : current.phone;
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
-		if (parsed.data.dni !== undefined)
-			update.dni = parseInt(parsed.data.dni, 10);
+		if (parsed.data.dni !== undefined) {
+			const parsedDni = parseInt(parsed.data.dni, 10);
+			if (isNaN(parsedDni) || parsedDni < 1000000 || parsedDni > 99999999) {
+				return res.status(400).json({
+					success: false,
+					message: 'DNI must be between 1000000 and 99999999',
+				});
+			}
+			const existingDni = await db
+				.collection('patients')
+				.where('dni', '==', parsedDni)
+				.limit(1)
+				.get();
+			const conflictingDoc = existingDni.docs.find((doc) => doc.id !== patientId);
+			if (conflictingDoc) {
+				return res.status(400).json({
+					success: false,
+					message: 'DNI already exists for another patient',
+				});
+			}
+			update.dni = parsedDni;
+		}
 		if (parsed.data.email !== undefined)
 			update.email = parsed.data.email ?? null;
 		if (parsed.data.phone !== undefined)
 			update.phone = parsed.data.phone ?? null;
-		if (parsed.data.assignedNutriUid !== undefined) {
-			if (auth.role === 'nutri') {
-				update.assignedNutriUid = auth.uid;
-			} else {
-				update.assignedNutriUid = parsed.data.assignedNutriUid ?? null;
-			}
+		if (parsed.data.assignedProfessionalUids !== undefined) {
+			update.assignedProfessionalUids =
+				auth.role === 'professional'
+					? [auth.uid]
+					: parsed.data.assignedProfessionalUids ?? [];
 		}
 		if (parsed.data.status !== undefined && auth.role !== 'staff') {
 			update.status = parsed.data.status as
 				| 'active'
 				| 'inactive'
 				| 'discharged';
+		}
+
+		if (
+			parsed.data.name !== undefined ||
+			parsed.data.email !== undefined ||
+			parsed.data.phone !== undefined ||
+			parsed.data.dni !== undefined
+		) {
+			const dniToUse = update.dni ?? current.dni;
+			update.userId = await upsertUserForPatient(
+				dniToUse,
+				nextName,
+				nextEmail,
+				nextPhone
+			);
 		}
 
 		await db.collection('patients').doc(patientId).update(update);
@@ -411,9 +510,9 @@ patientsRouter.patch(
 );
 
 patientsRouter.post(
-	'/:id/assign-nutri',
+	'/:id/assign-professional',
 	requireClinicContext,
-	requireRole('clinic_admin', 'staff', 'platform_admin', 'nutri'),
+	requireRole('clinic_admin', 'staff', 'platform_admin', 'professional'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId;
@@ -426,11 +525,11 @@ patientsRouter.post(
 				.status(400)
 				.json({ success: false, message: 'Missing patient id' });
 
-		if (auth.role === 'nutri') {
-			req.body.nutriUid = auth.uid;
+		if (auth.role === 'professional') {
+			req.body.professionalUid = auth.uid;
 		}
 
-		const parsed = assignNutriSchema.safeParse(req.body);
+		const parsed = assignProfessionalSchema.safeParse(req.body);
 		if (!parsed.success) {
 			return res.status(400).json({
 				success: false,
@@ -452,13 +551,13 @@ patientsRouter.post(
 				.json({ success: false, message: 'Patient not found in clinic' });
 		}
 
-		const nutriUid = parsed.data.nutriUid;
-		if (nutriUid) {
+		const professionalUid = parsed.data.professionalUid;
+		if (professionalUid) {
 			const membership = await db
 				.collection('clinic_memberships')
 				.where('clinicId', '==', clinicId)
-				.where('uid', '==', nutriUid)
-				.where('role', '==', 'nutri')
+				.where('uid', '==', professionalUid)
+				.where('role', '==', 'professional')
 				.where('isActive', '==', true)
 				.limit(1)
 				.get();
@@ -466,23 +565,33 @@ patientsRouter.post(
 			if (membership.empty) {
 				return res.status(400).json({
 					success: false,
-					message: 'nutriUid is not an active nutri in this clinic',
+					message:
+						'professionalUid is not an active professional in this clinic',
 				});
 			}
 		}
+
+		const updatedProfessionals = professionalUid
+			? Array.from(
+					new Set([
+						...(patient.assignedProfessionalUids ?? []),
+						professionalUid,
+					])
+				)
+			: [];
 
 		await db
 			.collection('patients')
 			.doc(patientId)
 			.update({
-				assignedNutriUid: nutriUid ?? null,
+				assignedProfessionalUids: updatedProfessionals,
 				updatedAt: Timestamp.now(),
 			});
 
 		return res.status(200).json({
 			success: true,
 			message: 'Patient assigned',
-			data: { id: patientId, assignedNutriUid: nutriUid ?? null },
+			data: { id: patientId, assignedProfessionalUids: updatedProfessionals },
 		});
 	}
 );

@@ -30,19 +30,23 @@ export default function AppointmentsPage() {
 	const { idToken, user } = useAuth();
 	const [filterStatus, setFilterStatus] = useState('all');
 
-	const isMeNutri = activeMembership?.role === 'nutri';
+	const isMeProfessional = activeMembership?.role === 'professional';
 
 	const [newAppointment, setNewAppointment] = useState({
 		patientId: '',
-		nutriId: isMeNutri && user ? user.uid : '',
+		professionalUid: isMeProfessional && user ? user.uid : '',
 		scheduledFor: '',
 	});
 
 	useEffect(() => {
-		if (isMeNutri && user?.uid && newAppointment.nutriId !== user.uid) {
-			setNewAppointment((prev) => ({ ...prev, nutriId: user.uid }));
+		if (
+			isMeProfessional &&
+			user?.uid &&
+			newAppointment.professionalUid !== user.uid
+		) {
+			setNewAppointment((prev) => ({ ...prev, professionalUid: user.uid }));
 		}
-	}, [isMeNutri, user?.uid]);
+	}, [isMeProfessional, user?.uid]);
 
 	const appointmentsQuery = useAuthedQuery({
 		queryKey: ['appointments'],
@@ -52,9 +56,9 @@ export default function AppointmentsPage() {
 		queryKey: ['patients'],
 		queryFn: (token, clinicId) => apiClient.patients(clinicId, token),
 	});
-	const nutrisQuery = useAuthedQuery({
-		queryKey: ['nutris'],
-		queryFn: (token, clinicId) => apiClient.nutris(clinicId, token),
+	const professionalsQuery = useAuthedQuery({
+		queryKey: ['professionals'],
+		queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
 		enabled: perms.canScheduleForOthers || perms.canSeeAllAppointments,
 	});
 
@@ -62,7 +66,7 @@ export default function AppointmentsPage() {
 		mutationFn: async () => {
 			if (
 				!newAppointment.patientId ||
-				!newAppointment.nutriId ||
+				!newAppointment.professionalUid ||
 				!newAppointment.scheduledFor
 			) {
 				throw new Error('Faltan datos');
@@ -81,7 +85,7 @@ export default function AppointmentsPage() {
 			qc.invalidateQueries({ queryKey: ['appointments'] });
 			setNewAppointment({
 				patientId: '',
-				nutriId: isMeNutri && user ? user.uid : '',
+				professionalUid: isMeProfessional && user ? user.uid : '',
 				scheduledFor: '',
 			});
 		},
@@ -145,7 +149,7 @@ export default function AppointmentsPage() {
 								<div>
 									<p className='font-semibold'>Paciente {appt.patientId}</p>
 									<p className='text-xs text-muted-foreground'>
-										Nutri: {appt.nutriId}
+										Profesional: {appt.professionalUid}
 									</p>
 									<Badge
 										variant={
@@ -184,7 +188,7 @@ export default function AppointmentsPage() {
 												onClick={() =>
 													setNewAppointment({
 														patientId: appt.patientId,
-														nutriId: appt.nutriId,
+														professionalUid: appt.professionalUid,
 														scheduledFor: new Date().toISOString().slice(0, 16),
 													})
 												}
@@ -232,21 +236,21 @@ export default function AppointmentsPage() {
 							</Select>
 						</div>
 						<div className='space-y-1'>
-							<Label>Nutricionista</Label>
+							<Label>Profesional</Label>
 							<Select
-								value={newAppointment.nutriId}
+								value={newAppointment.professionalUid}
 								onChange={(e) =>
 									setNewAppointment({
 										...newAppointment,
-										nutriId: e.target.value,
+										professionalUid: e.target.value,
 									})
 								}
-								disabled={isMeNutri}
+								disabled={isMeProfessional}
 							>
-								<option value=''>Elegí nutri</option>
-								{nutrisQuery.data?.map((nutri: UserAccount) => (
-									<option key={nutri.id} value={nutri.id}>
-										{nutri.name}
+								<option value=''>Elegí profesional</option>
+								{professionalsQuery.data?.map((professional: UserAccount) => (
+									<option key={professional.id} value={professional.id}>
+										{professional.name}
 									</option>
 								))}
 							</Select>

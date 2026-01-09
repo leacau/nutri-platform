@@ -8,7 +8,7 @@ export type PatientPublic = {
 	email: string | null;
 	phone: string | null;
 	linkedUid: string | null;
-	assignedNutriUid: string | null | undefined;
+	assignedProfessionalUids: string[] | undefined;
 	createdAt: unknown;
 	updatedAt: unknown;
 };
@@ -20,7 +20,7 @@ export type PatientStaffView = {
 	email: string | null;
 	phone: string | null;
 	linkedUid: string | null;
-	assignedNutriUid: string | null | undefined;
+	assignedProfessionalUids: string[] | undefined;
 };
 
 export function sanitizePatientForRole(
@@ -36,11 +36,11 @@ export function sanitizePatientForRole(
 			email: p.email,
 			phone: p.phone,
 			linkedUid: p.linkedUid,
-			assignedNutriUid: p.assignedNutriUid,
+			assignedProfessionalUids: p.assignedProfessionalUids,
 		};
 	}
 
-	// clinic_admin / nutri / platform_admin: todo
+	// clinic_admin / professional / platform_admin: todo
 	return {
 		id: p.id,
 		clinicId: p.clinicId,
@@ -48,7 +48,7 @@ export function sanitizePatientForRole(
 		email: p.email,
 		phone: p.phone,
 		linkedUid: p.linkedUid,
-		assignedNutriUid: p.assignedNutriUid,
+		assignedProfessionalUids: p.assignedProfessionalUids,
 		createdAt: p.createdAt,
 		updatedAt: p.updatedAt,
 	};

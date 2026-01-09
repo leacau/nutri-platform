@@ -38,7 +38,9 @@ export default function PatientDetailPage() {
           <h1 className="text-2xl font-semibold text-primary">{patient.name}</h1>
           <p className="text-xs text-muted-foreground">{patient.email || "sin email"}</p>
         </div>
-        <Badge variant="secondary">Asignado a: {patient.assignedNutriId ?? "N/D"}</Badge>
+        <Badge variant="secondary">
+          Asignado a: {patient.assignedProfessionalUids?.join(", ") ?? "N/D"}
+        </Badge>
       </div>
 
       <Tabs defaultValue="summary">
@@ -121,7 +123,7 @@ export default function PatientDetailPage() {
                 <div key={appt.id} className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <p className="font-medium capitalize">{appt.status}</p>
-                    <p className="text-xs text-muted-foreground">Nutri: {appt.nutriId}</p>
+                    <p className="text-xs text-muted-foreground">Profesional: {appt.professionalUid}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold">{appt.scheduledFor ? formatDate(appt.scheduledFor) : "Por programar"}</p>

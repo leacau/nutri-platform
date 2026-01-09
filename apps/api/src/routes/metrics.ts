@@ -33,7 +33,7 @@ const createMetricSchema = z.object({
 router.post(
 	'/',
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri'),
+	requireRole('clinic_admin', 'professional'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId; 
@@ -48,6 +48,12 @@ router.post(
 		const patient = await getDocInClinic<PatientDoc>(db, 'patients', parsed.data.patientId, clinicId!);
 		if (!patient) return res.status(404).json({ success: false, message: 'Patient not found in clinic' });
 		const safePatient = patient as PatientDoc & { id: string };
+		if (
+			auth.role === 'professional' &&
+			!(safePatient.assignedProfessionalUids ?? []).includes(auth.uid)
+		) {
+			return denyAuthz(req, res, 'Professionals can only record metrics for their patients');
+		}
 
 		const now = Timestamp.now();
 		const doc: MetricDoc = {
@@ -73,7 +79,7 @@ router.post(
 router.get(
 	'/',
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin'),
+	requireRole('clinic_admin', 'professional', 'patient', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId!; // requireClinicContext asegura esto
@@ -95,8 +101,29 @@ router.get(
 			}
 			// Sobreescribimos cualquier filtro que venga del front con el ID real del paciente logueado
 			query = query.where('patientId', '==', req.patientContext.patientId);
+		} else if (auth.role === 'professional') {
+			if (!patientIdFilter) {
+				return res.status(400).json({
+					success: false,
+					message: 'patientId is required for professional metrics listing',
+				});
+			}
+			const patient = await getDocInClinic<PatientDoc>(
+				db,
+				'patients',
+				patientIdFilter,
+				clinicId
+			);
+			if (!patient || !(patient.assignedProfessionalUids ?? []).includes(auth.uid)) {
+				return denyAuthz(
+					req,
+					res,
+					'Professionals can only view metrics for their patients'
+				);
+			}
+			query = query.where('patientId', '==', patientIdFilter);
 		} else {
-			// Para staff, filtro opcional
+			// Para clinic_admin, filtro opcional
 			if (patientIdFilter) query = query.where('patientId', '==', patientIdFilter);
 		}
 

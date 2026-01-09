@@ -13,7 +13,7 @@ export default function Home() {
         </div>
         <div className="max-w-3xl space-y-6">
           <h1 className="text-4xl font-bold leading-tight text-primary sm:text-5xl">
-            Plataforma integral para nutrición y bienestar, lista para vender hoy.
+            Plataforma integral para clínicas y especialistas, lista para vender hoy.
           </h1>
           <p className="text-lg text-muted-foreground sm:text-xl">
             Multi-clínica, multi-rol y conectada a tu backend actual. Login con Firebase, switcher de clínica, permisos en vivo y un diseño

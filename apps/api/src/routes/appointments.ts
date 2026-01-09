@@ -16,8 +16,14 @@ const router = Router();
 
 const scheduleBodySchema = z.object({
 	scheduledFor: z.string().min(10),
-	nutriUid: z.string().min(1),
+	professionalUid: z.string().min(1),
 });
+
+const requestBodySchema = z
+	.object({
+		professionalUid: z.string().min(1).optional(),
+	})
+	.optional();
 
 const cancelBodySchema = z.object({}).optional();
 
@@ -110,12 +116,38 @@ router.post('/request', authMiddleware, requirePatientLink, async (req: Request,
 		});
 	}
 
+	const parsedRequest = requestBodySchema.safeParse(req.body ?? {});
+	if (!parsedRequest.success) {
+		return res.status(400).json({
+			success: false,
+			message: 'Invalid body',
+			errors: parsedRequest.error.flatten(),
+		});
+	}
+	const professionalUid = parsedRequest.data?.professionalUid ?? null;
+	if (professionalUid) {
+		const membership = await db
+			.collection('clinic_memberships')
+			.where('clinicId', '==', patientCtx.clinicId)
+			.where('uid', '==', professionalUid)
+			.where('role', '==', 'professional')
+			.where('isActive', '==', true)
+			.limit(1)
+			.get();
+		if (membership.empty) {
+			return res.status(400).json({
+				success: false,
+				message: 'professionalUid is not an active professional in this clinic',
+			});
+		}
+	}
+
 	const now = Timestamp.now();
 	const doc: AppointmentDoc = {
 		clinicId: patientCtx.clinicId,
 		patientId: patientCtx.patientId,
 		patientUid: auth.uid,
-		nutriUid: null,
+		professionalUid,
 		status: 'requested',
 		requestedAt: now,
 		scheduledFor: null,
@@ -185,8 +217,8 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 			.collection('appointments')
 			.where('clinicId', '==', clinicId)
 			.orderBy('createdAt', 'desc');
-		if (role === 'nutri') {
-			query = query.where('nutriUid', '==', auth.uid);
+		if (role === 'professional') {
+			query = query.where('professionalUid', '==', auth.uid);
 		}
 
 		const snap = await query.limit(50).get();
@@ -218,7 +250,7 @@ router.post(
 	'/:id/schedule',
 	authMiddleware,
 		requireClinicContext,
-		requireRole('clinic_admin', 'staff', 'nutri'),
+		requireRole('clinic_admin', 'staff', 'professional'),
 		async (req: Request, res: Response) => {
 			const auth = req.auth!;
 			const clinicId = auth.clinicId!;
@@ -265,19 +297,34 @@ router.post(
 				return { http: 409 as const, body: { success: false, message: 'Cannot schedule a completed appointment' } };
 			}
 
-			if (auth.role === 'nutri' && appt.nutriUid && appt.nutriUid !== auth.uid) {
-				return denyAuthz(req, res, 'Nutri cannot take appointment for another nutri') as any;
+			if (
+				auth.role === 'professional' &&
+				appt.professionalUid &&
+				appt.professionalUid !== auth.uid
+			) {
+				return denyAuthz(
+					req,
+					res,
+					'Professional cannot take appointment for another professional'
+				) as any;
 			}
 
-			if (auth.role === 'nutri' && parsedBody.data.nutriUid !== auth.uid) {
-				return denyAuthz(req, res, 'Nutri cannot assign appointment to another nutri') as any;
+			if (
+				auth.role === 'professional' &&
+				parsedBody.data.professionalUid !== auth.uid
+			) {
+				return denyAuthz(
+					req,
+					res,
+					'Professional cannot assign appointment to another professional'
+				) as any;
 			}
 
 			const newScheduled = Timestamp.fromMillis(scheduledMs);
 			const update: Partial<AppointmentDoc> = {
 				status: 'scheduled',
 				scheduledFor: newScheduled,
-				nutriUid: parsedBody.data.nutriUid,
+				professionalUid: parsedBody.data.professionalUid,
 				updatedAt: Timestamp.now(),
 			};
 
@@ -331,8 +378,12 @@ router.post('/:id/cancel', authMiddleware, async (req: Request, res: Response) =
 			if (appt.clinicId !== clinicId) {
 				return denyAuthz(req, res, 'Cross-clinic cancel');
 			}
-			if (membership.role === 'nutri' && appt.nutriUid !== auth.uid) {
-				return denyAuthz(req, res, 'Nutri cannot cancel appointments of other nutris');
+			if (membership.role === 'professional' && appt.professionalUid !== auth.uid) {
+				return denyAuthz(
+					req,
+					res,
+					'Professional cannot cancel appointments of other professionals'
+				);
 			}
 		} else if (patient) {
 			if (appt.clinicId !== clinicId || appt.patientUid !== auth.uid) {
@@ -384,7 +435,7 @@ router.post(
 	'/:id/complete',
 	authMiddleware,
 		requireClinicContext,
-		requireRole('clinic_admin', 'staff', 'nutri'),
+		requireRole('clinic_admin', 'staff', 'professional'),
 		async (req: Request, res: Response) => {
 			const auth = req.auth!;
 			const clinicId = auth.clinicId!;
@@ -421,8 +472,12 @@ router.post(
 				return { http: 409 as const, body: { success: false, message: 'Only scheduled appointments can be completed' } };
 			}
 
-			if (auth.role === 'nutri' && appt.nutriUid !== auth.uid) {
-				return denyAuthz(req, res, 'Nutri cannot complete appointments of other nutris') as any;
+			if (auth.role === 'professional' && appt.professionalUid !== auth.uid) {
+				return denyAuthz(
+					req,
+					res,
+					'Professional cannot complete appointments of other professionals'
+				) as any;
 			}
 
 			const now = Timestamp.now();

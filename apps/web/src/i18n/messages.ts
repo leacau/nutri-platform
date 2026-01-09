@@ -7,7 +7,7 @@ const shared: Messages = {
   "nav.dashboard": "Dashboard",
   "nav.patients": "Pacientes",
   "nav.appointments": "Turnos",
-  "nav.nutritionists": "Nutricionistas",
+  "nav.nutritionists": "Profesionales",
   "nav.staff": "Staff",
   "nav.settings": "Configuración",
   "nav.templates": "Plantillas",
@@ -26,7 +26,7 @@ export const messages: Record<Locale, Messages> = {
   "es-AR": {
     ...shared,
     "hero.welcome": "AMSA Core",
-    "auth.subtitle": "SaaS premium para nutrición, listo para vender.",
+    "auth.subtitle": "SaaS premium para clínicas y especialistas, listo para vender.",
     "auth.email": "Email",
     "auth.password": "Contraseña",
     "auth.name": "Nombre",
@@ -39,7 +39,7 @@ export const messages: Record<Locale, Messages> = {
   es: {
     ...shared,
     "hero.welcome": "AMSA Core",
-    "auth.subtitle": "SaaS premium para nutrición.",
+    "auth.subtitle": "SaaS premium para clínicas y especialistas.",
     "auth.email": "Correo",
     "auth.password": "Contraseña",
     "auth.name": "Nombre",
@@ -52,7 +52,7 @@ export const messages: Record<Locale, Messages> = {
   en: {
     ...shared,
     "hero.welcome": "AMSA Core",
-    "auth.subtitle": "Premium nutrition SaaS, ready to sell.",
+    "auth.subtitle": "Premium SaaS for clinics and specialists, ready to sell.",
     "auth.email": "Email",
     "auth.password": "Password",
     "auth.name": "Name",

@@ -11,7 +11,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "AMSA Core",
-  description: "Frontend premium para nutrición multi-tenant",
+  description: "Frontend premium para clínicas multi-tenant",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

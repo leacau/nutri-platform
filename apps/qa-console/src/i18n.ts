@@ -1,6 +1,6 @@
 export type Locale = 'es' | 'en';
 
-export type RoleKey = 'patient' | 'nutri' | 'clinic_admin' | 'platform_admin';
+export type RoleKey = 'patient' | 'professional' | 'clinic_admin' | 'platform_admin';
 
 type BackendStateKey = 'unknown' | 'online' | 'degraded' | 'offline';
 
@@ -350,18 +350,18 @@ const translations: Record<Locale, Translation> = {
 				icon: '🧍‍♀️',
 				description: 'Solicitá turnos y seguí tu agenda vinculada.',
 				tips: [
-					'Elegí un nutri y pedí turno; si el perfil no está vinculado, crealo desde la alerta.',
+					'Elegí un profesional y pedí turno; si el perfil no está vinculado, crealo desde la alerta.',
 					'Podés reprogramar o cancelar turnos que solicitaste.',
 					'Usá el horario manual si no ves slots disponibles.',
 				],
 			},
 			{
-				key: 'nutri',
-				label: 'Nutri',
+				key: 'professional',
+				label: 'Profesional',
 				icon: '🥑',
 				description: 'Programá y completá consultas con tus pacientes.',
 				tips: [
-					'Traé los slots disponibles del nutri antes de programar.',
+					'Traé los slots disponibles del profesional antes de programar.',
 					'Completá turnos finalizados para marcar el seguimiento.',
 					'Podés ver disponibilidad rápida de la clínica en el panel inferior.',
 				],
@@ -372,7 +372,7 @@ const translations: Record<Locale, Translation> = {
 				icon: '🏥',
 				description: 'Gestioná pacientes y agendas de toda la clínica.',
 				tips: [
-					'Cargá pacientes con clínica asignada y vinculá nutris.',
+					'Cargá pacientes con clínica asignada y vinculá profesionales.',
 					'Programá o reprogramá turnos y mantené la disponibilidad al día.',
 					'Usá la tarjeta de log para auditar llamados al backend.',
 				],
@@ -384,7 +384,7 @@ const translations: Record<Locale, Translation> = {
 				description: 'Visión cross-clínica para auditar y destrabar flujos.',
 				tips: [
 					'Podés ver y completar turnos de todas las clínicas.',
-					'Filtrá por clínica y nutri para validar aislamientos.',
+					'Filtrá por clínica y profesional para validar aislamientos.',
 					'Refrescá claims si cambiás permisos desde el emulador.',
 				],
 			},
@@ -715,18 +715,18 @@ const translations: Record<Locale, Translation> = {
 				icon: '🧍‍♀️',
 				description: 'Request appointments and track your linked agenda.',
 				tips: [
-					'Pick a nutri and request a slot; if the profile is not linked, create it from the alert.',
+					'Pick a professional and request a slot; if the profile is not linked, create it from the alert.',
 					'You can reschedule or cancel appointments you requested.',
 					'Use the manual time picker if you do not see available slots.',
 				],
 			},
 			{
-				key: 'nutri',
-				label: 'Nutri',
+				key: 'professional',
+				label: 'Professional',
 				icon: '🥑',
 				description: 'Schedule and complete consultations with your patients.',
 				tips: [
-					'Load the nutri available slots before scheduling.',
+					'Load the professional available slots before scheduling.',
 					'Complete finished appointments to mark the follow-up.',
 					'Check quick clinic availability in the panel below.',
 				],
@@ -737,7 +737,7 @@ const translations: Record<Locale, Translation> = {
 				icon: '🏥',
 				description: 'Manage patients and agendas for the whole clinic.',
 				tips: [
-					'Create patients with clinic assigned and link nutris.',
+					'Create patients with clinic assigned and link professionals.',
 					'Schedule or reschedule appointments and keep availability up to date.',
 					'Use the log card to audit backend calls.',
 				],
@@ -749,7 +749,7 @@ const translations: Record<Locale, Translation> = {
 				description: 'Cross-clinic visibility to audit and unblock flows.',
 				tips: [
 					'You can view and complete appointments across clinics.',
-					'Filter by clinic and nutri to validate isolations.',
+					'Filter by clinic and professional to validate isolations.',
 					'Refresh claims if you change permissions from the emulator.',
 				],
 			},

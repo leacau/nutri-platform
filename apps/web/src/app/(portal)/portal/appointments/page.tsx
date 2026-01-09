@@ -14,7 +14,6 @@ import { Select } from "../../../../components/ui/select";
 import { formatDate } from "../../../../lib/utils";
 import { useClinic } from "../../../../providers/clinic-provider";
 import { useAuth } from "../../../../providers/auth-provider";
-import { useAuth } from "../../../../providers/auth-provider";
 
 export default function PortalAppointmentsPage() {
   const qc = useQueryClient();
@@ -27,12 +26,12 @@ export default function PortalAppointmentsPage() {
     queryKey: ["portal-patient"],
     queryFn: (token, clinicId) => apiClient.patient("patient_1", clinicId, token),
   });
-  const nutrisQuery = useAuthedQuery({
-    queryKey: ["portal-nutris"],
-    queryFn: (token, clinicId) => apiClient.nutris(clinicId, token),
+  const professionalsQuery = useAuthedQuery({
+    queryKey: ["portal-professionals"],
+    queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
   });
 
-  const [request, setRequest] = useState({ nutriId: "", preferredDate: "" });
+  const [request, setRequest] = useState({ professionalUid: "", preferredDate: "" });
 
   const patientId = patientsQuery.data?.id;
   const { idToken } = useAuth();
@@ -45,13 +44,9 @@ export default function PortalAppointmentsPage() {
   const requestMutation = useMutation({
     mutationFn: async () => {
       if (!patientId) throw new Error("Sin paciente vinculado");
-      return apiClient.scheduleAppointment(
+      return apiClient.requestAppointment(
         {
-          patientId,
-          nutriId: request.nutriId || "nutri_1",
-          status: "requested",
-          requestedAt: new Date().toISOString(),
-          scheduledFor: request.preferredDate || undefined,
+          professionalUid: request.professionalUid || undefined,
         },
         activeClinicId || "",
         idToken || undefined,
@@ -59,7 +54,7 @@ export default function PortalAppointmentsPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portal-appointments"] });
-      setRequest({ nutriId: "", preferredDate: "" });
+      setRequest({ professionalUid: "", preferredDate: "" });
     },
   });
 
@@ -85,12 +80,17 @@ export default function PortalAppointmentsPage() {
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1">
-            <Label>Nutricionista</Label>
-            <Select value={request.nutriId} onChange={(e) => setRequest((prev) => ({ ...prev, nutriId: e.target.value }))}>
+            <Label>Profesional</Label>
+            <Select
+              value={request.professionalUid}
+              onChange={(e) =>
+                setRequest((prev) => ({ ...prev, professionalUid: e.target.value }))
+              }
+            >
               <option value="">Cualquiera</option>
-              {nutrisQuery.data?.map((nutri) => (
-                <option key={nutri.id} value={nutri.id}>
-                  {nutri.name}
+              {professionalsQuery.data?.map((professional) => (
+                <option key={professional.id} value={professional.id}>
+                  {professional.name}
                 </option>
               ))}
             </Select>
@@ -117,7 +117,7 @@ export default function PortalAppointmentsPage() {
             <div key={appt.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
               <div>
                 <p className="font-semibold capitalize">{appt.status}</p>
-                <p className="text-xs text-muted-foreground">Nutri: {appt.nutriId}</p>
+                <p className="text-xs text-muted-foreground">Profesional: {appt.professionalUid}</p>
               </div>
               <div className="text-right">
                 <p className="text-sm font-semibold">{appt.scheduledFor ? formatDate(appt.scheduledFor) : "Esperando fecha"}</p>

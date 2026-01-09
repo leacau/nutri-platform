@@ -111,7 +111,7 @@ export default function TemplatesPage() {
               rows={5}
               value={form.body}
               onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
-              placeholder="Hola {{patientName}}, tu turno es el {{date}} con {{nutriName}}."
+              placeholder="Hola {{patientName}}, tu turno es el {{date}} con {{professionalName}}."
             />
           </div>
           <Button className="w-full" onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>

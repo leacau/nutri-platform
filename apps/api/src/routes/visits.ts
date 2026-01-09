@@ -27,7 +27,7 @@ router.post(
 	'/',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri'),
+	requireRole('clinic_admin', 'professional'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
@@ -47,7 +47,10 @@ router.post(
 		const doc: VisitDoc = {
 			clinicId,
 			patientId: safePatient.id,
-			nutriUid: auth.role === 'nutri' ? auth.uid : safePatient.assignedNutriUid ?? auth.uid,
+			professionalUid:
+				auth.role === 'professional'
+					? auth.uid
+					: (safePatient.assignedProfessionalUids ?? [])[0] ?? auth.uid,
 			appointmentId: parsed.data.appointmentId ?? null,
 			date: parsed.data.date ? Timestamp.fromMillis(Date.parse(parsed.data.date)) : now,
 			reason: parsed.data.reason ?? null,
@@ -67,7 +70,7 @@ router.get(
 	'/',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin'),
+	requireRole('clinic_admin', 'professional', 'patient', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.isPlatformAdmin ? auth.clinicId ?? req.header('x-clinic-id') ?? null : auth.clinicId;

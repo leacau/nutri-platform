@@ -4,7 +4,7 @@ import './App.css';
 import useAuthSession from './hooks/useAuthSession';
 import { getCopy, supportedLocales, type Locale } from './i18n';
 
-type ClinicRole = 'clinic_admin' | 'nutri' | 'staff';
+type ClinicRole = 'clinic_admin' | 'professional' | 'staff';
 type Membership = { clinicId: string; clinicName: string | null; role: ClinicRole; uid?: string };
 
 type ApiLog = {
@@ -24,7 +24,7 @@ type AuthedResult =
 
 type PatientForm = { name: string; email: string; phone: string };
 type SeedForm = { secret: string; clinicName: string; clinicId: string; users: string };
-type ScheduleForm = { when: string; nutriUid: string };
+type ScheduleForm = { when: string; professionalUid: string };
 
 function nowIso() {
 	return new Date().toISOString();
@@ -82,7 +82,8 @@ export default function App() {
 		secret: '',
 		clinicId: '',
 		clinicName: 'Clinica Demo',
-		users: 'admin@test.com:clinic_admin,nutri@test.com:nutri,staff@test.com:staff',
+		users:
+			'admin@test.com:clinic_admin,professional@test.com:professional,staff@test.com:staff',
 	});
 
 	const [patients, setPatients] = useState<any[]>([]);
@@ -286,10 +287,17 @@ export default function App() {
 		}
 	};
 
-	const assignNutri = async (patientId: string, nutriUid: string | null) => {
-		const res = await authedFetch('POST', `/patients/${patientId}/assign-nutri`, {
-			nutriUid,
-		});
+	const assignProfessional = async (
+		patientId: string,
+		professionalUid: string | null
+	) => {
+		const res = await authedFetch(
+			'POST',
+			`/patients/${patientId}/assign-professional`,
+			{
+				professionalUid,
+			}
+		);
 		if (res.ok) await loadPatients();
 	};
 
@@ -316,13 +324,13 @@ export default function App() {
 
 	const scheduleAppointment = async (id: string) => {
 		const form = scheduleForms[id];
-		if (!form?.nutriUid || !form?.when) {
-			setAuthMessage('Completa nutri y fecha');
+		if (!form?.professionalUid || !form?.when) {
+			setAuthMessage('Completa profesional y fecha');
 			return;
 		}
 		const iso = new Date(form.when).toISOString();
 		const res = await authedFetch('POST', `/appointments/${id}/schedule`, {
-			nutriUid: form.nutriUid,
+			professionalUid: form.professionalUid,
 			scheduledFor: iso,
 		});
 		if (res.ok) await loadAppointments();
@@ -357,7 +365,9 @@ export default function App() {
 		</option>
 	));
 
-	const nutriOptions = members.filter((m: any) => m.role === 'nutri').map((m: any) => m.uid ?? m.clinicId);
+	const professionalOptions = members
+		.filter((m: any) => m.role === 'professional')
+		.map((m: any) => m.uid ?? m.clinicId);
 
 	const Landing = (
 		<div className='page landing'>
@@ -372,7 +382,7 @@ export default function App() {
 					<ul className='feature-list'>
 						<li>Ingreso y registro seguro</li>
 						<li>Selección de clínica activa y métricas clave</li>
-						<li>Alta de pacientes, asignación de nutris y manejo de turnos</li>
+						<li>Alta de pacientes, asignación de profesionales y manejo de turnos</li>
 					</ul>
 					<div className='actions'>
 						<Link className='btn primary' to='/login'>
@@ -633,7 +643,7 @@ export default function App() {
 				<div className='table'>
 					<div className='table__head'>
 						<span>Paciente</span>
-						<span>Nutri asignado</span>
+						<span>Profesional asignado</span>
 						<span>ID</span>
 					</div>
 					{patients.map((p) => {
@@ -646,13 +656,13 @@ export default function App() {
 								</div>
 								<div className='field-inline'>
 									<select
-										value={(p as any).assignedNutriUid ?? ''}
-										onChange={(e) => assignNutri(id, e.target.value || null)}
+										value={(p as any).assignedProfessionalUids?.[0] ?? ''}
+										onChange={(e) => assignProfessional(id, e.target.value || null)}
 									>
 										<option value=''>No asignado</option>
-										{nutriOptions.map((n) => (
-											<option key={n} value={n}>
-												{n}
+										{professionalOptions.map((p) => (
+											<option key={p} value={p}>
+												{p}
 											</option>
 										))}
 									</select>
@@ -694,7 +704,9 @@ export default function App() {
 										<div className='muted small'>{id}</div>
 									</div>
 									<div className='muted small'>patientUid: {(a as any).patientUid}</div>
-									<div className='muted small'>nutriUid: {(a as any).nutriUid ?? '—'}</div>
+									<div className='muted small'>
+										professionalUid: {(a as any).professionalUid ?? '—'}
+									</div>
 								</div>
 								<div className='grid two'>
 									<div className='field'>
@@ -705,22 +717,35 @@ export default function App() {
 											onChange={(e) =>
 												setScheduleForms((prev) => ({
 													...prev,
-													[id]: { ...(prev[id] ?? { nutriUid: (a as any).nutriUid ?? '' }), when: e.target.value },
+													[id]: {
+														...(prev[id] ?? {
+															professionalUid:
+																(a as any).professionalUid ?? '',
+														}),
+														when: e.target.value,
+													},
 												}))
 											}
 										/>
 									</div>
 									<div className='field'>
-										<span>Nutri</span>
+										<span>Profesional</span>
 										<input
-											value={scheduleForms[id]?.nutriUid ?? (a as any).nutriUid ?? ''}
+											value={
+												scheduleForms[id]?.professionalUid ??
+												(a as any).professionalUid ??
+												''
+											}
 											onChange={(e) =>
 												setScheduleForms((prev) => ({
 													...prev,
-													[id]: { ...(prev[id] ?? { when: sched ?? '' }), nutriUid: e.target.value },
+													[id]: {
+														...(prev[id] ?? { when: sched ?? '' }),
+														professionalUid: e.target.value,
+													},
 												}))
 											}
-											placeholder='nutri uid'
+											placeholder='professional uid'
 										/>
 									</div>
 								</div>

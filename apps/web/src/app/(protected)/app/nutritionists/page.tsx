@@ -39,9 +39,9 @@ export default function NutritionistsPage() {
 	const { activeClinicId } = useClinic();
 	const { idToken } = useAuth();
 
-	const nutrisQuery = useAuthedQuery({
-		queryKey: ['nutris', activeClinicId],
-		queryFn: (token, clinicId) => apiClient.nutris(clinicId, token),
+	const professionalsQuery = useAuthedQuery({
+		queryKey: ['professionals', activeClinicId],
+		queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
 	});
 
 	const {
@@ -59,16 +59,16 @@ export default function NutritionistsPage() {
 			if (!activeClinicId) return;
 			return apiClient.inviteMember(
 				activeClinicId,
-				{ ...data, role: 'nutri' },
+				{ ...data, role: 'professional' },
 				idToken || undefined
 			);
 		},
 		onSuccess: (data: any) => {
-			qc.invalidateQueries({ queryKey: ['nutris'] });
+			qc.invalidateQueries({ queryKey: ['professionals'] });
 			reset();
-			alert(data?.message || 'Nutricionista invitado/creado');
+			alert(data?.message || 'Profesional invitado/creado');
 		},
-		onError: () => alert('Error al invitar nutri'),
+		onError: () => alert('Error al invitar profesional'),
 	});
 
 	const handleDniBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
@@ -79,7 +79,7 @@ export default function NutritionistsPage() {
 			if (user) {
 				setValue('name', user.name);
 				setValue('email', user.email);
-				alert(`Usuario encontrado: ${user.name}. Se asignará como Nutri.`);
+				alert(`Usuario encontrado: ${user.name}. Se asignará como profesional.`);
 			}
 		} catch (e) {
 			console.error(e);
@@ -87,40 +87,42 @@ export default function NutritionistsPage() {
 	};
 
 	return (
-		<RoleGuard allowed={['clinic_admin']}>
+		<RoleGuard allowed={['clinic_admin', 'staff']}>
 			<div className='space-y-6'>
 				<div>
-					<p className='text-sm text-muted-foreground'>Solo clinic_admin</p>
+					<p className='text-sm text-muted-foreground'>
+						Gestión de profesionales de la clínica
+					</p>
 					<h1 className='text-2xl font-semibold text-primary'>
-						Nutricionistas
+						Profesionales
 					</h1>
 				</div>
 
 				<div className='grid gap-6 lg:grid-cols-[1.3fr,1fr]'>
 					<Card>
 						<CardHeader>
-							<CardTitle>Equipo de nutris</CardTitle>
+							<CardTitle>Equipo de profesionales</CardTitle>
 						</CardHeader>
 						<CardContent className='divide-y p-0'>
-							{nutrisQuery.data?.map((nutri: UserAccount) => (
+							{professionalsQuery.data?.map((professional: UserAccount) => (
 								<div
-									key={nutri.id}
+									key={professional.id}
 									className='flex items-center justify-between p-4'
 								>
 									<div>
-										<p className='font-semibold'>{nutri.name}</p>
+										<p className='font-semibold'>{professional.name}</p>
 										<p className='text-xs text-muted-foreground'>
-											{nutri.email}
+											{professional.email}
 										</p>
 									</div>
 									<span className='text-xs text-muted-foreground capitalize'>
-										{nutri.role}
+										{professional.role}
 									</span>
 								</div>
 							))}
-							{!nutrisQuery.data?.length ? (
+							{!professionalsQuery.data?.length ? (
 								<p className='p-4 text-sm text-muted-foreground'>
-									No hay nutris cargados.
+									No hay profesionales cargados.
 								</p>
 							) : null}
 						</CardContent>
@@ -130,7 +132,7 @@ export default function NutritionistsPage() {
 						<CardHeader>
 							<CardTitle className='flex items-center gap-2 text-lg'>
 								<UserPlus2 className='h-4 w-4' />
-								Invitar nutri
+								Invitar profesional
 							</CardTitle>
 						</CardHeader>
 						<CardContent>
@@ -168,7 +170,7 @@ export default function NutritionistsPage() {
 									<Input
 										type='email'
 										value={undefined}
-										placeholder='nutri@clinica.com'
+										placeholder='profesional@clinica.com'
 										{...register('email')}
 									/>
 									{errors.email && (

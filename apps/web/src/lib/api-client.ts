@@ -180,7 +180,7 @@ export const apiClient = {
 			email?: string | null;
 			phone?: string | null;
 			clinicId: string;
-			assignedNutriUid?: string | null;
+			assignedProfessionalUids?: string[];
 		} | null>(`/patients/lookup?dni=${dni}&clinicId=${clinicId}`, {
 			token,
 			clinicId,
@@ -246,12 +246,14 @@ export const apiClient = {
 			mockFallback: () => [],
 		}),
 
-	nutris: (clinicId: string, token?: string) =>
+	professionals: (clinicId: string, token?: string) =>
 		request<UserAccount[]>(`/clinics/${clinicId}/members`, {
 			token,
 			clinicId,
 			mockFallback: () => [],
-		}).then((members: any) => members.filter((m: any) => m.role === 'nutri')),
+		}).then((members: any) =>
+			members.filter((m: any) => m.role === 'professional')
+		),
 
 	staff: (clinicId: string, token?: string) =>
 		request<UserAccount[]>(`/clinics/${clinicId}/members`, {

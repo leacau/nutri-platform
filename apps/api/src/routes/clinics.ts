@@ -13,8 +13,8 @@ const router = Router();
 const inviteMemberSchema = z.object({
 	name: z.string().min(2),
 	email: z.string().email(),
-	dni: z.string().min(6).max(8),
-	role: z.enum(['clinic_admin', 'nutri', 'staff']),
+	dni: z.string().min(7).max(8),
+	role: z.enum(['clinic_admin', 'professional', 'staff']),
 });
 
 router.get(
@@ -25,9 +25,15 @@ router.get(
 		if (!dniStr)
 			return res.status(400).json({ success: false, message: 'Missing dni' });
 
-		const dni = parseInt(dniStr, 10);
-		if (isNaN(dni))
-			return res.status(400).json({ success: false, message: 'Invalid dni' });
+	const dni = parseInt(dniStr, 10);
+	if (isNaN(dni))
+		return res.status(400).json({ success: false, message: 'Invalid dni' });
+	if (dni < 1000000 || dni > 99999999) {
+		return res.status(400).json({
+			success: false,
+			message: 'DNI must be between 1000000 and 99999999',
+		});
+	}
 
 		const db = getFirestoreDb();
 		const snap = await db
@@ -104,7 +110,7 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 
 const upsertMemberBody = z.object({
 	uid: z.string().min(1),
-	role: z.enum(['clinic_admin', 'nutri', 'staff']),
+	role: z.enum(['clinic_admin', 'professional', 'staff']),
 	isActive: z.boolean().optional(),
 });
 
@@ -112,7 +118,7 @@ router.post(
 	'/:clinicId/members',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'platform_admin'),
+	requireRole('clinic_admin', 'platform_admin', 'staff'),
 	async (req: Request, res: Response) => {
 		const clinicId = req.params.clinicId;
 		if (!clinicId)
@@ -189,7 +195,7 @@ router.post(
 	'/:clinicId/invite',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'platform_admin'),
+	requireRole('clinic_admin', 'platform_admin', 'staff'),
 	async (req: Request, res: Response) => {
 		const clinicId = req.params.clinicId;
 		if (!clinicId)
@@ -210,6 +216,12 @@ router.post(
 
 		const db = getFirestoreDb();
 		const dniInt = parseInt(parsed.data.dni, 10);
+		if (dniInt < 1000000 || dniInt > 99999999) {
+			return res.status(400).json({
+				success: false,
+				message: 'DNI must be between 1000000 and 99999999',
+			});
+		}
 
 		const userSnap = await db
 			.collection('users')
@@ -224,6 +236,11 @@ router.post(
 			const userDoc = userSnap.docs[0];
 			if (!userDoc) throw new Error('Unexpected null doc');
 			uid = userDoc.id;
+			await userDoc.ref.update({
+				name: parsed.data.name,
+				email: parsed.data.email,
+				updatedAt: now,
+			});
 		} else {
 			const newUserRef = db.collection('users').doc();
 			uid = newUserRef.id;
@@ -283,7 +300,7 @@ router.get(
 	'/:clinicId/members',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'platform_admin'),
+	requireRole('clinic_admin', 'platform_admin', 'staff'),
 	async (req: Request, res: Response) => {
 		const clinicId = req.params.clinicId;
 		if (!clinicId)

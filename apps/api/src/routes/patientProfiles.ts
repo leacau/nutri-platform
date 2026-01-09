@@ -32,7 +32,7 @@ router.get(
 	'/:patientId',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin', 'staff'),
+	requireRole('clinic_admin', 'professional', 'patient', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const db = getFirestoreDb();
@@ -51,6 +51,12 @@ router.get(
 		if (auth.role === 'patient' && patient.linkedUid !== auth.uid) {
 			return denyAuthz(req, res, 'Patients can only see their own profile');
 		}
+		if (
+			auth.role === 'professional' &&
+			!(patient.assignedProfessionalUids ?? []).includes(auth.uid)
+		) {
+			return denyAuthz(req, res, 'Professionals can only see their own patients');
+		}
 
 		const profileSnap = await db.collection('patient_profiles').doc(patientId).get();
 		const profile = (profileSnap.data() as PatientProfileDoc | undefined) ?? null;
@@ -66,7 +72,7 @@ router.put(
 	'/:patientId',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'platform_admin'),
+	requireRole('clinic_admin', 'professional', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const db = getFirestoreDb();
@@ -86,6 +92,12 @@ router.put(
 			patient = await getDocInClinic<PatientDoc>(db, 'patients', patientId, auth.clinicId);
 		}
 		if (!patient) return res.status(404).json({ success: false, message: 'Patient not found' });
+		if (
+			auth.role === 'professional' &&
+			!(patient.assignedProfessionalUids ?? []).includes(auth.uid)
+		) {
+			return denyAuthz(req, res, 'Professionals can only update their own patients');
+		}
 
 	await db
 		.collection('patient_profiles')

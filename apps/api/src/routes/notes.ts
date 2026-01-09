@@ -23,7 +23,7 @@ router.post(
 	'/',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri'),
+	requireRole('clinic_admin', 'professional'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
@@ -55,14 +55,17 @@ router.post(
 				id: parsed.data.patientId,
 			};
 		} else {
-			// Intento de búsqueda global si soy el nutri asignado
+			// Intento de búsqueda global si soy el profesional asignado
 			const globalSnap = await db
 				.collection('patients')
 				.doc(parsed.data.patientId)
 				.get();
 			if (globalSnap.exists) {
 				const pData = globalSnap.data() as PatientDoc;
-				if (auth.role === 'nutri' && pData.assignedNutriUid === auth.uid) {
+				if (
+					auth.role === 'professional' &&
+					(pData.assignedProfessionalUids ?? []).includes(auth.uid)
+				) {
 					safePatient = {
 						...pData,
 						id: globalSnap.id,
@@ -83,10 +86,10 @@ router.post(
 		const note: ClinicalNoteDoc = {
 			clinicId,
 			patientId: safePatient.id,
-			nutriUid:
-				auth.role === 'nutri'
+			professionalUid:
+				auth.role === 'professional'
 					? auth.uid
-					: safePatient.assignedNutriUid ?? auth.uid,
+					: (safePatient.assignedProfessionalUids ?? [])[0] ?? auth.uid,
 			content: parsed.data.content,
 			visibility: parsed.data.visibility,
 			createdAt: now,
@@ -136,8 +139,9 @@ router.get(
 				// 1. Platform Admin siempre ve todo
 				if (auth.isPlatformAdmin) return true;
 
-				// 2. Nutri: ve todas las notas que él creó (sin importar la clínica)
-				if (auth.role === 'nutri' && note.nutriUid === auth.uid) return true;
+				// 2. Profesional: ve todas las notas que él creó (sin importar la clínica)
+				if (auth.role === 'professional' && note.professionalUid === auth.uid)
+					return true;
 
 				// 3. Colaboración: ve notas creadas en su clínica activa actual
 				if (auth.clinicId && note.clinicId === auth.clinicId) return true;

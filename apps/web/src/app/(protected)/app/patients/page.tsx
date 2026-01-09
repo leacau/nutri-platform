@@ -37,7 +37,7 @@ const patientSchema = z.object({
 	phone: z.string().optional().or(z.literal('')),
 	sexo: z.enum(['male', 'female', 'other']),
 	birthDate: z.string().optional(),
-	assignedNutriId: z.string().optional(),
+	assignedProfessionalId: z.string().optional(),
 	notes: z.string().optional(),
 });
 
@@ -52,21 +52,27 @@ export default function PatientsPage() {
 		queryKey: ['patients', activeClinicId],
 		queryFn: (token, clinicId) => apiClient.patients(clinicId, token),
 	});
-	const nutrisQuery = useAuthedQuery({
-		queryKey: ['nutris', activeClinicId],
-		queryFn: (token, clinicId) => apiClient.nutris(clinicId, token),
+	const professionalsQuery = useAuthedQuery({
+		queryKey: ['professionals', activeClinicId],
+		queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
 		enabled: perms.canAssignAnyPatient,
 	});
 
 	const [search, setSearch] = useState('');
-	const [selectedNutri, setSelectedNutri] = useState('all');
+	const [selectedProfessional, setSelectedProfessional] = useState('all');
 
 	const mutation = useMutation({
 		mutationFn: async (data: PatientForm) => {
 			if (!activeClinicId) throw new Error('Sin clínica activa');
+			const assignedProfessionalUids = data.assignedProfessionalId
+				? [data.assignedProfessionalId]
+				: [];
 			return apiClient.createPatient(
 				activeClinicId,
-				data,
+				{
+					...data,
+					assignedProfessionalUids,
+				},
 				idToken ?? undefined
 			);
 		},
@@ -127,11 +133,12 @@ export default function PatientsPage() {
 			const matchesSearch = patient.name
 				.toLowerCase()
 				.includes(search.toLowerCase());
-			const matchesNutri =
-				selectedNutri === 'all' || patient.assignedNutriId === selectedNutri;
-			return matchesSearch && matchesNutri;
+			const matchesProfessional =
+				selectedProfessional === 'all' ||
+				(patient.assignedProfessionalUids ?? []).includes(selectedProfessional);
+			return matchesSearch && matchesProfessional;
 		});
-	}, [patientsQuery.data, search, selectedNutri]);
+	}, [patientsQuery.data, search, selectedProfessional]);
 
 	return (
 		<div className='grid gap-6 lg:grid-cols-[1fr,400px]'>
@@ -161,14 +168,14 @@ export default function PatientsPage() {
 					<div className='flex items-center gap-2'>
 						<Filter className='h-4 w-4 text-muted-foreground' />
 						<Select
-							value={selectedNutri}
-							onChange={(e) => setSelectedNutri(e.target.value)}
+							value={selectedProfessional}
+							onChange={(e) => setSelectedProfessional(e.target.value)}
 							className='w-56'
 						>
-							<option value='all'>Todos los nutris</option>
-							{nutrisQuery.data?.map((nutri: UserAccount) => (
-								<option key={nutri.id} value={nutri.id}>
-									{nutri.name}
+							<option value='all'>Todos los profesionales</option>
+							{professionalsQuery.data?.map((professional: UserAccount) => (
+								<option key={professional.id} value={professional.id}>
+									{professional.name}
 								</option>
 							))}
 						</Select>
@@ -189,7 +196,8 @@ export default function PatientsPage() {
 										{patient.phone || 'sin teléfono'}
 									</p>
 									<Badge variant='outline' className='mt-1'>
-										Asignado: {patient.assignedNutriId || 'N/D'}
+										Asignado:{' '}
+										{patient.assignedProfessionalUids?.join(', ') || 'N/D'}
 									</Badge>
 								</div>
 								<Button variant='outline' size='sm' asChild>
@@ -272,12 +280,12 @@ export default function PatientsPage() {
 						</div>
 						{perms.canAssignAnyPatient ? (
 							<div className='space-y-1'>
-								<Label>Asignar a nutri</Label>
-								<Select {...register('assignedNutriId')}>
+								<Label>Asignar a profesional</Label>
+								<Select {...register('assignedProfessionalId')}>
 									<option value=''>Sin asignar</option>
-									{nutrisQuery.data?.map((nutri: UserAccount) => (
-										<option key={nutri.id} value={nutri.id}>
-											{nutri.name}
+									{professionalsQuery.data?.map((professional: UserAccount) => (
+										<option key={professional.id} value={professional.id}>
+											{professional.name}
 										</option>
 									))}
 								</Select>
