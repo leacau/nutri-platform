@@ -53,6 +53,15 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
   const me = meQuery.data;
   const clinics = clinicsQuery.data;
 
+  useEffect(() => {
+    if (!activeClinicId && clinics && clinics.length === 1) {
+      setActiveClinicId(clinics[0].id);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("amsa-active-clinic", clinics[0].id);
+      }
+    }
+  }, [activeClinicId, clinics]);
+
   const activeMembership = useMemo(() => me?.memberships.find((m) => m.clinicId === activeClinicId), [me, activeClinicId]);
 
   const activeClinic = useMemo(

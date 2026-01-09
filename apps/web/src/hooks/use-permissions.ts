@@ -73,7 +73,6 @@ export function usePermissions(): PermissionSet {
   const { activeMembership, platformRole } = useClinic();
 
   return useMemo(() => {
-    if (!activeMembership) return defaultPermissions;
     if (platformRole === "platform_admin") {
       return {
         canViewSettings: true,
@@ -86,6 +85,7 @@ export function usePermissions(): PermissionSet {
         canScheduleForOthers: true,
       };
     }
-    return permsByRole[activeMembership.role];
+    if (!activeMembership) return defaultPermissions;
+    return permsByRole[activeMembership.role] ?? defaultPermissions;
   }, [activeMembership, platformRole]);
 }
