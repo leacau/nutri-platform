@@ -28,3 +28,14 @@
 # OS
 .DS_Store
 Thumbs.db
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.turbo
+**/.cache
+**/.firebase
+**/.vercel
+**/.env
+**/*.log
+.git
