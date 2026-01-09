@@ -16,7 +16,7 @@ import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Select } from '../../../../components/ui/select';
 import { Textarea } from '../../../../components/ui/textarea';
-import { UserAccount } from '../../../../lib/types'; // Import agregado
+import { UserAccount } from '../../../../lib/types';
 import { apiClient } from '../../../../lib/api-client';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
@@ -73,7 +73,6 @@ export default function PatientsPage() {
 		onSuccess: (data) => {
 			qc.invalidateQueries({ queryKey: ['patients', activeClinicId] });
 			reset();
-			// FIX: data es Patient, no tiene message. Usamos un mensaje estático.
 			alert('Paciente guardado exitosamente');
 		},
 		onError: () => {
@@ -92,9 +91,11 @@ export default function PatientsPage() {
 		defaultValues: { sexo: 'female' },
 	});
 
+	// Lógica mejorada para buscar paciente al salir del campo DNI
 	const handleDniBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
 		const dniVal = e.target.value;
-		if (dniVal.length < 6 || !activeClinicId) return;
+		// Solo buscar si tiene longitud válida (para evitar llamadas innecesarias)
+		if (dniVal.length < 7 || !activeClinicId) return;
 
 		try {
 			const found = await apiClient.lookupPatient(
@@ -103,13 +104,20 @@ export default function PatientsPage() {
 				idToken ?? undefined
 			);
 			if (found) {
+				// Rellenar campos automáticamente
 				setValue('name', found.name);
-				alert(
-					`¡Paciente encontrado! ${found.name} ya existe. Al guardar, se asignará a esta clínica.`
-				);
+				if (found.email) setValue('email', found.email);
+				if (found.phone) setValue('phone', found.phone);
+
+				const mensaje =
+					found.clinicId === activeClinicId
+						? `El paciente ${found.name} ya existe en esta clínica.`
+						: `El paciente ${found.name} existe en otra clínica. Al guardar se moverá aquí.`;
+
+				alert(mensaje);
 			}
 		} catch (error) {
-			console.error('Lookup failed', error);
+			console.error('Error buscando paciente:', error);
 		}
 	};
 

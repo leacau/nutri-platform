@@ -83,7 +83,7 @@ async function request<T>(
 }
 
 const mockDb: any = {
-	// Mocks originales si los tienes
+	// ... mocks ...
 };
 
 export const apiClient = {
@@ -172,15 +172,20 @@ export const apiClient = {
 			},
 		}),
 
+	// FIX: Definición de tipos actualizada
 	lookupPatient: (dni: string, clinicId: string, token?: string) =>
-		request<{ id: string; name: string; assignedNutriUid?: string } | null>(
-			`/patients/lookup?dni=${dni}&clinicId=${clinicId}`,
-			{
-				token,
-				clinicId,
-				mockFallback: () => null,
-			}
-		),
+		request<{
+			id: string;
+			name: string;
+			email?: string | null;
+			phone?: string | null;
+			clinicId: string;
+			assignedNutriUid?: string | null;
+		} | null>(`/patients/lookup?dni=${dni}&clinicId=${clinicId}`, {
+			token,
+			clinicId,
+			mockFallback: () => null,
+		}),
 
 	createPatient: (clinicId: string, data: Partial<Patient>, token?: string) =>
 		request<Patient>('/patients', {

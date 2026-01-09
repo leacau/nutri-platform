@@ -10,7 +10,6 @@ import type { ClinicRole } from '../types/auth.js';
 
 const router = Router();
 
-// Schema para Invitación/Creación por DNI
 const inviteMemberSchema = z.object({
 	name: z.string().min(2),
 	email: z.string().email(),
@@ -18,7 +17,6 @@ const inviteMemberSchema = z.object({
 	role: z.enum(['clinic_admin', 'nutri', 'staff']),
 });
 
-// Endpoint de Búsqueda de Usuario Global (para validar antes de invitar)
 router.get(
 	'/lookup-user',
 	authMiddleware,
@@ -43,8 +41,7 @@ router.get(
 		}
 
 		const d = snap.docs[0];
-
-		// CORRECCIÓN TS18048: Verificar explícitamente que 'd' existe
+		// FIX CRÍTICO: Validación explícita para que compile TypeScript
 		if (!d) {
 			return res.status(200).json({ success: true, data: null });
 		}
@@ -111,7 +108,6 @@ const upsertMemberBody = z.object({
 	isActive: z.boolean().optional(),
 });
 
-// Endpoint existente para actualizar miembros por UID
 router.post(
 	'/:clinicId/members',
 	authMiddleware,
@@ -155,11 +151,13 @@ router.post(
 			};
 			const ref = db.collection('clinic_memberships').doc();
 			await ref.set(doc);
-			return res.status(201).json({
-				success: true,
-				message: 'Member added',
-				data: { id: ref.id, ...doc },
-			});
+			return res
+				.status(201)
+				.json({
+					success: true,
+					message: 'Member added',
+					data: { id: ref.id, ...doc },
+				});
 		}
 
 		const doc = existing.docs[0];
@@ -187,7 +185,6 @@ router.post(
 	}
 );
 
-// NUEVO: Invitar/Crear Miembro por DNI
 router.post(
 	'/:clinicId/invite',
 	authMiddleware,
@@ -202,17 +199,18 @@ router.post(
 
 		const parsed = inviteMemberSchema.safeParse(req.body);
 		if (!parsed.success) {
-			return res.status(400).json({
-				success: false,
-				message: 'Datos inválidos',
-				errors: parsed.error.flatten(),
-			});
+			return res
+				.status(400)
+				.json({
+					success: false,
+					message: 'Datos inválidos',
+					errors: parsed.error.flatten(),
+				});
 		}
 
 		const db = getFirestoreDb();
 		const dniInt = parseInt(parsed.data.dni, 10);
 
-		// 1. Verificar si existe en 'users' globalmente por DNI
 		const userSnap = await db
 			.collection('users')
 			.where('dni', '==', dniInt)
@@ -223,12 +221,10 @@ router.post(
 		const now = Timestamp.now();
 
 		if (!userSnap.empty) {
-			// Usuario existe: Usamos su UID
 			const userDoc = userSnap.docs[0];
 			if (!userDoc) throw new Error('Unexpected null doc');
 			uid = userDoc.id;
 		} else {
-			// Usuario NO existe: Creamos el User Doc
 			const newUserRef = db.collection('users').doc();
 			uid = newUserRef.id;
 
@@ -241,7 +237,6 @@ router.post(
 			});
 		}
 
-		// 2. Verificar/Crear Membresía en la Clínica
 		const memSnap = await db
 			.collection('clinic_memberships')
 			.where('clinicId', '==', clinicId)
@@ -258,10 +253,12 @@ router.post(
 					updatedAt: now,
 				});
 			}
-			return res.status(200).json({
-				success: true,
-				message: 'Usuario existente asignado a la clínica.',
-			});
+			return res
+				.status(200)
+				.json({
+					success: true,
+					message: 'Usuario existente asignado a la clínica.',
+				});
 		} else {
 			await db.collection('clinic_memberships').add({
 				clinicId,
@@ -272,10 +269,12 @@ router.post(
 				updatedAt: now,
 				createdByUid: req.auth?.uid,
 			});
-			return res.status(201).json({
-				success: true,
-				message: 'Usuario invitado/creado y asignado.',
-			});
+			return res
+				.status(201)
+				.json({
+					success: true,
+					message: 'Usuario invitado/creado y asignado.',
+				});
 		}
 	}
 );

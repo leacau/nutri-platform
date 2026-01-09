@@ -44,11 +44,54 @@ function clinicScopedUnlessPlatformAdmin(
 	return requireClinicContext(req, res, next);
 }
 
+// Endpoint Lookup (Búsqueda por DNI)
+patientsRouter.get(
+	'/lookup',
+	requireClinicContext,
+	async (req: Request, res: Response) => {
+		const dniVal = parseInt(req.query.dni as string, 10);
+		if (isNaN(dniVal))
+			return res.status(400).json({ success: false, message: 'Invalid DNI' });
+
+		const db = getFirestoreDb();
+		// Búsqueda exacta numérica
+		const snap = await db
+			.collection('patients')
+			.where('dni', '==', dniVal)
+			.limit(1)
+			.get();
+
+		if (snap.empty) {
+			return res.status(200).json({ success: true, data: null });
+		}
+
+		const doc = snap.docs[0];
+		// FIX CRÍTICO: Validación explícita para TS
+		if (!doc) {
+			return res.status(200).json({ success: true, data: null });
+		}
+
+		const data = doc.data() as PatientDoc;
+
+		return res.status(200).json({
+			success: true,
+			data: {
+				id: doc.id,
+				name: data.name,
+				email: data.email,
+				phone: data.phone,
+				clinicId: data.clinicId,
+				assignedNutriUid: data.assignedNutriUid,
+			},
+		});
+	}
+);
+
 patientsRouter.get(
 	'/',
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
-		const auth = req.auth!; // Garantizado por requireAuth
+		const auth = req.auth!;
 
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
@@ -70,10 +113,9 @@ patientsRouter.get(
 			return denyAuthz(req, res, 'Missing clinicId for clinic listing');
 		}
 
-		let query = db.collection('patients').where('clinicId', '==', clinicId);
-		if (auth.role === 'nutri') {
-			query = query.where('assignedNutriUid', '==', auth.uid);
-		}
+		// FIX: Permitir a Nutris ver todos los pacientes de la clínica
+		// Esto cumple el REQ 1: "permitir que el nutricionista los asigne"
+		const query = db.collection('patients').where('clinicId', '==', clinicId);
 
 		const snap = await query.limit(100).get();
 		const items = snap.docs.map((d) => ({
@@ -118,6 +160,7 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 	} else if (auth.role === 'nutri' && patient.assignedNutriUid === auth.uid) {
 		isAllowed = true;
 	} else {
+		// Verificar si el usuario pertenece a la misma clínica que el paciente
 		const membershipSnap = await db
 			.collection('clinic_memberships')
 			.where('clinicId', '==', patient.clinicId)
@@ -128,7 +171,8 @@ patientsRouter.get('/:id', async (req: Request, res: Response) => {
 
 		if (!membershipSnap.empty) {
 			const mem = membershipSnap.docs[0]?.data();
-			if (mem && ['clinic_admin', 'staff'].includes(mem.role)) {
+			// FIX: Permitir a Nutri ver paciente aunque no esté asignado
+			if (mem && ['clinic_admin', 'staff', 'nutri'].includes(mem.role)) {
 				isAllowed = true;
 			}
 		}
@@ -180,10 +224,9 @@ patientsRouter.post(
 		}
 
 		const db = getFirestoreDb();
-		const dniVal = parseInt(parsed.data.dni, 10); // Parseamos una sola vez
+		const dniVal = parseInt(parsed.data.dni, 10);
 
-		// 1. Verificar si ya existe un paciente con ese DNI (Global check)
-		// CORRECCIÓN: Usar dniVal (number) en lugar de parsed.data.dni (string) para que coincida con la BBDD
+		// FIX: Buscar por valor numérico para evitar duplicados
 		const existingDniSnap = await db
 			.collection('patients')
 			.where('dni', '==', dniVal)
@@ -191,7 +234,7 @@ patientsRouter.post(
 			.get();
 
 		if (!existingDniSnap.empty) {
-			// CORRECCIÓN: Usar "!" para asegurar que el objeto existe, ya que checkeamos empty
+			// FIX: Validación explícita
 			const existingDoc = existingDniSnap.docs[0]!;
 			const existingData = existingDoc.data() as PatientDoc;
 
@@ -203,7 +246,6 @@ patientsRouter.post(
 				updateData.assignedNutriUid = auth.uid;
 			}
 
-			// Lógica de "robar" o reasignar paciente a la clínica actual
 			if (existingData.clinicId !== clinicId) {
 				updateData.clinicId = clinicId;
 			}
@@ -238,7 +280,7 @@ patientsRouter.post(
 			clinicId,
 			assignedNutriUid: assignedNutri ?? null,
 			name: parsed.data.name,
-			dni: dniVal, // Guardamos como número
+			dni: dniVal,
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
@@ -371,7 +413,7 @@ patientsRouter.patch(
 patientsRouter.post(
 	'/:id/assign-nutri',
 	requireClinicContext,
-	requireRole('clinic_admin', 'staff', 'platform_admin'),
+	requireRole('clinic_admin', 'staff', 'platform_admin', 'nutri'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId;
@@ -383,6 +425,10 @@ patientsRouter.post(
 			return res
 				.status(400)
 				.json({ success: false, message: 'Missing patient id' });
+
+		if (auth.role === 'nutri') {
+			req.body.nutriUid = auth.uid;
+		}
 
 		const parsed = assignNutriSchema.safeParse(req.body);
 		if (!parsed.success) {
