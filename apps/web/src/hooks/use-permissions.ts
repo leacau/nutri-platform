@@ -86,6 +86,6 @@ export function usePermissions(): PermissionSet {
         canScheduleForOthers: true,
       };
     }
-    return permsByRole[activeMembership.role];
+    return permsByRole[activeMembership.role] ?? defaultPermissions;
   }, [activeMembership, platformRole]);
 }
