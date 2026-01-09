@@ -73,7 +73,6 @@ export function usePermissions(): PermissionSet {
   const { activeMembership, platformRole } = useClinic();
 
   return useMemo(() => {
-    if (!activeMembership) return defaultPermissions;
     if (platformRole === "platform_admin") {
       return {
         canViewSettings: true,

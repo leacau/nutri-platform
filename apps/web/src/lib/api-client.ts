@@ -282,4 +282,14 @@ export const apiClient = {
 			clinicId,
 			body: data,
 		}),
+
+	createClinic: (
+		data: { name: string; admin: { name: string; email: string; dni: string } },
+		token?: string
+	) =>
+		request<{ clinicId: string; adminUid: string }>('/clinics', {
+			method: 'POST',
+			token,
+			body: data,
+		}),
 };
