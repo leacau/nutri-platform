@@ -6,7 +6,7 @@ type StubPatient = {
 	email: string | null;
 	phone: string | null;
 	clinicId: string | null;
-	assignedNutriUid?: string;
+	assignedProfessionalUids?: string[];
 	linkedUid?: string;
 };
 
@@ -14,7 +14,7 @@ type StubAppointment = {
 	id: string;
 	status: 'requested' | 'scheduled' | 'completed' | 'cancelled';
 	clinicId: string;
-	nutriUid: string;
+	professionalUid: string;
 	patientId: string;
 	patientUid?: string;
 	patientName?: string;
@@ -47,7 +47,7 @@ export function createE2EStubApi() {
 			email: 'paciente.demo@example.com',
 			phone: '+5491100000000',
 			clinicId: 'demo-clinic',
-			assignedNutriUid: 'nutri-demo-1',
+			assignedProfessionalUids: ['professional-demo-1'],
 			linkedUid: 'seed-user',
 		},
 	];
@@ -57,7 +57,7 @@ export function createE2EStubApi() {
 			id: 'seed-appointment',
 			status: 'requested',
 			clinicId: 'demo-clinic',
-			nutriUid: 'nutri-demo-1',
+			professionalUid: 'professional-demo-1',
 			patientId: 'seed-patient',
 			patientUid: 'seed-user',
 			patientName: 'Paciente Demo',
@@ -89,7 +89,7 @@ export function createE2EStubApi() {
 					email: payload.email ?? null,
 					phone: payload.phone ?? null,
 					clinicId: payload.clinicId ?? 'demo-clinic',
-					assignedNutriUid: payload.assignedNutriUid,
+					assignedProfessionalUids: payload.assignedProfessionalUids,
 					linkedUid: payload.linkedUid,
 				};
 				patients.push(newPatient);
@@ -103,9 +103,24 @@ export function createE2EStubApi() {
 				const payload = (body ?? {}) as Partial<StubPatient>;
 				if (action === 'link') {
 					patient.linkedUid = payload.linkedUid ?? patient.linkedUid;
-				} else if (payload.assignedNutriUid) {
-					patient.assignedNutriUid = payload.assignedNutriUid;
+				} else if (payload.assignedProfessionalUids) {
+					patient.assignedProfessionalUids = payload.assignedProfessionalUids;
 				}
+				return ok({ data: patient });
+			}
+
+			if (
+				endpoint.startsWith('/patients/') &&
+				endpoint.endsWith('/assign-professional') &&
+				method === 'POST'
+			) {
+				const [, , targetId] = endpoint.split('/');
+				const patient = patients.find((p) => p.id === targetId);
+				if (!patient) return err(404, 'Paciente no encontrado');
+				const payload = (body ?? {}) as { professionalUid?: string | null };
+				patient.assignedProfessionalUids = payload.professionalUid
+					? [payload.professionalUid]
+					: [];
 				return ok({ data: patient });
 			}
 
@@ -123,7 +138,7 @@ export function createE2EStubApi() {
 					id: `appt-${appointmentCounter++}`,
 					status: 'requested',
 					clinicId: payload.clinicId ?? 'demo-clinic',
-					nutriUid: payload.nutriUid ?? 'nutri-demo-1',
+					professionalUid: payload.professionalUid ?? 'professional-demo-1',
 					patientId: payload.patientId ?? 'seed-patient',
 					patientUid: payload.patientUid ?? 'seed-user',
 					patientName: payload.patientName ?? 'Paciente Demo',
@@ -139,10 +154,14 @@ export function createE2EStubApi() {
 				const appointment = appointments.find((a) => a.id === apptId);
 				if (!appointment) return err(404, 'Turno no encontrado');
 				if (action === 'schedule') {
-					const payload = body as { scheduledForIso?: string; nutriUid?: string };
+					const payload = body as {
+						scheduledForIso?: string;
+						professionalUid?: string;
+					};
 					appointment.status = 'scheduled';
 					appointment.scheduledFor = payload?.scheduledForIso ?? appointment.scheduledFor ?? slots[0];
-					appointment.nutriUid = payload?.nutriUid ?? appointment.nutriUid;
+					appointment.professionalUid =
+						payload?.professionalUid ?? appointment.professionalUid;
 				} else if (action === 'cancel') {
 					appointment.status = 'cancelled';
 				} else if (action === 'complete') {

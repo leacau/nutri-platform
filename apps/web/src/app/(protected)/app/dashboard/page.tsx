@@ -82,7 +82,7 @@ export default function DashboardPage() {
                 <div key={appt.id} className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <p className="text-sm font-medium">Paciente {appt.patientId}</p>
-                    <p className="text-xs text-muted-foreground">Nutri: {appt.nutriId}</p>
+                    <p className="text-xs text-muted-foreground">Profesional: {appt.professionalUid}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold">{appt.scheduledFor ? formatDate(appt.scheduledFor) : "Sin fecha"}</p>

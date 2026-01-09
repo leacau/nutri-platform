@@ -96,17 +96,19 @@ async function clearCollection(name: string): Promise<number> {
 	return total;
 }
 
-async function seedPatients(patientUid: string, assignedNutriUid: string) {
+async function seedPatients(patientUid: string, assignedProfessionalUid: string) {
 	const db = getFirestoreDb();
 	const now = Timestamp.now();
 
 	const patientDoc = {
 		clinicId: CLINIC_ID,
+		userId: null,
 		name: 'Paciente Demo',
+		dni: 12345678,
 		email: 'patient@test.com',
 		phone: '+549111111111',
 		linkedUid: patientUid,
-		assignedNutriUid,
+		assignedProfessionalUids: [assignedProfessionalUid],
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -120,7 +122,7 @@ async function seedPatients(patientUid: string, assignedNutriUid: string) {
 async function seedAppointments(
 	patientId: string,
 	patientUid: string,
-	nutriUid: string
+	professionalUid: string
 ) {
 	const db = getFirestoreDb();
 	const now = Timestamp.now();
@@ -133,7 +135,7 @@ async function seedAppointments(
 			clinicId: CLINIC_ID,
 			patientId,
 			patientUid,
-			nutriUid,
+			professionalUid,
 			status: 'scheduled' as const,
 			requestedAt: now,
 			scheduledFor: tomorrow,
@@ -151,7 +153,7 @@ async function seedAppointments(
 			clinicId: CLINIC_ID,
 			patientId,
 			patientUid,
-			nutriUid,
+			professionalUid,
 			status: 'requested' as const,
 			requestedAt: now,
 			scheduledFor: null,
@@ -181,7 +183,10 @@ async function main() {
 	const { firestore } = getFirebaseAdmin();
 	firestore.settings({ ignoreUndefinedProperties: true });
 
-	const users: Record<'patient' | 'nutri' | 'clinic' | 'platform', SeedUser> = {
+	const users: Record<
+		'patient' | 'professional' | 'clinic' | 'platform',
+		SeedUser
+	> = {
 		patient: {
 			email: 'patient@test.com',
 			password: 'Passw0rd!',
@@ -189,11 +194,11 @@ async function main() {
 			role: null,
 			clinicId: null,
 		},
-		nutri: {
-			email: 'nutri@test.com',
+		professional: {
+			email: 'professional@test.com',
 			password: 'Passw0rd!',
-			displayName: 'Nutri Demo',
-			role: 'nutri',
+			displayName: 'Profesional Demo',
+			role: 'professional',
 			clinicId: CLINIC_ID,
 		},
 		clinic: {
@@ -213,7 +218,7 @@ async function main() {
 	};
 
 	const patientUid = await upsertUser(users.patient);
-	const nutriUid = await upsertUser(users.nutri);
+	const professionalUid = await upsertUser(users.professional);
 	await upsertUser(users.clinic);
 	await upsertUser(users.platform);
 
@@ -223,8 +228,8 @@ async function main() {
 		`Cleared collections (patients: ${clearedPatients}, appointments: ${clearedAppointments})`
 	);
 
-	const patientId = await seedPatients(patientUid, nutriUid);
-	await seedAppointments(patientId, patientUid, nutriUid);
+	const patientId = await seedPatients(patientUid, professionalUid);
+	await seedAppointments(patientId, patientUid, professionalUid);
 
 	log('Emulator seed completed');
 }

@@ -19,7 +19,7 @@ service cloud.firestore {
     }
 
     function isClinicRole() {
-      return isSignedIn() && (role() == 'clinic_admin' || role() == 'nutri' || role() == 'staff');
+      return isSignedIn() && (role() == 'clinic_admin' || role() == 'professional' || role() == 'staff');
     }
 
     function isPatient() {

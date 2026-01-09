@@ -44,7 +44,7 @@ function buildTestApp() {
 	app.get(
 		'/clinic-only',
 		mockAuth({}),
-		requireRole('clinic_admin', 'nutri', 'staff'),
+		requireRole('clinic_admin', 'professional', 'staff'),
 		requireClinicContext,
 		(_req, res) => {
 			res.status(200).json({ success: true });
@@ -52,9 +52,9 @@ function buildTestApp() {
 	);
 
 	app.get(
-		'/nutri-only',
+		'/professional-only',
 		mockAuth({ role: 'clinic_admin', clinicId: 'c1' }),
-		requireRole('nutri'),
+		requireRole('professional'),
 		(_req, res) => {
 			res.status(200).json({ success: true });
 		}
@@ -96,8 +96,8 @@ async function run() {
 	assert.equal(clinicNoClaim.status, 403);
 	assert.equal(clinicNoClaim.body.message, 'Forbidden');
 
-	// Wrong role for nutri route
-	const wrongRole = await request(app).get('/nutri-only');
+	// Wrong role for professional route
+	const wrongRole = await request(app).get('/professional-only');
 	assert.equal(wrongRole.status, 403);
 	assert.equal(wrongRole.body.message, 'Forbidden');
 

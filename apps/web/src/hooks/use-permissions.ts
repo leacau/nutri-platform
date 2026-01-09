@@ -39,7 +39,7 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
   },
   staff: {
     canViewSettings: false,
-    canManageClinicUsers: false,
+    canManageClinicUsers: true,
     canManagePatients: true,
     canAssignAnyPatient: true,
     canSeeAllAppointments: true,
@@ -47,7 +47,7 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
     canViewAudit: false,
     canScheduleForOthers: true,
   },
-  nutri: {
+  professional: {
     canViewSettings: false,
     canManageClinicUsers: false,
     canManagePatients: true,

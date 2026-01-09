@@ -1,4 +1,4 @@
-export type ClinicRole = 'clinic_admin' | 'nutri' | 'staff';
+export type ClinicRole = 'clinic_admin' | 'professional' | 'staff';
 
 // Agregamos rol del portal
 export type PortalRole = 'patient';

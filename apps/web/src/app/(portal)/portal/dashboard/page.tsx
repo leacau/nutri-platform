@@ -34,7 +34,9 @@ export default function PortalDashboardPage() {
             <div>
               <p className="text-sm text-muted-foreground">Fecha</p>
               <p className="text-xl font-semibold">{formatDate(nextAppointment.scheduledFor || "")}</p>
-              <p className="text-sm text-muted-foreground">Nutri asignado: {nextAppointment.nutriId}</p>
+              <p className="text-sm text-muted-foreground">
+                Profesional asignado: {nextAppointment.professionalUid}
+              </p>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No tenés turnos programados.</p>
@@ -52,7 +54,9 @@ export default function PortalDashboardPage() {
         <CardContent className="space-y-2">
           <p className="text-sm">Nombre: {patientQuery.data?.name ?? "—"}</p>
           <p className="text-sm">Email: {patientQuery.data?.email ?? "—"}</p>
-          <p className="text-sm">Nutricionista: {patientQuery.data?.assignedNutriId ?? "—"}</p>
+          <p className="text-sm">
+            Profesionales: {patientQuery.data?.assignedProfessionalUids?.join(", ") ?? "—"}
+          </p>
         </CardContent>
       </Card>
     </div>

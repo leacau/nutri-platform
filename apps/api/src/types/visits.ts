@@ -3,7 +3,7 @@ import type { Timestamp } from 'firebase-admin/firestore';
 export type VisitDoc = {
 	clinicId: string;
 	patientId: string;
-	nutriUid: string;
+	professionalUid: string;
 	appointmentId: string | null;
 	date: Timestamp;
 	reason: string | null;

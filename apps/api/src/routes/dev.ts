@@ -17,7 +17,7 @@ const seedSchema = z.object({
 		z.object({
 			uid: z.string().min(1),
 			email: z.string().optional().nullable(),
-			roleInClinic: z.enum(['clinic_admin', 'nutri', 'staff']),
+			roleInClinic: z.enum(['clinic_admin', 'professional', 'staff']),
 			isActive: z.boolean().optional(),
 		})
 	),
@@ -28,7 +28,7 @@ const seedSchema = z.object({
 				email: z.string().optional().nullable(),
 				phone: z.string().optional().nullable(),
 				linkedUid: z.string().optional().nullable(),
-				assignedNutriUid: z.string().optional().nullable(),
+				assignedProfessionalUids: z.array(z.string()).optional().nullable(),
 			})
 		)
 		.optional(),
@@ -119,7 +119,8 @@ router.post('/seed', async (req: Request, res: Response) => {
 					email: p.email ?? null,
 					phone: p.phone ?? null,
 					linkedUid: p.linkedUid ?? null,
-					assignedNutriUid: p.assignedNutriUid ?? null,
+					assignedProfessionalUids: p.assignedProfessionalUids ?? [],
+					userId: null,
 					status: 'active',
 					createdAt: now,
 					updatedAt: now,

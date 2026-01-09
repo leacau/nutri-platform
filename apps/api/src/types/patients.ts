@@ -2,7 +2,8 @@ import type { Timestamp } from 'firebase-admin/firestore';
 
 export type PatientDoc = {
 	clinicId: string;
-	assignedNutriUid: string | null;
+	assignedProfessionalUids: string[];
+	userId: string | null;
 	dni: number;
 	name: string;
 	email: string | null;

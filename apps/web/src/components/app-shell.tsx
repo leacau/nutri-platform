@@ -23,11 +23,11 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/app/dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { label: "Pacientes", href: "/app/patients", icon: <Users className="h-4 w-4" />, roles: ["clinic_admin", "staff", "nutri"] },
-  { label: "Turnos", href: "/app/appointments", icon: <CalendarClock className="h-4 w-4" />, roles: ["clinic_admin", "staff", "nutri"] },
-  { label: "Nutricionistas", href: "/app/nutritionists", icon: <UserCircle className="h-4 w-4" />, roles: ["clinic_admin"] },
+  { label: "Pacientes", href: "/app/patients", icon: <Users className="h-4 w-4" />, roles: ["clinic_admin", "staff", "professional"] },
+  { label: "Turnos", href: "/app/appointments", icon: <CalendarClock className="h-4 w-4" />, roles: ["clinic_admin", "staff", "professional"] },
+  { label: "Profesionales", href: "/app/nutritionists", icon: <UserCircle className="h-4 w-4" />, roles: ["clinic_admin", "staff"] },
   { label: "Staff", href: "/app/staff", icon: <Users className="h-4 w-4" />, roles: ["clinic_admin"] },
-  { label: "Plantillas", href: "/app/templates", icon: <FileText className="h-4 w-4" />, roles: ["clinic_admin", "staff", "nutri"] },
+  { label: "Plantillas", href: "/app/templates", icon: <FileText className="h-4 w-4" />, roles: ["clinic_admin", "staff", "professional"] },
   { label: "Auditoría", href: "/app/audit", icon: <Shield className="h-4 w-4" />, roles: ["clinic_admin", "platform_admin"] },
   { label: "Configuración", href: "/app/clinic-settings", icon: <Settings className="h-4 w-4" />, roles: ["clinic_admin"] },
   { label: "Portal paciente", href: "/portal/dashboard", icon: <ClipboardList className="h-4 w-4" />, roles: ["patient"] },

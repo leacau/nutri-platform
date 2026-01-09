@@ -15,7 +15,7 @@ const router = Router();
 
 const createPlanSchema = z.object({
 	patientId: z.string().min(1),
-	nutriUid: z.string().min(1),
+	professionalUid: z.string().min(1).optional(),
 	type: z.string().min(1),
 	caloriesTarget: z.number().optional().nullable(),
 	macros: z
@@ -36,7 +36,7 @@ router.post(
 	'/',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri'),
+	requireRole('clinic_admin', 'professional'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId ?? req.header('x-clinic-id') ?? null;
@@ -52,10 +52,16 @@ router.post(
 		if (!patient) return res.status(404).json({ success: false, message: 'Patient not found in clinic' });
 
 		const now = Timestamp.now();
+		const professionalUid =
+			auth.role === 'professional'
+				? auth.uid
+				: parsed.data.professionalUid ??
+					(patient.assignedProfessionalUids ?? [])[0] ??
+					auth.uid;
 		const plan: NutritionPlanDoc = {
 			clinicId,
 			patientId: patient.id,
-			nutriUid: parsed.data.nutriUid,
+			professionalUid,
 			type: parsed.data.type,
 			caloriesTarget: parsed.data.caloriesTarget ?? null,
 			macros: parsed.data.macros
@@ -95,7 +101,7 @@ router.get(
 	'/:patientId/active',
 	authMiddleware,
 	requireClinicContext,
-	requireRole('clinic_admin', 'nutri', 'patient', 'platform_admin'),
+	requireRole('clinic_admin', 'professional', 'patient', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.isPlatformAdmin ? auth.clinicId ?? req.header('x-clinic-id') ?? null : auth.clinicId;

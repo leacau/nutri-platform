@@ -90,7 +90,7 @@ type DashboardProps = {
 	apptManualSlot: string;
 	setApptManualSlot: Dispatch<SetStateAction<string>>;
 	handleLoadSlots: (
-		nutriUid?: string,
+		professionalUid?: string,
 		range?: { fromIso?: string | null; toIso?: string | null }
 	) => Promise<void>;
 	handleRequestAppointment: () => Promise<void>;
@@ -206,7 +206,8 @@ export default function Dashboard({
 	auditRefs,
 }: DashboardProps) {
 	const role = claims.role;
-	const canClinic = role === 'clinic_admin' || role === 'nutri' || role === 'staff';
+	const canClinic =
+		role === 'clinic_admin' || role === 'professional' || role === 'staff';
 	const isPlatform = role === 'platform_admin';
 	const isPatient = role === 'patient';
 	const displayEmail = maskEmail(user?.email ?? null, copy.dashboard.unknownEmail);
@@ -873,7 +874,7 @@ export default function Dashboard({
 							const appt = a as Record<string, unknown>;
 							const appointmentId = (appt.id as string) ?? undefined;
 							const appointmentKey = appointmentId ?? String(idx);
-							const appointmentNutri = (appt.nutriUid as string) ?? '';
+							const appointmentNutri = (appt.professionalUid as string) ?? '';
 							const appointmentPatientUid = appt.patientUid as string | undefined;
 							const appointmentPatientId =
 								(appt.patientId as string) ?? appointmentPatientUid ?? '—';
@@ -886,10 +887,13 @@ export default function Dashboard({
 									nutri: appointmentNutri || apptRequestNutriUid || '',
 								};
 							const canSchedule =
-								role === 'nutri' ||
+								role === 'professional' ||
 								role === 'clinic_admin' ||
 								(role === 'patient' && appointmentPatientUid === user?.uid);
-							const canComplete = role === 'nutri' || role === 'clinic_admin' || role === 'platform_admin';
+							const canComplete =
+								role === 'professional' ||
+								role === 'clinic_admin' ||
+								role === 'platform_admin';
 							const lockNutri = role === 'patient';
 							const status: string = appointmentStatus;
 							const statusTone =
@@ -1156,7 +1160,7 @@ export default function Dashboard({
 			)}
 		</div>
 
-		{(role === 'clinic_admin' || role === 'nutri') && (
+		{(role === 'clinic_admin' || role === 'professional') && (
 			<div className='card'>
 				<h3>{copy.dashboard.clinicAvailability.title}</h3>
 				<p className='muted'>{copy.dashboard.clinicAvailability.description}</p>

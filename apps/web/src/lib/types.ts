@@ -1,6 +1,10 @@
 export type PlatformRole = "platform_admin" | null;
 
-export type ClinicMembershipRole = "clinic_admin" | "staff" | "nutri" | "patient";
+export type ClinicMembershipRole =
+  | "clinic_admin"
+  | "staff"
+  | "professional"
+  | "patient";
 
 export type Membership = {
   clinicId: string;
@@ -43,7 +47,7 @@ export type Patient = {
   birthDate?: string;
   address?: string;
   clinicId: string;
-  assignedNutriId?: string;
+  assignedProfessionalUids?: string[];
   linkedUid?: string;
   objective?: {
     objetivoPrincipal?: string;
@@ -69,7 +73,7 @@ export type Appointment = {
   clinicId: string;
   patientId: string;
   patientUid?: string;
-  nutriId: string;
+  professionalUid: string;
   status: AppointmentStatus;
   requestedAt: string;
   scheduledFor?: string;
