@@ -292,14 +292,4 @@ export const apiClient = {
 			token,
 			body: data,
 		}),
-
-	upsertUserProfile: (
-		data: { name: string; email?: string; dni?: string },
-		token?: string
-	) =>
-		request<{ uid: string }>('/users/self', {
-			method: 'POST',
-			token,
-			body: data,
-		}),
 };
