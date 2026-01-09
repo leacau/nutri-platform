@@ -44,11 +44,53 @@ function clinicScopedUnlessPlatformAdmin(
 	return requireClinicContext(req, res, next);
 }
 
+// Endpoint Lookup (Búsqueda por DNI)
+patientsRouter.get(
+	'/lookup',
+	requireClinicContext,
+	async (req: Request, res: Response) => {
+		const dniVal = parseInt(req.query.dni as string, 10);
+		if (isNaN(dniVal))
+			return res.status(400).json({ success: false, message: 'Invalid DNI' });
+
+		const db = getFirestoreDb();
+		const snap = await db
+			.collection('patients')
+			.where('dni', '==', dniVal)
+			.limit(1)
+			.get();
+
+		if (snap.empty) {
+			return res.status(200).json({ success: true, data: null });
+		}
+
+		const doc = snap.docs[0];
+		// FIX: Verificación explícita para TypeScript
+		if (!doc) {
+			return res.status(200).json({ success: true, data: null });
+		}
+
+		const data = doc.data() as PatientDoc;
+
+		return res.status(200).json({
+			success: true,
+			data: {
+				id: doc.id,
+				name: data.name,
+				email: data.email,
+				phone: data.phone,
+				clinicId: data.clinicId,
+				assignedNutriUid: data.assignedNutriUid,
+			},
+		});
+	}
+);
+
 patientsRouter.get(
 	'/',
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
-		const auth = req.auth!; // Garantizado por requireAuth
+		const auth = req.auth!;
 
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
@@ -180,16 +222,16 @@ patientsRouter.post(
 		}
 
 		const db = getFirestoreDb();
+		const dniVal = parseInt(parsed.data.dni, 10);
 
-		// 1. Verificar si ya existe un paciente con ese DNI
+		// Verificar DNI globalmente
 		const existingDniSnap = await db
 			.collection('patients')
-			.where('dni', '==', parsed.data.dni)
+			.where('dni', '==', dniVal)
 			.limit(1)
 			.get();
 
 		if (!existingDniSnap.empty) {
-			// CORRECCIÓN: Usar "!" para asegurar que el objeto existe, ya que checkeamos empty
 			const existingDoc = existingDniSnap.docs[0]!;
 			const existingData = existingDoc.data() as PatientDoc;
 
@@ -210,7 +252,7 @@ patientsRouter.post(
 			logEvent('patient_reassigned', {
 				req,
 				clinicId,
-				data: { patientId: existingDoc.id, dni: parsed.data.dni },
+				data: { patientId: existingDoc.id, dni: dniVal },
 			});
 
 			return res.status(200).json({
@@ -235,7 +277,7 @@ patientsRouter.post(
 			clinicId,
 			assignedNutriUid: assignedNutri ?? null,
 			name: parsed.data.name,
-			dni: parseInt(parsed.data.dni, 10),
+			dni: dniVal,
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
@@ -343,7 +385,6 @@ patientsRouter.patch(
 			}
 		}
 		if (parsed.data.status !== undefined && auth.role !== 'staff') {
-			// Cast to string first if Zod validates it as string, then to specific union type
 			update.status = parsed.data.status as
 				| 'active'
 				| 'inactive'
@@ -369,7 +410,7 @@ patientsRouter.patch(
 patientsRouter.post(
 	'/:id/assign-nutri',
 	requireClinicContext,
-	requireRole('clinic_admin', 'staff', 'platform_admin'),
+	requireRole('clinic_admin', 'staff', 'platform_admin', 'nutri'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId;
@@ -381,6 +422,11 @@ patientsRouter.post(
 			return res
 				.status(400)
 				.json({ success: false, message: 'Missing patient id' });
+
+		// Si es Nutri, forzamos asignación a sí mismo
+		if (auth.role === 'nutri') {
+			req.body.nutriUid = auth.uid;
+		}
 
 		const parsed = assignNutriSchema.safeParse(req.body);
 		if (!parsed.success) {

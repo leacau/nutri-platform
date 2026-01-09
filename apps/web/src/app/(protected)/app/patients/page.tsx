@@ -16,6 +16,7 @@ import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Select } from '../../../../components/ui/select';
 import { Textarea } from '../../../../components/ui/textarea';
+import { UserAccount } from '../../../../lib/types'; // Import agregado
 import { apiClient } from '../../../../lib/api-client';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
@@ -25,11 +26,14 @@ import { usePermissions } from '../../../../hooks/use-permissions';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-// Schema actualizado con DNI
 const patientSchema = z.object({
 	name: z.string().min(2, 'El nombre es requerido'),
-	dni: z.string().min(6, 'El DNI es requerido (mínimo 6 caracteres)'),
-	email: z.string().email().optional().or(z.literal('')),
+	dni: z
+		.string()
+		.min(7, 'El DNI debe tener al menos 7 dígitos')
+		.max(8, 'El DNI debe tener máximo 8 dígitos')
+		.regex(/^\d+$/, 'El DNI solo debe contener números'),
+	email: z.string().email('Email inválido').optional().or(z.literal('')),
 	phone: z.string().optional().or(z.literal('')),
 	sexo: z.enum(['male', 'female', 'other']),
 	birthDate: z.string().optional(),
@@ -67,10 +71,13 @@ export default function PatientsPage() {
 			);
 		},
 		onSuccess: (data) => {
-			// Invalida la lista para que aparezca el nuevo (o reasignado) paciente
 			qc.invalidateQueries({ queryKey: ['patients', activeClinicId] });
 			reset();
-			// Opcional: mostrar toast de éxito o reasignación
+			// FIX: data es Patient, no tiene message. Usamos un mensaje estático.
+			alert('Paciente guardado exitosamente');
+		},
+		onError: () => {
+			alert('Error al guardar paciente');
 		},
 	});
 
@@ -78,11 +85,33 @@ export default function PatientsPage() {
 		register,
 		handleSubmit,
 		reset,
+		setValue,
 		formState: { isSubmitting, errors },
 	} = useForm<PatientForm>({
 		resolver: zodResolver(patientSchema),
 		defaultValues: { sexo: 'female' },
 	});
+
+	const handleDniBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
+		const dniVal = e.target.value;
+		if (dniVal.length < 6 || !activeClinicId) return;
+
+		try {
+			const found = await apiClient.lookupPatient(
+				dniVal,
+				activeClinicId,
+				idToken ?? undefined
+			);
+			if (found) {
+				setValue('name', found.name);
+				alert(
+					`¡Paciente encontrado! ${found.name} ya existe. Al guardar, se asignará a esta clínica.`
+				);
+			}
+		} catch (error) {
+			console.error('Lookup failed', error);
+		}
+	};
 
 	const patients = useMemo(() => {
 		const list = patientsQuery.data || [];
@@ -129,7 +158,7 @@ export default function PatientsPage() {
 							className='w-56'
 						>
 							<option value='all'>Todos los nutris</option>
-							{nutrisQuery.data?.map((nutri) => (
+							{nutrisQuery.data?.map((nutri: UserAccount) => (
 								<option key={nutri.id} value={nutri.id}>
 									{nutri.name}
 								</option>
@@ -181,16 +210,15 @@ export default function PatientsPage() {
 						className='space-y-3'
 						onSubmit={handleSubmit((data) => mutation.mutateAsync(data))}
 					>
-						{/* CAMPO DNI AGREGADO */}
 						<div className='space-y-1'>
 							<Label>DNI / Identificación</Label>
 							<Input
-								placeholder='Número de documento'
+								placeholder='12345678'
 								{...register('dni')}
-								required
+								onBlur={handleDniBlur}
 							/>
 							{errors.dni && (
-								<span className='text-xs text-red-500'>
+								<span className='text-xs text-red-500 font-medium'>
 									{errors.dni.message}
 								</span>
 							)}
@@ -198,13 +226,9 @@ export default function PatientsPage() {
 
 						<div className='space-y-1'>
 							<Label>Nombre</Label>
-							<Input
-								placeholder='Nombre y apellido'
-								{...register('name')}
-								required
-							/>
+							<Input placeholder='Nombre y apellido' {...register('name')} />
 							{errors.name && (
-								<span className='text-xs text-red-500'>
+								<span className='text-xs text-red-500 font-medium'>
 									{errors.name.message}
 								</span>
 							)}
@@ -216,6 +240,11 @@ export default function PatientsPage() {
 								type='email'
 								{...register('email')}
 							/>
+							{errors.email && (
+								<span className='text-xs text-red-500 font-medium'>
+									{errors.email.message}
+								</span>
+							)}
 						</div>
 						<div className='space-y-1'>
 							<Label>Teléfono</Label>
@@ -238,7 +267,7 @@ export default function PatientsPage() {
 								<Label>Asignar a nutri</Label>
 								<Select {...register('assignedNutriId')}>
 									<option value=''>Sin asignar</option>
-									{nutrisQuery.data?.map((nutri) => (
+									{nutrisQuery.data?.map((nutri: UserAccount) => (
 										<option key={nutri.id} value={nutri.id}>
 											{nutri.name}
 										</option>

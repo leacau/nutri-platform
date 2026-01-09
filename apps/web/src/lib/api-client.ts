@@ -21,7 +21,6 @@ type RequestOptions<T> = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === 'true';
 
-// Helper para tipar la respuesta del backend { success: boolean, data: T }
 type ApiResponse<T> = {
 	success: boolean;
 	data: T;
@@ -65,8 +64,6 @@ async function request<T>(
 
 		const json = await res.json();
 
-		// IMPORTANTE: Desenvolver la respuesta del backend { success: true, data: ... }
-		// Si la respuesta tiene propiedad "data", devolvemos eso. Si es un array directo (mocks), lo devolvemos tal cual.
 		if (
 			json &&
 			typeof json === 'object' &&
@@ -85,24 +82,17 @@ async function request<T>(
 	}
 }
 
-// ... (El bloque mockDb puede quedar igual para fallbacks) ...
-// He recortado el mockDb aquí para brevedad, pero mantenelo en tu archivo.
 const mockDb: any = {
-	/* ... tu mockDb existente ... */
+	// Mocks originales si los tienes
 };
 
 export const apiClient = {
-	// CORRECCIÓN: Usar /session y mapear la respuesta a MeResponse
 	me: (token?: string) =>
 		request<any>('/session', {
 			token,
 			mockFallback: () => mockDb.me,
 		}).then((data) => {
-			// Adaptador: Backend /session -> Frontend MeResponse
-			// El backend devuelve { uid, email, staffClinics, patientClinics }
-			// El frontend espera { uid, email, memberships }
 			const memberships: Membership[] = [];
-
 			if (data.staffClinics) {
 				memberships.push(
 					...data.staffClinics.map((c: any) => ({
@@ -116,7 +106,7 @@ export const apiClient = {
 				memberships.push(
 					...data.patientClinics.map((c: any) => ({
 						clinicId: c.clinicId,
-						role: 'patient', // Rol implícito para pacientes
+						role: 'patient',
 						clinicName: c.clinicName || 'Clínica',
 					}))
 				);
@@ -130,27 +120,21 @@ export const apiClient = {
 			} as MeResponse;
 		}),
 
-	// CORRECCIÓN: Usar /clinics/mine y mapear a Clinic[]
 	clinics: (token?: string) =>
 		request<any>('/clinics/mine', {
 			token,
 			mockFallback: () => mockDb.clinics,
 		}).then((data) => {
-			// El endpoint /clinics/mine devuelve { clinics: [...] } dentro de data
-			// Ojo: request() ya desenvuelve el primer nivel "data" del { success, data }
-			// pero /clinics/mine devuelve { uid, clinics: [] } dentro de ese data.
 			const list = data.clinics || [];
 			return list.map((c: any) => ({
 				id: c.clinicId,
 				name: c.clinicName || c.clinicId,
-				branding: null, // El endpoint mine no devuelve branding por ahora
+				branding: null,
 			})) as Clinic[];
 		}),
 
-	// El resto de los endpoints parecen coincidir con la estructura estándar /api/...
 	clinicSettings: (clinicId: string, token?: string) =>
 		request<ClinicSettings>(`/clinics/${clinicId}`, {
-			// Ojo: backend no tiene GET /clinics/:id simple, puede fallar si no sos admin
 			token,
 			clinicId,
 			mockFallback: () => ({
@@ -158,10 +142,6 @@ export const apiClient = {
 				reminderPreferences: { whatsappEnabled: true, emailEnabled: true },
 			}),
 		}),
-
-	// ... resto de métodos (patients, appointments, etc) se mantienen igual ...
-	// Solo asegurate de que request() maneja el unwrap de { success: true, data: ... }
-	// como puse en la función request arriba.
 
 	saveClinicSettings: (
 		clinicId: string,
@@ -192,12 +172,22 @@ export const apiClient = {
 			},
 		}),
 
+	lookupPatient: (dni: string, clinicId: string, token?: string) =>
+		request<{ id: string; name: string; assignedNutriUid?: string } | null>(
+			`/patients/lookup?dni=${dni}&clinicId=${clinicId}`,
+			{
+				token,
+				clinicId,
+				mockFallback: () => null,
+			}
+		),
+
 	createPatient: (clinicId: string, data: Partial<Patient>, token?: string) =>
 		request<Patient>('/patients', {
 			method: 'POST',
 			token,
 			clinicId,
-			body: { ...data }, // Backend no espera clinicId en el body, lo toma del header/context
+			body: { ...data },
 			mockFallback: () => ({ id: 'mock-id', ...data } as Patient),
 		}),
 
@@ -214,20 +204,13 @@ export const apiClient = {
 		token?: string
 	) =>
 		request<Appointment>(`/appointments/${body.id || 'new'}/schedule`, {
-			// Backend espera POST /:id/schedule
-			method: 'POST', // Tu backend usa POST para schedule
+			method: 'POST',
 			token,
 			clinicId,
 			body,
 			mockFallback: () => ({ ...body } as Appointment),
 		}),
 
-	// Nota: Para crear un turno nuevo (request), el backend usa /appointments/request
-	// Si scheduleAppointment se usa para crear, hay que revisar el componente.
-	// El componente AppointmentsPage usa scheduleMutation para CREAR?
-	// Backend: POST /request (para paciente) o POST /:id/schedule (para agendar uno existente).
-
-	// IMPORTANTE: Agrego requestAppointment si falta, usado por portal
 	requestAppointment: (body: any, clinicId: string, token?: string) =>
 		request<Appointment>('/appointments/request', {
 			method: 'POST',
@@ -246,7 +229,6 @@ export const apiClient = {
 
 	templates: (clinicId: string, token?: string) =>
 		request<MessageTemplate[]>('/templates', {
-			// Backend no tiene /templates implementado en el código provisto
 			token,
 			clinicId,
 			mockFallback: () => [],
@@ -254,7 +236,6 @@ export const apiClient = {
 
 	audit: (clinicId: string, token?: string) =>
 		request<AuditEvent[]>('/audit', {
-			// Backend no tiene /audit implementado (logs solo a consola)
 			token,
 			clinicId,
 			mockFallback: () => [],
@@ -262,7 +243,6 @@ export const apiClient = {
 
 	nutris: (clinicId: string, token?: string) =>
 		request<UserAccount[]>(`/clinics/${clinicId}/members`, {
-			// Backend usa /members
 			token,
 			clinicId,
 			mockFallback: () => [],
@@ -274,4 +254,25 @@ export const apiClient = {
 			clinicId,
 			mockFallback: () => [],
 		}).then((members: any) => members.filter((m: any) => m.role === 'staff')),
+
+	lookupUser: (dni: string, token?: string) =>
+		request<{ uid: string; name: string; email: string } | null>(
+			'/clinics/lookup-user?dni=' + dni,
+			{
+				token,
+				mockFallback: () => null,
+			}
+		),
+
+	inviteMember: (
+		clinicId: string,
+		data: { name: string; email: string; dni: string; role: string },
+		token?: string
+	) =>
+		request<any>(`/clinics/${clinicId}/invite`, {
+			method: 'POST',
+			token,
+			clinicId,
+			body: data,
+		}),
 };

@@ -1,95 +1,194 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { UserPlus2 } from "lucide-react";
-import { useAuthedQuery } from "../../../../hooks/use-authed-query";
-import { apiClient } from "../../../../lib/api-client";
-import { RoleGuard } from "../../../../components/guards";
-import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
-import { Button } from "../../../../components/ui/button";
-import { Input } from "../../../../components/ui/input";
-import { Label } from "../../../../components/ui/label";
+import {
+	Card,
+	CardContent,
+	CardHeader,
+	CardTitle,
+} from '../../../../components/ui/card';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+import { Button } from '../../../../components/ui/button';
+import { Input } from '../../../../components/ui/input';
+import { Label } from '../../../../components/ui/label';
+import { RoleGuard } from '../../../../components/guards';
+import { UserAccount } from '../../../../lib/types'; // Import agregado
+import { UserPlus2 } from 'lucide-react';
+import { apiClient } from '../../../../lib/api-client';
+import { useAuth } from '../../../../providers/auth-provider';
+import { useAuthedQuery } from '../../../../hooks/use-authed-query';
+import { useClinic } from '../../../../providers/clinic-provider';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const inviteSchema = z.object({
+	name: z.string().min(2, 'El nombre es obligatorio'),
+	email: z.string().email('Email inválido'),
+	dni: z
+		.string()
+		.min(7, 'El DNI debe tener min 7 dígitos')
+		.max(8, 'El DNI debe tener max 8 dígitos')
+		.regex(/^\d+$/, 'Solo números'),
+});
+
+type InviteForm = z.infer<typeof inviteSchema>;
 
 export default function NutritionistsPage() {
-  const qc = useQueryClient();
-  const nutrisQuery = useAuthedQuery({
-    queryKey: ["nutris"],
-    queryFn: (token, clinicId) => apiClient.nutris(clinicId, token),
-  });
+	const qc = useQueryClient();
+	const { activeClinicId } = useClinic();
+	const { idToken } = useAuth();
 
-  const [form, setForm] = useState({ name: "", email: "" });
+	const nutrisQuery = useAuthedQuery({
+		queryKey: ['nutris', activeClinicId],
+		queryFn: (token, clinicId) => apiClient.nutris(clinicId, token),
+	});
 
-  const inviteMutation = useMutation({
-    mutationFn: async () => {
-      // placeholder - backend invite not defined
-      await new Promise((res) => setTimeout(res, 600));
-      return { ok: true };
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["nutris"] });
-      setForm({ name: "", email: "" });
-    },
-  });
+	const {
+		register,
+		handleSubmit,
+		reset,
+		setValue,
+		formState: { errors, isSubmitting },
+	} = useForm<InviteForm>({
+		resolver: zodResolver(inviteSchema),
+	});
 
-  return (
-    <RoleGuard allowed={["clinic_admin"]}>
-      <div className="space-y-6">
-        <div>
-          <p className="text-sm text-muted-foreground">Solo clinic_admin</p>
-          <h1 className="text-2xl font-semibold text-primary">Nutricionistas</h1>
-        </div>
+	const inviteMutation = useMutation({
+		mutationFn: async (data: InviteForm) => {
+			if (!activeClinicId) return;
+			return apiClient.inviteMember(
+				activeClinicId,
+				{ ...data, role: 'nutri' },
+				idToken || undefined
+			);
+		},
+		onSuccess: (data: any) => {
+			qc.invalidateQueries({ queryKey: ['nutris'] });
+			reset();
+			alert(data?.message || 'Nutricionista invitado/creado');
+		},
+		onError: () => alert('Error al invitar nutri'),
+	});
 
-        <div className="grid gap-6 lg:grid-cols-[1.3fr,1fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>Equipo de nutris</CardTitle>
-            </CardHeader>
-            <CardContent className="divide-y p-0">
-              {nutrisQuery.data?.map((nutri) => (
-                <div key={nutri.id} className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="font-semibold">{nutri.name}</p>
-                    <p className="text-xs text-muted-foreground">{nutri.email}</p>
-                  </div>
-                  <span className="text-xs text-muted-foreground capitalize">{nutri.role}</span>
-                </div>
-              ))}
-              {!nutrisQuery.data?.length ? <p className="p-4 text-sm text-muted-foreground">No hay nutris cargados.</p> : null}
-            </CardContent>
-          </Card>
+	const handleDniBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
+		const val = e.target.value;
+		if (val.length < 7) return;
+		try {
+			const user = await apiClient.lookupUser(val, idToken || undefined);
+			if (user) {
+				setValue('name', user.name);
+				setValue('email', user.email);
+				alert(`Usuario encontrado: ${user.name}. Se asignará como Nutri.`);
+			}
+		} catch (e) {
+			console.error(e);
+		}
+	};
 
-          <Card className="self-start border-primary/10 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <UserPlus2 className="h-4 w-4" />
-                Invitar nutri
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <Label>Nombre</Label>
-                  <Input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="Nombre" />
-                </div>
-                <div className="space-y-1">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={form.email}
-                    onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-                    placeholder="nutri@clinica.com"
-                  />
-                </div>
-                <Button className="w-full" onClick={() => inviteMutation.mutate()} disabled={inviteMutation.isPending}>
-                  Enviar invitación
-                </Button>
-                {inviteMutation.error ? <p className="text-sm text-destructive">No pudimos enviar la invitación.</p> : null}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </RoleGuard>
-  );
+	return (
+		<RoleGuard allowed={['clinic_admin']}>
+			<div className='space-y-6'>
+				<div>
+					<p className='text-sm text-muted-foreground'>Solo clinic_admin</p>
+					<h1 className='text-2xl font-semibold text-primary'>
+						Nutricionistas
+					</h1>
+				</div>
+
+				<div className='grid gap-6 lg:grid-cols-[1.3fr,1fr]'>
+					<Card>
+						<CardHeader>
+							<CardTitle>Equipo de nutris</CardTitle>
+						</CardHeader>
+						<CardContent className='divide-y p-0'>
+							{nutrisQuery.data?.map((nutri: UserAccount) => (
+								<div
+									key={nutri.id}
+									className='flex items-center justify-between p-4'
+								>
+									<div>
+										<p className='font-semibold'>{nutri.name}</p>
+										<p className='text-xs text-muted-foreground'>
+											{nutri.email}
+										</p>
+									</div>
+									<span className='text-xs text-muted-foreground capitalize'>
+										{nutri.role}
+									</span>
+								</div>
+							))}
+							{!nutrisQuery.data?.length ? (
+								<p className='p-4 text-sm text-muted-foreground'>
+									No hay nutris cargados.
+								</p>
+							) : null}
+						</CardContent>
+					</Card>
+
+					<Card className='self-start border-primary/10 shadow-lg'>
+						<CardHeader>
+							<CardTitle className='flex items-center gap-2 text-lg'>
+								<UserPlus2 className='h-4 w-4' />
+								Invitar nutri
+							</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<form
+								onSubmit={handleSubmit((d) => inviteMutation.mutate(d))}
+								className='space-y-3'
+							>
+								<div className='space-y-1'>
+									<Label>DNI</Label>
+									<Input
+										placeholder='12345678'
+										{...register('dni')}
+										onBlur={handleDniBlur}
+									/>
+									{errors.dni && (
+										<p className='text-xs text-red-500'>{errors.dni.message}</p>
+									)}
+								</div>
+
+								<div className='space-y-1'>
+									<Label>Nombre</Label>
+									<Input
+										value={undefined}
+										placeholder='Nombre'
+										{...register('name')}
+									/>
+									{errors.name && (
+										<p className='text-xs text-red-500'>
+											{errors.name.message}
+										</p>
+									)}
+								</div>
+								<div className='space-y-1'>
+									<Label>Email</Label>
+									<Input
+										type='email'
+										value={undefined}
+										placeholder='nutri@clinica.com'
+										{...register('email')}
+									/>
+									{errors.email && (
+										<p className='text-xs text-red-500'>
+											{errors.email.message}
+										</p>
+									)}
+								</div>
+								<Button
+									className='w-full'
+									type='submit'
+									disabled={isSubmitting}
+								>
+									Enviar invitación
+								</Button>
+							</form>
+						</CardContent>
+					</Card>
+				</div>
+			</div>
+		</RoleGuard>
+	);
 }
