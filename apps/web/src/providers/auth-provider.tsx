@@ -18,7 +18,7 @@ type AuthContextValue = {
   loading: boolean;
   refreshToken: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
-  registerWithEmail: (email: string, password: string) => Promise<void>;
+  registerWithEmail: (email: string, password: string) => Promise<string>;
   loginWithGoogle: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -62,10 +62,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const registerWithEmail = useCallback(
     async (email: string, password: string) => {
-      await createUserWithEmailAndPassword(auth, email, password);
-      await refreshToken();
+      const credentials = await createUserWithEmailAndPassword(auth, email, password);
+      const token = await credentials.user.getIdToken();
+      setIdToken(token);
+      return token;
     },
-    [auth, refreshToken],
+    [auth],
   );
 
   const loginWithGoogle = useCallback(async () => {

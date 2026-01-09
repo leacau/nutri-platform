@@ -12,11 +12,17 @@ import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { useAuth } from "../../../providers/auth-provider";
 import { useI18n } from "../../../providers/i18n-provider";
+import { apiClient } from "../../../lib/api-client";
 
 const schema = z.object({
   name: z.string().min(2, "Ingresá tu nombre"),
   email: z.string().email(),
   password: z.string().min(6),
+  dni: z
+    .string()
+    .min(7, "El DNI debe tener min 7 dígitos")
+    .max(8, "El DNI debe tener max 8 dígitos")
+    .regex(/^\d+$/, "Solo números"),
 });
 
 type RegisterForm = z.infer<typeof schema>;
@@ -37,7 +43,15 @@ export default function RegisterPage() {
   const onSubmit = async (data: RegisterForm) => {
     setError(null);
     try {
-      await registerWithEmail(data.email, data.password);
+      const token = await registerWithEmail(data.email, data.password);
+      await apiClient.upsertUserProfile(
+        {
+          name: data.name,
+          email: data.email,
+          dni: data.dni,
+        },
+        token,
+      );
       router.push("/select-clinic");
     } catch (err) {
       console.error(err);
@@ -68,6 +82,10 @@ export default function RegisterPage() {
         <div className="space-y-2">
           <Label htmlFor="password">{t("auth.password")}</Label>
           <Input id="password" placeholder="•••••••" type="password" {...register("password")} required />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="dni">DNI</Label>
+          <Input id="dni" placeholder="12345678" {...register("dni")} required />
         </div>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <Button type="submit" className="w-full" disabled={isSubmitting}>
