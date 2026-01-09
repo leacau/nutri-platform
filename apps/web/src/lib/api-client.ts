@@ -86,6 +86,16 @@ const mockDb: any = {
 	// ... mocks ...
 };
 
+export const upsertUserProfile = (
+	data: { name: string; email?: string; dni?: string },
+	token?: string
+) =>
+	request<{ uid: string }>('/users/self', {
+		method: 'POST',
+		token,
+		body: data,
+	});
+
 export const apiClient = {
 	me: (token?: string) =>
 		request<any>('/session', {
@@ -282,4 +292,16 @@ export const apiClient = {
 			clinicId,
 			body: data,
 		}),
+
+	createClinic: (
+		data: { name: string; admin: { name: string; email: string; dni: string } },
+		token?: string
+	) =>
+		request<{ clinicId: string; adminUid: string }>('/clinics', {
+			method: 'POST',
+			token,
+			body: data,
+		}),
+
+	upsertUserProfile,
 };

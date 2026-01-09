@@ -17,6 +17,15 @@ const inviteMemberSchema = z.object({
 	role: z.enum(['clinic_admin', 'professional', 'staff']),
 });
 
+const createClinicSchema = z.object({
+	name: z.string().min(2),
+	admin: z.object({
+		name: z.string().min(2),
+		email: z.string().email(),
+		dni: z.string().min(7).max(8),
+	}),
+});
+
 router.get(
 	'/lookup-user',
 	authMiddleware,
@@ -61,6 +70,89 @@ router.get(
 				name: data.name,
 				email: data.email,
 				dni: data.dni,
+			},
+		});
+	}
+);
+
+router.post(
+	'/',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const parsed = createClinicSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const db = getFirestoreDb();
+		const now = Timestamp.now();
+		const clinicRef = db.collection('clinics').doc();
+
+		await clinicRef.set({
+			name: parsed.data.name,
+			createdAt: now,
+			updatedAt: now,
+		});
+
+		const dniInt = parseInt(parsed.data.admin.dni, 10);
+		if (dniInt < 1000000 || dniInt > 99999999) {
+			return res.status(400).json({
+				success: false,
+				message: 'DNI must be between 1000000 and 99999999',
+			});
+		}
+
+		const userSnap = await db
+			.collection('users')
+			.where('dni', '==', dniInt)
+			.limit(1)
+			.get();
+
+		let uid: string;
+
+		if (!userSnap.empty) {
+			const userDoc = userSnap.docs[0];
+			if (!userDoc) throw new Error('Unexpected null doc');
+			uid = userDoc.id;
+			await userDoc.ref.update({
+				name: parsed.data.admin.name,
+				email: parsed.data.admin.email,
+				updatedAt: now,
+			});
+		} else {
+			const newUserRef = db.collection('users').doc();
+			uid = newUserRef.id;
+
+			await newUserRef.set({
+				email: parsed.data.admin.email,
+				dni: dniInt,
+				name: parsed.data.admin.name,
+				createdAt: now,
+				updatedAt: now,
+			});
+		}
+
+		await db.collection('clinic_memberships').add({
+			clinicId: clinicRef.id,
+			uid,
+			role: 'clinic_admin',
+			isActive: true,
+			createdAt: now,
+			updatedAt: now,
+			createdByUid: req.auth?.uid ?? null,
+		});
+
+		return res.status(201).json({
+			success: true,
+			message: 'Clinic created',
+			data: {
+				clinicId: clinicRef.id,
+				adminUid: uid,
 			},
 		});
 	}

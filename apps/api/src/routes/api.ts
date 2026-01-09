@@ -4,6 +4,7 @@ import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
 import { clinicsRouter } from './clinics.js';
 import { metricsRouter } from './metrics.js';
+import { usersRouter } from './users.js';
 import { logEvent } from '../observability/eventLogger.js';
 import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 // requireAuth ya no se necesita importar aquí explícitamente para montar subrutas,
@@ -63,6 +64,9 @@ apiRouter.use('/appointments', appointmentsRouter);
 
 // Clinics
 apiRouter.use('/clinics', clinicsRouter);
+
+// Users
+apiRouter.use('/users', usersRouter);
 
 // Metrics
 apiRouter.use('/metrics', metricsRouter);
