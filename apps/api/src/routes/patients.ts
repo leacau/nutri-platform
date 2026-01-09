@@ -44,53 +44,11 @@ function clinicScopedUnlessPlatformAdmin(
 	return requireClinicContext(req, res, next);
 }
 
-// Endpoint Lookup (Búsqueda por DNI)
-patientsRouter.get(
-	'/lookup',
-	requireClinicContext,
-	async (req: Request, res: Response) => {
-		const dniVal = parseInt(req.query.dni as string, 10);
-		if (isNaN(dniVal))
-			return res.status(400).json({ success: false, message: 'Invalid DNI' });
-
-		const db = getFirestoreDb();
-		const snap = await db
-			.collection('patients')
-			.where('dni', '==', dniVal)
-			.limit(1)
-			.get();
-
-		if (snap.empty) {
-			return res.status(200).json({ success: true, data: null });
-		}
-
-		const doc = snap.docs[0];
-		// FIX: Verificación explícita para TypeScript
-		if (!doc) {
-			return res.status(200).json({ success: true, data: null });
-		}
-
-		const data = doc.data() as PatientDoc;
-
-		return res.status(200).json({
-			success: true,
-			data: {
-				id: doc.id,
-				name: data.name,
-				email: data.email,
-				phone: data.phone,
-				clinicId: data.clinicId,
-				assignedNutriUid: data.assignedNutriUid,
-			},
-		});
-	}
-);
-
 patientsRouter.get(
 	'/',
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
-		const auth = req.auth!;
+		const auth = req.auth!; // Garantizado por requireAuth
 
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
@@ -222,9 +180,10 @@ patientsRouter.post(
 		}
 
 		const db = getFirestoreDb();
-		const dniVal = parseInt(parsed.data.dni, 10);
+		const dniVal = parseInt(parsed.data.dni, 10); // Parseamos una sola vez
 
-		// Verificar DNI globalmente
+		// 1. Verificar si ya existe un paciente con ese DNI (Global check)
+		// CORRECCIÓN: Usar dniVal (number) en lugar de parsed.data.dni (string) para que coincida con la BBDD
 		const existingDniSnap = await db
 			.collection('patients')
 			.where('dni', '==', dniVal)
@@ -232,6 +191,7 @@ patientsRouter.post(
 			.get();
 
 		if (!existingDniSnap.empty) {
+			// CORRECCIÓN: Usar "!" para asegurar que el objeto existe, ya que checkeamos empty
 			const existingDoc = existingDniSnap.docs[0]!;
 			const existingData = existingDoc.data() as PatientDoc;
 
@@ -243,6 +203,7 @@ patientsRouter.post(
 				updateData.assignedNutriUid = auth.uid;
 			}
 
+			// Lógica de "robar" o reasignar paciente a la clínica actual
 			if (existingData.clinicId !== clinicId) {
 				updateData.clinicId = clinicId;
 			}
@@ -277,7 +238,7 @@ patientsRouter.post(
 			clinicId,
 			assignedNutriUid: assignedNutri ?? null,
 			name: parsed.data.name,
-			dni: dniVal,
+			dni: dniVal, // Guardamos como número
 			email: parsed.data.email ?? null,
 			phone: parsed.data.phone ?? null,
 			linkedUid: null,
@@ -410,7 +371,7 @@ patientsRouter.patch(
 patientsRouter.post(
 	'/:id/assign-nutri',
 	requireClinicContext,
-	requireRole('clinic_admin', 'staff', 'platform_admin', 'nutri'),
+	requireRole('clinic_admin', 'staff', 'platform_admin'),
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
 		const clinicId = auth.clinicId;
@@ -422,11 +383,6 @@ patientsRouter.post(
 			return res
 				.status(400)
 				.json({ success: false, message: 'Missing patient id' });
-
-		// Si es Nutri, forzamos asignación a sí mismo
-		if (auth.role === 'nutri') {
-			req.body.nutriUid = auth.uid;
-		}
 
 		const parsed = assignNutriSchema.safeParse(req.body);
 		if (!parsed.success) {
