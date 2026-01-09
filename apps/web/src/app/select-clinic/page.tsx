@@ -1,6 +1,6 @@
 'use client';
 
-import { Building2, CheckCircle2 } from 'lucide-react';
+import { Building2, CheckCircle2, Hospital } from 'lucide-react';
 import {
 	Card,
 	CardContent,
@@ -13,15 +13,35 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AuthGuard } from './../../components/guards';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Protected } from '../../components/guards';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import { useAuth } from '../../providers/auth-provider';
 import { useClinic } from '../../providers/clinic-provider';
 import { useEffect } from 'react';
 import { useI18n } from '../../providers/i18n-provider';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '../../lib/api-client';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const createClinicSchema = z.object({
+	name: z.string().min(2, 'El nombre es obligatorio'),
+	adminName: z.string().min(2, 'El nombre es obligatorio'),
+	adminEmail: z.string().email('Email inválido'),
+	adminDni: z
+		.string()
+		.min(7, 'El DNI debe tener min 7 dígitos')
+		.max(8, 'El DNI debe tener max 8 dígitos')
+		.regex(/^\d+$/, 'Solo números'),
+});
+
+type CreateClinicForm = z.infer<typeof createClinicSchema>;
 
 export default function SelectClinicPage() {
+	const qc = useQueryClient();
 	const { clinics, me, setActiveClinic, activeClinicId } = useClinic();
-	const { logout } = useAuth();
+	const { logout, idToken } = useAuth();
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const { t } = useI18n();
@@ -40,6 +60,39 @@ export default function SelectClinicPage() {
 
 	const roleLabel = (clinicId: string) =>
 		me?.memberships.find((m) => m.clinicId === clinicId)?.role;
+
+	const isPlatformAdmin = me?.platformRole === 'platform_admin';
+
+	const {
+		register,
+		handleSubmit,
+		reset,
+		formState: { errors, isSubmitting },
+	} = useForm<CreateClinicForm>({
+		resolver: zodResolver(createClinicSchema),
+	});
+
+	const createClinicMutation = useMutation({
+		mutationFn: async (data: CreateClinicForm) =>
+			apiClient.createClinic(
+				{
+					name: data.name,
+					admin: {
+						name: data.adminName,
+						email: data.adminEmail,
+						dni: data.adminDni,
+					},
+				},
+				idToken || undefined
+			),
+		onSuccess: (data) => {
+			qc.invalidateQueries({ queryKey: ['clinics'] });
+			reset();
+			setActiveClinic(data.clinicId);
+			router.push(next);
+		},
+		onError: () => alert('Error al crear la clínica'),
+	});
 
 	return (
 		<AuthGuard>
@@ -86,6 +139,74 @@ export default function SelectClinicPage() {
 						</Card>
 					))}
 				</div>
+				{isPlatformAdmin ? (
+					<Card className='mt-8 border-primary/10 shadow-lg'>
+						<CardHeader>
+							<CardTitle className='flex items-center gap-2 text-lg'>
+								<Hospital className='h-4 w-4' />
+								Crear clínica y admin
+							</CardTitle>
+							<CardDescription>
+								Registrá una nueva clínica y asigná su clinic_admin.
+							</CardDescription>
+						</CardHeader>
+						<CardContent>
+							<form
+								onSubmit={handleSubmit((data) =>
+									createClinicMutation.mutate(data)
+								)}
+								className='grid gap-4 md:grid-cols-2'
+							>
+								<div className='space-y-1 md:col-span-2'>
+									<Label>Nombre de la clínica</Label>
+									<Input placeholder='Clínica Central' {...register('name')} />
+									{errors.name && (
+										<p className='text-xs text-red-500'>{errors.name.message}</p>
+									)}
+								</div>
+								<div className='space-y-1'>
+									<Label>Nombre del admin</Label>
+									<Input
+										placeholder='Nombre y apellido'
+										{...register('adminName')}
+									/>
+									{errors.adminName && (
+										<p className='text-xs text-red-500'>
+											{errors.adminName.message}
+										</p>
+									)}
+								</div>
+								<div className='space-y-1'>
+									<Label>Email del admin</Label>
+									<Input
+										type='email'
+										placeholder='admin@clinica.com'
+										{...register('adminEmail')}
+									/>
+									{errors.adminEmail && (
+										<p className='text-xs text-red-500'>
+											{errors.adminEmail.message}
+										</p>
+									)}
+								</div>
+								<div className='space-y-1'>
+									<Label>DNI del admin</Label>
+									<Input placeholder='12345678' {...register('adminDni')} />
+									{errors.adminDni && (
+										<p className='text-xs text-red-500'>
+											{errors.adminDni.message}
+										</p>
+									)}
+								</div>
+								<div className='flex items-end md:col-span-2'>
+									<Button type='submit' disabled={isSubmitting}>
+										Crear clínica
+									</Button>
+								</div>
+							</form>
+						</CardContent>
+					</Card>
+				) : null}
 				{!clinics?.length ? (
 					<div className='mt-8 rounded-xl border border-dashed p-6 text-center text-muted-foreground'>
 						No encontramos clínicas disponibles para tu usuario.
