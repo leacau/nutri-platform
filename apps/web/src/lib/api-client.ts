@@ -302,6 +302,4 @@ export const apiClient = {
 			token,
 			body: data,
 		}),
-
-	upsertUserProfile,
 };

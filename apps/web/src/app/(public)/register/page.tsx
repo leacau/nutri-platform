@@ -12,7 +12,7 @@ import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { useAuth } from "../../../providers/auth-provider";
 import { useI18n } from "../../../providers/i18n-provider";
-import { upsertUserProfile } from "../../../lib/api-client";
+import { apiClient } from "../../../lib/api-client";
 
 const schema = z.object({
   name: z.string().min(2, "Ingresá tu nombre"),
@@ -44,7 +44,7 @@ export default function RegisterPage() {
     setError(null);
     try {
       const token = await registerWithEmail(data.email, data.password);
-      await upsertUserProfile(
+      await apiClient.upsertUserProfile(
         {
           name: data.name,
           email: data.email,
