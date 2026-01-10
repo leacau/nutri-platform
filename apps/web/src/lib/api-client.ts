@@ -11,7 +11,7 @@ import {
 } from './types';
 
 type RequestOptions<T> = {
-	method?: 'GET' | 'POST' | 'PATCH';
+	method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 	body?: unknown;
 	token?: string;
 	clinicId?: string;
@@ -86,17 +86,18 @@ const mockDb: any = {
 	// ... mocks ...
 };
 
-export const upsertUserProfile = (
-	data: { name: string; email?: string; dni?: string },
-	token?: string
-) =>
-	request<{ uid: string }>('/users/self', {
-		method: 'POST',
-		token,
-		body: data,
-	});
-
 export const apiClient = {
+	// ✅ FIX: ahora existe como método de apiClient (como lo usa register/page.tsx)
+	upsertUserProfile: (
+		data: { name: string; email?: string; dni?: string },
+		token?: string
+	) =>
+		request<{ uid: string }>('/users/self', {
+			method: 'POST',
+			token,
+			body: data,
+		}),
+
 	me: (token?: string) =>
 		request<any>('/session', {
 			token,

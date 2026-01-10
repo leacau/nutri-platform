@@ -34,15 +34,15 @@ router.get(
 		if (!dniStr)
 			return res.status(400).json({ success: false, message: 'Missing dni' });
 
-	const dni = parseInt(dniStr, 10);
-	if (isNaN(dni))
-		return res.status(400).json({ success: false, message: 'Invalid dni' });
-	if (dni < 1000000 || dni > 99999999) {
-		return res.status(400).json({
-			success: false,
-			message: 'DNI must be between 1000000 and 99999999',
-		});
-	}
+		const dni = parseInt(dniStr, 10);
+		if (isNaN(dni))
+			return res.status(400).json({ success: false, message: 'Invalid dni' });
+		if (dni < 1000000 || dni > 99999999) {
+			return res.status(400).json({
+				success: false,
+				message: 'DNI must be between 1000000 and 99999999',
+			});
+		}
 
 		const db = getFirestoreDb();
 		const snap = await db
@@ -249,13 +249,11 @@ router.post(
 			};
 			const ref = db.collection('clinic_memberships').doc();
 			await ref.set(doc);
-			return res
-				.status(201)
-				.json({
-					success: true,
-					message: 'Member added',
-					data: { id: ref.id, ...doc },
-				});
+			return res.status(201).json({
+				success: true,
+				message: 'Member added',
+				data: { id: ref.id, ...doc },
+			});
 		}
 
 		const doc = existing.docs[0];
@@ -297,13 +295,11 @@ router.post(
 
 		const parsed = inviteMemberSchema.safeParse(req.body);
 		if (!parsed.success) {
-			return res
-				.status(400)
-				.json({
-					success: false,
-					message: 'Datos inválidos',
-					errors: parsed.error.flatten(),
-				});
+			return res.status(400).json({
+				success: false,
+				message: 'Datos inválidos',
+				errors: parsed.error.flatten(),
+			});
 		}
 
 		const db = getFirestoreDb();
@@ -362,12 +358,10 @@ router.post(
 					updatedAt: now,
 				});
 			}
-			return res
-				.status(200)
-				.json({
-					success: true,
-					message: 'Usuario existente asignado a la clínica.',
-				});
+			return res.status(200).json({
+				success: true,
+				message: 'Usuario existente asignado a la clínica.',
+			});
 		} else {
 			await db.collection('clinic_memberships').add({
 				clinicId,
@@ -378,12 +372,10 @@ router.post(
 				updatedAt: now,
 				createdByUid: req.auth?.uid,
 			});
-			return res
-				.status(201)
-				.json({
-					success: true,
-					message: 'Usuario invitado/creado y asignado.',
-				});
+			return res.status(201).json({
+				success: true,
+				message: 'Usuario invitado/creado y asignado.',
+			});
 		}
 	}
 );

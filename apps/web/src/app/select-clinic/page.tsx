@@ -8,6 +8,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from '../../components/ui/card';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { AuthGuard } from './../../components/guards';
@@ -15,13 +16,12 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../providers/auth-provider';
 import { useClinic } from '../../providers/clinic-provider';
 import { useEffect } from 'react';
-import { useI18n } from '../../providers/i18n-provider';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../../lib/api-client';
 import { useForm } from 'react-hook-form';
+import { useI18n } from '../../providers/i18n-provider';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
@@ -161,7 +161,9 @@ export default function SelectClinicPage() {
 									<Label>Nombre de la clínica</Label>
 									<Input placeholder='Clínica Central' {...register('name')} />
 									{errors.name && (
-										<p className='text-xs text-red-500'>{errors.name.message}</p>
+										<p className='text-xs text-red-500'>
+											{errors.name.message}
+										</p>
 									)}
 								</div>
 								<div className='space-y-1'>
