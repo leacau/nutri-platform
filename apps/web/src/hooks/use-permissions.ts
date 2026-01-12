@@ -92,5 +92,5 @@ export function usePermissions(): PermissionSet {
 		if (!role) return defaultPermissions;
 
 		return permsByRole[role] ?? defaultPermissions;
-	}, [activeMembership?.role, platformRole]);
+	}, [activeMembership, platformRole]);
 }

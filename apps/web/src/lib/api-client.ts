@@ -27,6 +27,22 @@ type ApiResponse<T> = {
 	message?: string;
 };
 
+function joinUrl(base: string, path: string): string {
+	// Base puede venir como "https://.../api" o "/api"
+	// Path suele venir como "/session"
+	const b = base.endsWith('/') ? base.slice(0, -1) : base;
+	const p = path.startsWith('/') ? path : `/${path}`;
+	return `${b}${p}`;
+}
+
+async function safeReadText(res: Response): Promise<string> {
+	try {
+		return await res.text();
+	} catch {
+		return '';
+	}
+}
+
 async function request<T>(
 	path: string,
 	options: RequestOptions<T> = {}
@@ -43,7 +59,7 @@ async function request<T>(
 		headers.set('X-Clinic-Id', options.clinicId);
 	}
 
-	const url = `${API_BASE}${path}`;
+	const url = joinUrl(API_BASE, path);
 
 	try {
 		const res = await fetch(url, {
@@ -56,10 +72,24 @@ async function request<T>(
 		if (res.status === 403) throw new Error('forbidden');
 
 		if (!res.ok) {
-			if (USE_MOCKS && options.mockFallback)
+			if (USE_MOCKS && options.mockFallback) {
 				return await options.mockFallback();
-			const text = await res.text();
-			throw new Error(text || 'Request failed');
+			}
+
+			const text = await safeReadText(res);
+			// Si el backend devuelve JSON error, lo mostramos
+			// Si devuelve text/plain (Cloud Run), también
+			throw new Error(
+				text || `Request failed: ${res.status} ${res.statusText}`
+			);
+		}
+
+		// Algunas respuestas pueden no ser JSON (pero en tu API casi todo es JSON)
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json')) {
+			// fallback: devolvemos texto como any
+			const text = await safeReadText(res);
+			return text as unknown as T;
 		}
 
 		const json = await res.json();
@@ -70,7 +100,7 @@ async function request<T>(
 			'success' in json &&
 			'data' in json
 		) {
-			return json.data as T;
+			return (json as ApiResponse<T>).data as T;
 		}
 
 		return json as T;
@@ -87,7 +117,7 @@ const mockDb: any = {
 };
 
 export const apiClient = {
-	// ✅ FIX: ahora existe como método de apiClient (como lo usa register/page.tsx)
+	// ✅ FIX: existe como método de apiClient (como lo usa register/page.tsx)
 	upsertUserProfile: (
 		data: { name: string; email?: string; dni?: string },
 		token?: string
@@ -104,6 +134,7 @@ export const apiClient = {
 			mockFallback: () => mockDb.me,
 		}).then((data) => {
 			const memberships: Membership[] = [];
+
 			if (data.staffClinics) {
 				memberships.push(
 					...data.staffClinics.map((c: any) => ({
@@ -113,6 +144,7 @@ export const apiClient = {
 					}))
 				);
 			}
+
 			if (data.patientClinics) {
 				memberships.push(
 					...data.patientClinics.map((c: any) => ({
@@ -183,7 +215,6 @@ export const apiClient = {
 			},
 		}),
 
-	// FIX: Definición de tipos actualizada
 	lookupPatient: (dni: string, clinicId: string, token?: string) =>
 		request<{
 			id: string;

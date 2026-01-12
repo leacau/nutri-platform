@@ -1,15 +1,19 @@
+import type { AuthContext, AuthenticatedUser } from '../types/auth.js';
 import type { NextFunction, Request, Response } from 'express';
 
 import { getFirebaseAdmin } from '../firebase/admin.js';
-import type { AuthenticatedUser, AuthContext } from '../types/auth.js';
 
 function parseBearer(headerValue: string | undefined): string | null {
 	if (!headerValue) return null;
-	const parts = headerValue.split(' ');
+
+	// Soporta múltiples espacios: "Bearer   token"
+	const parts = headerValue.trim().split(/\s+/);
 	if (parts.length !== 2) return null;
+
 	const [scheme, token] = parts;
-	if (scheme !== 'Bearer') return null;
+	if (!scheme || scheme.toLowerCase() !== 'bearer') return null;
 	if (!token) return null;
+
 	return token;
 }
 
@@ -18,7 +22,14 @@ export async function requireAuth(
 	res: Response,
 	next: NextFunction
 ) {
-	if (req.auth && req.user) return next();
+	// ✅ Preflight: no autenticamos OPTIONS.
+	// Esto evita "CORS Missing Allow Origin" cuando el browser valida Authorization.
+	if (req.method === 'OPTIONS') {
+		return res.status(204).send();
+	}
+
+	// Si ya fue autenticado por un middleware previo
+	if ((req as any).auth && (req as any).user) return next();
 
 	try {
 		const token = parseBearer(req.header('Authorization'));
@@ -31,7 +42,8 @@ export async function requireAuth(
 
 		const { auth } = getFirebaseAdmin();
 		const decoded = await auth.verifyIdToken(token);
-		const { uid, email, ...claims } = decoded;
+
+		const { uid, email, ...claims } = decoded as any;
 
 		const user: AuthenticatedUser = {
 			uid,
@@ -39,16 +51,20 @@ export async function requireAuth(
 			claims,
 		};
 
+		const isPlatformAdmin =
+			decoded.platformAdmin === true || decoded.platform_admin === true;
+
 		const authContext: AuthContext = {
 			uid,
 			email: email ?? null,
-			isPlatformAdmin: decoded.platformAdmin === true,
+			isPlatformAdmin,
 			role: null,
 			clinicId: null,
 		};
 
-		req.user = user;
-		req.auth = authContext;
+		(req as any).user = user;
+		(req as any).auth = authContext;
+
 		return next();
 	} catch (err) {
 		return res.status(401).json({

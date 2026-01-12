@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from 'express';
-// Eliminado: import { devRouter } from './dev.js';
 import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
 import { clinicsRouter } from './clinics.js';
@@ -7,12 +6,8 @@ import { metricsRouter } from './metrics.js';
 import { usersRouter } from './users.js';
 import { logEvent } from '../observability/eventLogger.js';
 import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
-// requireAuth ya no se necesita importar aquí explícitamente para montar subrutas,
-// pero el router asume que el request ya pasó por requireAuth en app.ts.
 
 export const apiRouter = Router();
-
-// GET /health eliminado de aquí porque app.ts lo intercepta primero.
 
 /**
  * GET /session

@@ -1,13 +1,9 @@
+substitutions:
+  _IMAGE: 'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/api:stg'
+
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      [
-        'build',
-        '-f',
-        'apps/api/Dockerfile',
-        '-t',
-        'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/api:stg',
-        '.',
-      ]
+    args: ['build', '-f', 'apps/api/Dockerfile', '-t', '${_IMAGE}', '.']
+
 images:
-  - 'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/api:stg'
+  - '${_IMAGE}'

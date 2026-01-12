@@ -1,14 +1,21 @@
+substitutions:
+  _REGION: us-central1
+  _PROJECT: amsa-core-stg
+  _REPO: amsa-repo
+  _IMAGE_NAME: api
+  _TAG: stg
+
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
         'build',
-        '-t',
-        'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/amsa-api:stg',
         '-f',
         'apps/api/Dockerfile',
+        '-t',
+        '${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/${_IMAGE_NAME}:${_TAG}',
         '.',
       ]
 
 images:
-  - 'us-central1-docker.pkg.dev/amsa-core-stg/amsa-repo/amsa-api:stg'
+  - '${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/${_IMAGE_NAME}:${_TAG}'
