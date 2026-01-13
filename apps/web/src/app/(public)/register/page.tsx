@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -10,7 +12,6 @@ import { useAuth } from '../../../providers/auth-provider';
 import { useForm } from 'react-hook-form';
 import { useI18n } from '../../../providers/i18n-provider';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 

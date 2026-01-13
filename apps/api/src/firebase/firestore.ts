@@ -8,7 +8,7 @@ let _emulatorConnected = false;
 function getDatabaseId(): string | undefined {
 	// Si no seteás nada, cae en (default)
 	// Para tu caso, seteá FIRESTORE_DATABASE_ID=amsa-core-stg
-	return process.env.FIRESTORE_DATABASE_ID || process.env.FIREBASE_DATABASE_ID;
+	return process.env.FIRESTORE_DATABASE_ID || undefined;
 }
 
 export function getFirestoreDb(): Firestore {

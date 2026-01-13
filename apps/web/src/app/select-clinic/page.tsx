@@ -17,6 +17,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { apiClient } from '../../lib/api-client';
+import { getFirebaseAuth } from '../../lib/firebase';
 import { useAuth } from '../../providers/auth-provider';
 import { useClinic } from '../../providers/clinic-provider';
 import { useEffect } from 'react';
@@ -52,6 +53,23 @@ export default function SelectClinicPage() {
 			router.replace(next);
 		}
 	}, [activeClinicId, next, router]);
+
+	useEffect(() => {
+		(async () => {
+			const auth = getFirebaseAuth();
+			const user = auth.currentUser;
+
+			if (!user) {
+				console.log(
+					'No hay usuario logueado todavía (auth.currentUser = null).'
+				);
+				return;
+			}
+
+			const token = await user.getIdToken(true);
+			console.log('🔥 ID TOKEN (copiar completo):', token);
+		})().catch((e) => console.error('Token debug error:', e));
+	}, []);
 
 	const handleSelect = (clinicId: string) => {
 		setActiveClinic(clinicId);
