@@ -32,7 +32,7 @@ export function getFirebaseAdmin(): FirebaseAdminContext {
 	// Algunos SDKs miran GCLOUD_PROJECT: lo seteamos como “fallback”
 	process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? projectId;
 
-	// NOTE: Do NOT use the admin Firestore client directly.
+	// NOTE: Do NOT use admin.firestore() directly.
 	// This project uses multi-database; always use getFirestoreDb() from firebase/firestore.ts
 	const app = admin.app();
 	const auth = admin.auth(app);
