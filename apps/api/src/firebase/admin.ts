@@ -3,7 +3,6 @@ import admin from 'firebase-admin';
 type FirebaseAdminContext = {
 	app: admin.app.App;
 	auth: admin.auth.Auth;
-	firestore: admin.firestore.Firestore;
 };
 
 let ctx: FirebaseAdminContext | null = null;
@@ -33,10 +32,11 @@ export function getFirebaseAdmin(): FirebaseAdminContext {
 	// Algunos SDKs miran GCLOUD_PROJECT: lo seteamos como “fallback”
 	process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? projectId;
 
+	// NOTE: Do NOT use the admin Firestore client directly.
+	// This project uses multi-database; always use getFirestoreDb() from firebase/firestore.ts
 	const app = admin.app();
 	const auth = admin.auth(app);
-	const firestore = admin.firestore(app);
 
-	ctx = { app, auth, firestore };
+	ctx = { app, auth };
 	return ctx;
 }
