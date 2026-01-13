@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
-import { Timestamp } from 'firebase-admin/firestore';
 import type { Role } from '../types/auth.js';
+import { Timestamp } from 'firebase-admin/firestore';
 import { getFirebaseAdmin } from '../firebase/admin.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 
@@ -64,8 +64,8 @@ async function upsertUser(seed: SeedUser): Promise<string> {
 	const created = await auth.createUser({
 		email: seed.email,
 		password: seed.password,
-	displayName: seed.displayName,
-});
+		displayName: seed.displayName,
+	});
 	const claims: Record<string, unknown> = {};
 	if (seed.role === 'platform_admin') {
 		claims.platformAdmin = true;
@@ -96,7 +96,10 @@ async function clearCollection(name: string): Promise<number> {
 	return total;
 }
 
-async function seedPatients(patientUid: string, assignedProfessionalUid: string) {
+async function seedPatients(
+	patientUid: string,
+	assignedProfessionalUid: string
+) {
 	const db = getFirestoreDb();
 	const now = Timestamp.now();
 
@@ -180,8 +183,8 @@ async function main() {
 	log('Auth emulator', process.env.FIREBASE_AUTH_EMULATOR_HOST);
 	log('Firestore emulator', process.env.FIRESTORE_EMULATOR_HOST);
 
-	const { firestore } = getFirebaseAdmin();
-	firestore.settings({ ignoreUndefinedProperties: true });
+	const db = getFirestoreDb();
+	db.settings({ ignoreUndefinedProperties: true });
 
 	const users: Record<
 		'patient' | 'professional' | 'clinic' | 'platform',
