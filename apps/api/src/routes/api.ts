@@ -9,11 +9,12 @@ import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 
 export const apiRouter = Router();
 
-/**
- * GET /session
- * Fuente de verdad unificada usando analyzeUserSession.
- */
 apiRouter.get('/session', async (req: Request, res: Response) => {
+	console.log('[session] start', {
+		projectId: process.env.FIREBASE_PROJECT_ID,
+		databaseId: process.env.FIRESTORE_DATABASE_ID,
+		hasAuth: Boolean(req.auth),
+	});
 	if (!req.auth) {
 		return res.status(401).json({ success: false, message: 'Unauthenticated' });
 	}
@@ -44,7 +45,7 @@ apiRouter.get('/session', async (req: Request, res: Response) => {
 			},
 		});
 	} catch (error) {
-		console.error('Session error:', error);
+		console.error('[session] firestore error', error);
 		return res
 			.status(500)
 			.json({ success: false, message: 'Internal session error' });
