@@ -1,10 +1,20 @@
 {
-	"firestore": {
-		"rules": "firestore.rules"
-	},
-	"emulators": {
-		"auth": { "port": 9099 },
-		"firestore": { "port": 8088 },
-		"ui": { "enabled": true, "port": 4000 }
-	}
+  "firestore": {
+    "database": "amsa-core-stg",
+    "location": "southamerica-east1",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8088
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    }
+  }
 }

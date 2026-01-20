@@ -26,6 +26,62 @@ const createClinicSchema = z.object({
 	}),
 });
 
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
+	const auth = req.auth!;
+	const db = getFirestoreDb();
+
+	// Platform admin: puede listar todas (útil para backoffice / bootstrap)
+	if (auth.isPlatformAdmin) {
+		const snap = await db
+			.collection('clinics')
+			.orderBy('createdAt', 'desc')
+			.limit(50)
+			.get();
+
+		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+		return res.status(200).json({ success: true, data: items });
+	}
+
+	// Usuario normal: clínicas donde tiene membership activo
+	const membershipsSnap = await db
+		.collection('clinic_memberships')
+		.where('uid', '==', auth.uid)
+		.where('isActive', '==', true)
+		.get();
+
+	if (membershipsSnap.empty) {
+		return res.status(200).json({ success: true, data: [] });
+	}
+
+	const memberships = membershipsSnap.docs.map(
+		(d) => d.data() as ClinicMembershipDoc,
+	);
+
+	// clinicIds únicos
+	const clinicIds = Array.from(
+		new Set(memberships.map((m) => m.clinicId).filter(Boolean)),
+	);
+
+	const refs = clinicIds.map((id) => db.collection('clinics').doc(id));
+	const clinicDocs = refs.length ? await db.getAll(...refs) : [];
+
+	const clinics = clinicDocs
+		.filter((d) => d.exists)
+		.map((d) => {
+			const data = d.data() as any;
+			const membership = memberships.find((m) => m.clinicId === d.id) ?? null;
+			return {
+				id: d.id,
+				name: data?.name ?? null,
+				createdAt: data?.createdAt ?? null,
+				updatedAt: data?.updatedAt ?? null,
+				role: membership?.role ?? null,
+			};
+		});
+
+	return res.status(200).json({ success: true, data: clinics });
+});
+
 router.get(
 	'/lookup-user',
 	authMiddleware,
@@ -72,7 +128,7 @@ router.get(
 				dni: data.dni,
 			},
 		});
-	}
+	},
 );
 
 router.post(
@@ -155,7 +211,7 @@ router.post(
 				adminUid: uid,
 			},
 		});
-	}
+	},
 );
 
 router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
@@ -180,7 +236,7 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 		const data = doc.data() as ClinicMembershipDoc;
 		const clinicSnap = await db.collection('clinics').doc(data.clinicId).get();
 		const clinicName = clinicSnap.exists
-			? (clinicSnap.data() as { name?: string })?.name ?? null
+			? ((clinicSnap.data() as { name?: string })?.name ?? null)
 			: null;
 		clinics.push({
 			clinicId: data.clinicId,
@@ -278,7 +334,7 @@ router.post(
 			});
 		}
 		return res.status(500).json({ success: false });
-	}
+	},
 );
 
 router.post(
@@ -377,7 +433,7 @@ router.post(
 				message: 'Usuario invitado/creado y asignado.',
 			});
 		}
-	}
+	},
 );
 
 router.get(
@@ -411,11 +467,11 @@ router.get(
 					name: userData?.name ?? 'Usuario',
 					email: userData?.email ?? 'sin-email',
 				};
-			})
+			}),
 		);
 
 		return res.status(200).json({ success: true, data: members });
-	}
+	},
 );
 
 export const clinicsRouter = router;

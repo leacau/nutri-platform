@@ -1,0 +1,140 @@
+[
+  {
+    "insertId": "696ed12e000b44ff03609254",
+    "labels": {
+      "instanceId": "005eb6974cc113fe6e6499ddfd6c28eb78478e94727dac9abef392027895c0cc9ffdcac8af4912de18deff132a9d62c421b2bca410dca6d2c6a7b760eb725197845639a5b3f1e7f230a9a1569ee0"
+    },
+    "logName": "projects/amsa-core-stg/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-01-20T00:49:50.798211774Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "api-stg",
+        "location": "us-central1",
+        "project_id": "amsa-core-stg",
+        "revision_name": "api-stg-00033-w97",
+        "service_name": "api-stg"
+      },
+      "type": "cloud_run_revision"
+    },
+    "textPayload": "\u001b[0mGET /api/appointments \u001b[32m200\u001b[0m 1550.863 ms - 26\u001b[0m",
+    "timestamp": "2026-01-20T00:49:50.738559Z"
+  },
+  {
+    "insertId": "696ed12d0006de0107cfbfca",
+    "labels": {
+      "instanceId": "005eb6974cc113fe6e6499ddfd6c28eb78478e94727dac9abef392027895c0cc9ffdcac8af4912de18deff132a9d62c421b2bca410dca6d2c6a7b760eb725197845639a5b3f1e7f230a9a1569ee0"
+    },
+    "logName": "projects/amsa-core-stg/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-01-20T00:49:49.466332679Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "api-stg",
+        "location": "us-central1",
+        "project_id": "amsa-core-stg",
+        "revision_name": "api-stg-00033-w97",
+        "service_name": "api-stg"
+      },
+      "type": "cloud_run_revision"
+    },
+    "textPayload": "[firestore] project=amsa-core-stg database=amsa-core-stg",
+    "timestamp": "2026-01-20T00:49:49.450049Z"
+  },
+  {
+    "insertId": "696ed12d0001f5ca93cf8bce",
+    "labels": {
+      "instanceId": "005eb6974cc113fe6e6499ddfd6c28eb78478e94727dac9abef392027895c0cc9ffdcac8af4912de18deff132a9d62c421b2bca410dca6d2c6a7b760eb725197845639a5b3f1e7f230a9a1569ee0"
+    },
+    "logName": "projects/amsa-core-stg/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-01-20T00:49:49.132579387Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "api-stg",
+        "location": "us-central1",
+        "project_id": "amsa-core-stg",
+        "revision_name": "api-stg-00033-w97",
+        "service_name": "api-stg"
+      },
+      "type": "cloud_run_revision"
+    },
+    "textPayload": "[api] listening on http://localhost:8080",
+    "timestamp": "2026-01-20T00:49:49.128458Z"
+  },
+  {
+    "insertId": "696ed12d0001f38a52307094",
+    "labels": {
+      "instanceId": "005eb6974cc113fe6e6499ddfd6c28eb78478e94727dac9abef392027895c0cc9ffdcac8af4912de18deff132a9d62c421b2bca410dca6d2c6a7b760eb725197845639a5b3f1e7f230a9a1569ee0"
+    },
+    "logName": "projects/amsa-core-stg/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-01-20T00:49:49.285086350Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "api-stg",
+        "location": "us-central1",
+        "project_id": "amsa-core-stg",
+        "revision_name": "api-stg-00033-w97",
+        "service_name": "api-stg"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "textPayload": "Default STARTUP TCP probe succeeded after 1 attempt for container \"api-1\" on port 8080.",
+    "timestamp": "2026-01-20T00:49:49.127882Z"
+  },
+  {
+    "insertId": "696ed12b000e76dd4a51b914",
+    "labels": {
+      "instanceId": "005eb6974cc113fe6e6499ddfd6c28eb78478e94727dac9abef392027895c0cc9ffdcac8af4912de18deff132a9d62c421b2bca410dca6d2c6a7b760eb725197845639a5b3f1e7f230a9a1569ee0",
+      "scaling_reason": "AUTOSCALING"
+    },
+    "logName": "projects/amsa-core-stg/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-01-20T00:49:47.954333401Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "api-stg",
+        "location": "us-central1",
+        "project_id": "amsa-core-stg",
+        "revision_name": "api-stg-00033-w97",
+        "service_name": "api-stg"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "textPayload": "Starting new instance. Reason: AUTOSCALING - Instance started due to configured scaling factors (e.g. CPU utilization, request throughput, etc.) or no existing capacity for current traffic.",
+    "timestamp": "2026-01-20T00:49:47.947933Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "2.585007950s",
+      "protocol": "HTTP/1.1",
+      "remoteIp": "2803:9800:9801:b060:9855:9a5c:1aa5:1af",
+      "requestMethod": "GET",
+      "requestSize": "1492",
+      "requestUrl": "https://api-stg-sov57h6mia-uc.a.run.app/api/appointments",
+      "responseSize": "830",
+      "serverIp": "2600:1900:4245:200::",
+      "status": 200,
+      "userAgent": "curl/8.17.0"
+    },
+    "insertId": "696ed12e000b508567ae7eb4",
+    "labels": {
+      "instanceId": "005eb6974cc113fe6e6499ddfd6c28eb78478e94727dac9abef392027895c0cc9ffdcac8af4912de18deff132a9d62c421b2bca410dca6d2c6a7b760eb725197845639a5b3f1e7f230a9a1569ee0"
+    },
+    "logName": "projects/amsa-core-stg/logs/run.googleapis.com%2Frequests",
+    "receiveTimestamp": "2026-01-20T00:49:50.749425434Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "api-stg",
+        "location": "us-central1",
+        "project_id": "amsa-core-stg",
+        "revision_name": "api-stg-00033-w97",
+        "service_name": "api-stg"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "spanId": "614d88ff4100c17b",
+    "timestamp": "2026-01-20T00:49:47.930588Z",
+    "trace": "projects/amsa-core-stg/traces/91647e6d890b05699b6a93e7c30e72e6",
+    "traceSampled": true
+  }
+]

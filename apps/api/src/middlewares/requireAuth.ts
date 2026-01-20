@@ -2,6 +2,10 @@ import type { AuthContext, AuthenticatedUser } from '../types/auth.js';
 import type { NextFunction, Request, Response } from 'express';
 
 import { getFirebaseAdmin } from '../firebase/admin.js';
+import { getFirestoreDb } from '../firebase/firestore.js';
+
+// 👇 Ajustá este import si tu archivo exporta con otro nombre.
+// Lo común en tu repo (por el comentario) es getFirestoreDb().
 
 function parseBearer(headerValue: string | undefined): string | null {
 	if (!headerValue) return null;
@@ -17,13 +21,41 @@ function parseBearer(headerValue: string | undefined): string | null {
 	return token;
 }
 
+async function isPlatformAdminFromFirestore(uid: string): Promise<boolean> {
+	// ✅ Multi-database friendly: usamos el helper del proyecto, NO admin.firestore()
+	const db = getFirestoreDb();
+
+	// Fuente de verdad principal: platformAdmins/{uid}
+	const adminDoc = await db.collection('platformAdmins').doc(uid).get();
+	if (adminDoc.exists) {
+		const data = adminDoc.data() as any;
+		// Si tu script guarda "enabled: true", esto lo toma.
+		// Si guarda otra cosa (ej "granted: true"), también lo cubrimos.
+		if (
+			data?.enabled === true ||
+			data?.granted === true ||
+			data?.isPlatformAdmin === true
+		) {
+			return true;
+		}
+	}
+
+	// Fallback opcional: users/{uid}.isPlatformAdmin
+	const userDoc = await db.collection('users').doc(uid).get();
+	if (userDoc.exists) {
+		const data = userDoc.data() as any;
+		if (data?.isPlatformAdmin === true) return true;
+	}
+
+	return false;
+}
+
 export async function requireAuth(
 	req: Request,
 	res: Response,
-	next: NextFunction
+	next: NextFunction,
 ) {
-	// ✅ Preflight: no autenticamos OPTIONS.
-	// Esto evita "CORS Missing Allow Origin" cuando el browser valida Authorization.
+	// ✅ Preflight: no autenticamos OPTIONS (CORS)
 	if (req.method === 'OPTIONS') {
 		return res.status(204).send();
 	}
@@ -45,14 +77,22 @@ export async function requireAuth(
 
 		const { uid, email, ...claims } = decoded as any;
 
+		// Fast-path por claims (si vuelven a funcionar)
+		const isPlatformAdminFromClaims =
+			decoded.platformAdmin === true ||
+			decoded.platform_admin === true ||
+			decoded.platform_admin === 'true';
+
+		// Source of truth: Firestore
+		const isPlatformAdminFromDb = await isPlatformAdminFromFirestore(uid);
+
+		const isPlatformAdmin = isPlatformAdminFromClaims || isPlatformAdminFromDb;
+
 		const user: AuthenticatedUser = {
 			uid,
 			email: email ?? null,
 			claims,
 		};
-
-		const isPlatformAdmin =
-			decoded.platformAdmin === true || decoded.platform_admin === true;
 
 		const authContext: AuthContext = {
 			uid,

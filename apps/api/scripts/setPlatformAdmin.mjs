@@ -1,17 +1,32 @@
 import 'dotenv/config';
 
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, initializeApp } from 'firebase-admin/app';
 
+import fs from 'node:fs';
 import { getAuth } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
+import path from 'node:path';
+import process from 'node:process';
+
+/**
+ * Uso:
+ *   # (recomendado) con ADC (gcloud auth application-default login)
+ *   FIREBASE_PROJECT_ID=amsa-core-stg node apps/api/scripts/setPlatformAdmin.mjs <uid>
+ *
+ * Opcional:
+ *   # si querés forzar un service account JSON:
+ *   GOOGLE_APPLICATION_CREDENTIALS=/abs/path/service-account.json FIREBASE_PROJECT_ID=amsa-core-stg node apps/api/scripts/setPlatformAdmin.mjs <uid>
+ *
+ * Qué hace:
+ *   1) Intenta setear custom claim { platform_admin: true } (si tenés permisos)
+ *   2) SIEMPRE escribe en Firestore un registro como platform admin:
+ *        platformAdmins/<uid> { enabled: true, grantedAt, grantedBy }
+ *      y además marca users/<uid>.isPlatformAdmin = true (merge)
+ *   3) Lee lo escrito y lo imprime (confirmación).
+ */
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
-const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || '(default)';
 const UID = process.argv[2];
-
-// Si querés que también intente custom claims:
-// export ALSO_SET_CUSTOM_CLAIMS=true
-const ALSO_SET_CUSTOM_CLAIMS = process.env.ALSO_SET_CUSTOM_CLAIMS === 'true';
 
 if (!PROJECT_ID) {
 	console.error('❌ Missing FIREBASE_PROJECT_ID');
@@ -23,83 +38,102 @@ if (!UID) {
 }
 
 function initAdmin() {
-	if (!getApps().length) {
+	// Si GOOGLE_APPLICATION_CREDENTIALS está seteado y apunta a un archivo real, lo usamos.
+	// Sino, ADC (applicationDefault) y listo.
+	const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+
+	if (credsPath) {
+		const abs = path.isAbsolute(credsPath)
+			? credsPath
+			: path.resolve(credsPath);
+		if (!fs.existsSync(abs)) {
+			console.error(
+				`❌ GOOGLE_APPLICATION_CREDENTIALS points to missing file: ${abs}`,
+			);
+			process.exit(1);
+		}
+		const json = JSON.parse(fs.readFileSync(abs, 'utf8'));
 		initializeApp({
-			credential: applicationDefault(),
+			credential: cert(json),
 			projectId: PROJECT_ID,
 		});
+		return { mode: 'service-account', path: abs };
 	}
+
+	initializeApp({
+		credential: applicationDefault(),
+		projectId: PROJECT_ID,
+	});
+	return { mode: 'adc' };
 }
 
-function getDb() {
-	// Soporta databaseId cuando no es el default
-	// getFirestore(databaseId?) está disponible en firebase-admin moderno
-	try {
-		if (DATABASE_ID && DATABASE_ID !== '(default)') {
-			return getFirestore(undefined, DATABASE_ID);
-		}
-		return getFirestore();
-	} catch {
-		// fallback seguro al default
-		return getFirestore();
-	}
-}
-
-async function setFirestorePlatformAdmin(uid) {
-	const db = getDb();
-
-	// ✅ Opción A: colección dedicada de admins de plataforma
-	await db.collection('platformAdmins').doc(uid).set(
-		{
-			uid,
-			enabled: true,
-			grantedAt: FieldValue.serverTimestamp(),
-			grantedBy: 'local-script',
-		},
-		{ merge: true }
-	);
-
-	// ✅ Opción B: además marcamos el user (si tu backend lee de users/<uid>)
-	await db.collection('users').doc(uid).set(
-		{
-			uid,
-			isPlatformAdmin: true,
-			updatedAt: FieldValue.serverTimestamp(),
-		},
-		{ merge: true }
-	);
-
-	console.log(`✅ Firestore: platform admin granted for uid=${uid}`);
-}
-
-async function trySetCustomClaims(uid) {
+async function setCustomClaimIfPossible(uid) {
 	try {
 		await getAuth().setCustomUserClaims(uid, { platform_admin: true });
-		console.log(`✅ Custom Claims: platform_admin=true set for uid=${uid}`);
+		console.log(`✅ Custom claim set: platform_admin=true for uid=${uid}`);
+		return true;
 	} catch (err) {
-		// No frenamos el script: esto hoy te está rompiendo el flujo
+		// No frenamos el script por claims: Firestore nos sirve como fuente de verdad.
 		console.warn(
-			`⚠️ Custom Claims failed (ignored). Firestore admin already granted. uid=${uid}`
+			'⚠️ Could not set custom claims (continuing with Firestore admin flag).',
 		);
 		console.warn(err?.message || err);
+		return false;
 	}
+}
+
+async function writeFirestoreAdminFlag(uid) {
+	const db = getFirestore();
+
+	const now = new Date();
+	const by = process.env.ADMIN_GRANTED_BY || 'script';
+
+	// Colección dedicada
+	await db.collection('platformAdmins').doc(uid).set(
+		{
+			enabled: true,
+			grantedAt: now.toISOString(),
+			grantedBy: by,
+			projectId: PROJECT_ID,
+		},
+		{ merge: true },
+	);
+
+	// Flag espejo en users (por si tu backend mira ahí)
+	await db.collection('users').doc(uid).set(
+		{
+			isPlatformAdmin: true,
+			updatedAt: now.toISOString(),
+		},
+		{ merge: true },
+	);
+
+	console.log(`✅ Firestore written:
+- platformAdmins/${uid}.enabled=true
+- users/${uid}.isPlatformAdmin=true`);
+}
+
+async function readBack(uid) {
+	const db = getFirestore();
+	const a = await db.collection('platformAdmins').doc(uid).get();
+	const u = await db.collection('users').doc(uid).get();
+
+	console.log('--- Verification read ---');
+	console.log('platformAdmins exists:', a.exists);
+	console.log('platformAdmins data:', a.exists ? a.data() : null);
+	console.log('users exists:', u.exists);
+	console.log('users data:', u.exists ? u.data() : null);
 }
 
 async function main() {
-	initAdmin();
+	const info = initAdmin();
+	console.log(
+		`ℹ️ Admin init mode: ${info.mode}${info.path ? ` (${info.path})` : ''}`,
+	);
 
-	console.log('[setPlatformAdmin] start', {
-		projectId: PROJECT_ID,
-		databaseId: DATABASE_ID,
-		uid: UID,
-		alsoSetCustomClaims: ALSO_SET_CUSTOM_CLAIMS,
-	});
-
-	await setFirestorePlatformAdmin(UID);
-
-	if (ALSO_SET_CUSTOM_CLAIMS) {
-		await trySetCustomClaims(UID);
-	}
+	await setCustomClaimIfPossible(UID);
+	await writeFirestoreAdminFlag(UID);
+	await readBack(UID);
 
 	console.log('✅ Done.');
 }
