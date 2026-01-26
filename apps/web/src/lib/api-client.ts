@@ -9,6 +9,7 @@ import {
 	Patient,
 	UserAccount,
 } from './types';
+import { API_BASE_URL } from './api-config';
 
 type RequestOptions<T> = {
 	method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -18,7 +19,6 @@ type RequestOptions<T> = {
 	mockFallback?: () => T | Promise<T>;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === 'true';
 
 type ApiResponse<T> = {
@@ -26,6 +26,14 @@ type ApiResponse<T> = {
 	data: T;
 	message?: string;
 };
+
+export class ApiError extends Error {
+	status: number;
+	constructor(status: number, message: string) {
+		super(message);
+		this.status = status;
+	}
+}
 
 function joinUrl(base: string, path: string): string {
 	// Base puede venir como "https://.../api" o "/api"
@@ -59,7 +67,7 @@ async function request<T>(
 		headers.set('X-Clinic-Id', options.clinicId);
 	}
 
-	const url = joinUrl(API_BASE, path);
+	const url = joinUrl(API_BASE_URL, path);
 
 	try {
 		const res = await fetch(url, {
@@ -79,7 +87,8 @@ async function request<T>(
 			const text = await safeReadText(res);
 			// Si el backend devuelve JSON error, lo mostramos
 			// Si devuelve text/plain (Cloud Run), también
-			throw new Error(
+			throw new ApiError(
+				res.status,
 				text || `Request failed: ${res.status} ${res.statusText}`
 			);
 		}
@@ -179,7 +188,6 @@ export const apiClient = {
 	clinicSettings: (clinicId: string, token?: string) =>
 		request<ClinicSettings>(`/clinics/${clinicId}`, {
 			token,
-			clinicId,
 			mockFallback: () => ({
 				branding: { accentColor: '#2F8F7B' },
 				reminderPreferences: { whatsappEnabled: true, emailEnabled: true },
@@ -325,11 +333,23 @@ export const apiClient = {
 			body: data,
 		}),
 
+	clinicById: (clinicId: string, token?: string) =>
+		request<Clinic>(`/clinics/${clinicId}`, {
+			token,
+			mockFallback: () => ({ id: clinicId, name: 'Clínica' }),
+		}),
+
+	adminClinics: (token?: string) =>
+		request<Clinic[]>('/admin/clinics', {
+			token,
+			mockFallback: () => [],
+		}),
+
 	createClinic: (
 		data: { name: string; admin: { name: string; email: string; dni: string } },
 		token?: string
 	) =>
-		request<{ clinicId: string; adminUid: string }>('/clinics', {
+		request<Clinic>('/admin/clinics', {
 			method: 'POST',
 			token,
 			body: data,

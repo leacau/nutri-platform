@@ -81,7 +81,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <p>Rol actual: {currentRole || "N/D"}</p>
           </div>
-          <Button variant="outline" className="w-full" onClick={() => router.push("/select-clinic")}>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => router.push(platformRole === "platform_admin" ? "/admin/clinics" : "/select-clinic")}
+          >
             Cambiar clínica
           </Button>
           <Button variant="ghost" className="w-full" onClick={logout}>

@@ -7,6 +7,7 @@ import { useClinic } from "../providers/clinic-provider";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { apiClient } from "../lib/api-client";
+import { API_BASE_URL } from "../lib/api-config";
 
 export function DevToolsPanel() {
   const { idToken, refreshToken } = useAuth();
@@ -18,7 +19,7 @@ export function DevToolsPanel() {
     if (process.env.NEXT_PUBLIC_ENV !== "dev") return;
     const fetchHealth = async () => {
       try {
-        const res = await fetch((process.env.NEXT_PUBLIC_API_BASE_URL || "/api") + "/health");
+        const res = await fetch(`${API_BASE_URL}/health`);
         const text = await res.text();
         setHealth(text || res.status.toString());
       } catch {
@@ -66,7 +67,7 @@ export function DevToolsPanel() {
             <Button size="sm" variant="secondary" onClick={handleMe}>
               /users/me
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => window.open("/api/health", "_blank")}>
+            <Button size="sm" variant="ghost" onClick={() => window.open(`${API_BASE_URL}/health`, "_blank")}>
               <Stethoscope className="mr-2 h-4 w-4" />
               /health
             </Button>

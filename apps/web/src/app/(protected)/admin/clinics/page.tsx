@@ -1,0 +1,161 @@
+"use client";
+
+import { Building2, CheckCircle2, Hospital } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../../components/ui/card";
+import { Badge } from "../../../../components/ui/badge";
+import { Button } from "../../../../components/ui/button";
+import { Input } from "../../../../components/ui/input";
+import { Label } from "../../../../components/ui/label";
+import { apiClient } from "../../../../lib/api-client";
+import { useAuth } from "../../../../providers/auth-provider";
+import { useClinic } from "../../../../providers/clinic-provider";
+
+const createClinicSchema = z.object({
+  name: z.string().min(2, "El nombre es obligatorio"),
+  adminName: z.string().min(2, "El nombre es obligatorio"),
+  adminEmail: z.string().email("Email inválido"),
+  adminDni: z
+    .string()
+    .min(7, "El DNI debe tener min 7 dígitos")
+    .max(8, "El DNI debe tener max 8 dígitos")
+    .regex(/^\d+$/, "Solo números"),
+});
+
+type CreateClinicForm = z.infer<typeof createClinicSchema>;
+
+export default function AdminClinicsPage() {
+  const qc = useQueryClient();
+  const { clinics, setActiveClinic, me } = useClinic();
+  const { idToken } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next") || "/app/dashboard";
+  const isPlatformAdmin = me?.platformRole === "platform_admin";
+
+  useEffect(() => {
+    if (me && !isPlatformAdmin) {
+      router.replace("/select-clinic?next=" + encodeURIComponent(next));
+    }
+  }, [isPlatformAdmin, me, next, router]);
+
+  const handleSelect = (clinicId: string) => {
+    setActiveClinic(clinicId);
+    router.push(next);
+  };
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateClinicForm>({
+    resolver: zodResolver(createClinicSchema),
+  });
+
+  const createClinicMutation = useMutation({
+    mutationFn: async (data: CreateClinicForm) =>
+      apiClient.createClinic(
+        {
+          name: data.name,
+          admin: {
+            name: data.adminName,
+            email: data.adminEmail,
+            dni: data.adminDni,
+          },
+        },
+        idToken || undefined
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["clinics"] });
+      reset();
+      setActiveClinic(data.id);
+      router.push(next);
+    },
+    onError: () => alert("Error al crear la clínica"),
+  });
+
+  return (
+    <main className="mx-auto max-w-5xl px-6 py-14">
+      <div className="mb-10 flex items-center justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">Administración</p>
+          <h1 className="text-3xl font-semibold text-primary">Clínicas</h1>
+        </div>
+      </div>
+      <div className="grid gap-6 md:grid-cols-2">
+        {clinics?.map((clinic) => (
+          <Card key={clinic.id} className="border-primary/10 shadow-sm">
+            <CardHeader className="flex flex-row items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Building2 className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">{clinic.name}</CardTitle>
+                <CardDescription>ID: {clinic.id}</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="flex items-center justify-between">
+              <Badge variant="secondary">platform_admin</Badge>
+              <Button onClick={() => handleSelect(clinic.id)} variant="default">
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Activar
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <Card className="mt-8 border-primary/10 shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Hospital className="h-4 w-4" />
+            Crear clínica y admin
+          </CardTitle>
+          <CardDescription>Registrá una nueva clínica y asigná su clinic_admin.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={handleSubmit((data) => createClinicMutation.mutate(data))}
+            className="grid gap-4 md:grid-cols-2"
+          >
+            <div className="space-y-1 md:col-span-2">
+              <Label>Nombre de la clínica</Label>
+              <Input placeholder="Clínica Central" {...register("name")} />
+              {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <Label>Nombre del admin</Label>
+              <Input placeholder="Nombre y apellido" {...register("adminName")} />
+              {errors.adminName && <p className="text-xs text-red-500">{errors.adminName.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <Label>Email del admin</Label>
+              <Input type="email" placeholder="admin@clinica.com" {...register("adminEmail")} />
+              {errors.adminEmail && <p className="text-xs text-red-500">{errors.adminEmail.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <Label>DNI del admin</Label>
+              <Input placeholder="12345678" {...register("adminDni")} />
+              {errors.adminDni && <p className="text-xs text-red-500">{errors.adminDni.message}</p>}
+            </div>
+            <div className="flex items-end md:col-span-2">
+              <Button type="submit" disabled={isSubmitting}>
+                Crear clínica
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+      {!clinics?.length ? (
+        <div className="mt-8 rounded-xl border border-dashed p-6 text-center text-muted-foreground">
+          No encontramos clínicas registradas.
+        </div>
+      ) : null}
+    </main>
+  );
+}

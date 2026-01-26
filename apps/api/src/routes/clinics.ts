@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from 'express';
-import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
@@ -7,6 +6,11 @@ import { requireRole } from '../middlewares/requireRole.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { ClinicMembershipDoc } from '../types/clinics.js';
 import type { ClinicRole } from '../types/auth.js';
+import {
+	createClinicSchema,
+	createClinicWithAdmin,
+	mapClinicSummary,
+} from './clinicAdminUtils.js';
 
 const router = Router();
 
@@ -17,30 +21,9 @@ const inviteMemberSchema = z.object({
 	role: z.enum(['clinic_admin', 'professional', 'staff']),
 });
 
-const createClinicSchema = z.object({
-	name: z.string().min(2),
-	admin: z.object({
-		name: z.string().min(2),
-		email: z.string().email(),
-		dni: z.string().min(7).max(8),
-	}),
-});
-
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	const auth = req.auth!;
 	const db = getFirestoreDb();
-
-	// Platform admin: puede listar todas (útil para backoffice / bootstrap)
-	if (auth.isPlatformAdmin) {
-		const snap = await db
-			.collection('clinics')
-			.orderBy('createdAt', 'desc')
-			.limit(50)
-			.get();
-
-		const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-		return res.status(200).json({ success: true, data: items });
-	}
 
 	// Usuario normal: clínicas donde tiene membership activo
 	const membershipsSnap = await db
@@ -145,16 +128,6 @@ router.post(
 			});
 		}
 
-		const db = getFirestoreDb();
-		const now = Timestamp.now();
-		const clinicRef = db.collection('clinics').doc();
-
-		await clinicRef.set({
-			name: parsed.data.name,
-			createdAt: now,
-			updatedAt: now,
-		});
-
 		const dniInt = parseInt(parsed.data.admin.dni, 10);
 		if (dniInt < 1000000 || dniInt > 99999999) {
 			return res.status(400).json({
@@ -163,43 +136,10 @@ router.post(
 			});
 		}
 
-		const userSnap = await db
-			.collection('users')
-			.where('dni', '==', dniInt)
-			.limit(1)
-			.get();
-
-		let uid: string;
-
-		if (!userSnap.empty) {
-			const userDoc = userSnap.docs[0];
-			if (!userDoc) throw new Error('Unexpected null doc');
-			uid = userDoc.id;
-			await userDoc.ref.update({
-				name: parsed.data.admin.name,
-				email: parsed.data.admin.email,
-				updatedAt: now,
-			});
-		} else {
-			const newUserRef = db.collection('users').doc();
-			uid = newUserRef.id;
-
-			await newUserRef.set({
-				email: parsed.data.admin.email,
-				dni: dniInt,
-				name: parsed.data.admin.name,
-				createdAt: now,
-				updatedAt: now,
-			});
-		}
-
-		await db.collection('clinic_memberships').add({
-			clinicId: clinicRef.id,
-			uid,
-			role: 'clinic_admin',
-			isActive: true,
-			createdAt: now,
-			updatedAt: now,
+		const db = getFirestoreDb();
+		const { clinic, adminUid } = await createClinicWithAdmin({
+			db,
+			data: parsed.data,
 			createdByUid: req.auth?.uid ?? null,
 		});
 
@@ -207,8 +147,8 @@ router.post(
 			success: true,
 			message: 'Clinic created',
 			data: {
-				clinicId: clinicRef.id,
-				adminUid: uid,
+				...clinic,
+				adminUid,
 			},
 		});
 	},
@@ -253,6 +193,56 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 			isPlatformAdmin: req.auth.isPlatformAdmin,
 			clinics,
 		},
+	});
+});
+
+router.get('/:clinicId', authMiddleware, async (req: Request, res: Response) => {
+	const clinicId = req.params.clinicId;
+	if (!clinicId) {
+		return res
+			.status(400)
+			.json({ success: false, message: 'Missing clinicId' });
+	}
+
+	const auth = req.auth;
+	if (!auth) {
+		return res.status(401).json({ success: false, message: 'Unauthenticated' });
+	}
+
+	const db = getFirestoreDb();
+	const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+
+	if (!clinicSnap.exists) {
+		console.warn('[clinics] not found', {
+			clinicId,
+			uid: auth.uid,
+			isPlatformAdmin: auth.isPlatformAdmin,
+		});
+		return res.status(404).json({ success: false, message: 'Not found' });
+	}
+
+	if (auth.role === 'patient') {
+		return res.status(403).json({ success: false, message: 'Forbidden' });
+	}
+
+	if (!auth.isPlatformAdmin) {
+		const membershipSnap = await db
+			.collection('clinic_memberships')
+			.where('clinicId', '==', clinicId)
+			.where('uid', '==', auth.uid)
+			.where('isActive', '==', true)
+			.limit(1)
+			.get();
+
+		if (membershipSnap.empty) {
+			return res.status(403).json({ success: false, message: 'Forbidden' });
+		}
+	}
+
+	const data = clinicSnap.data() as any;
+	return res.status(200).json({
+		success: true,
+		data: mapClinicSummary(clinicSnap.id, data),
 	});
 });
 
