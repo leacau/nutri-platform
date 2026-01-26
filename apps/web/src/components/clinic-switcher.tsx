@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 import { Select } from "./ui/select";
 
 export function ClinicSwitcher() {
-  const { clinics, activeClinicId, setActiveClinic, me } = useClinic();
+  const { clinics, activeClinicId, setActiveClinic, me, platformRole } = useClinic();
   const router = useRouter();
 
   const handleChange = (id: string) => {
@@ -29,11 +29,15 @@ export function ClinicSwitcher() {
             </option>
             {clinics?.map((clinic) => (
               <option key={clinic.id} value={clinic.id}>
-                {clinic.name} · {me?.memberships.find((m) => m.clinicId === clinic.id)?.role}
+                {clinic.name} · {me?.memberships.find((m) => m.clinicId === clinic.id)?.role ?? (platformRole === "platform_admin" ? "platform_admin" : "sin rol")}
               </option>
             ))}
           </Select>
-          <Button variant="outline" size="sm" onClick={() => router.push("/select-clinic")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(platformRole === "platform_admin" ? "/admin/clinics" : "/select-clinic")}
+          >
             <ChevronsUpDown className="mr-2 h-4 w-4" />
             Cambiar
           </Button>

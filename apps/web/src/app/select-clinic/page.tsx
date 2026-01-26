@@ -47,12 +47,19 @@ export default function SelectClinicPage() {
 	const searchParams = useSearchParams();
 	const { t } = useI18n();
 	const next = searchParams.get('next') || '/app/dashboard';
+	const isPlatformAdmin = me?.platformRole === 'platform_admin';
 
 	useEffect(() => {
 		if (activeClinicId) {
 			router.replace(next);
 		}
 	}, [activeClinicId, next, router]);
+
+	useEffect(() => {
+		if (isPlatformAdmin) {
+			router.replace(`/admin/clinics?next=${encodeURIComponent(next)}`);
+		}
+	}, [isPlatformAdmin, next, router]);
 
 	useEffect(() => {
 		(async () => {
@@ -79,8 +86,6 @@ export default function SelectClinicPage() {
 	const roleLabel = (clinicId: string) =>
 		me?.memberships.find((m) => m.clinicId === clinicId)?.role;
 
-	const isPlatformAdmin = me?.platformRole === 'platform_admin';
-
 	const {
 		register,
 		handleSubmit,
@@ -106,7 +111,7 @@ export default function SelectClinicPage() {
 		onSuccess: (data) => {
 			qc.invalidateQueries({ queryKey: ['clinics'] });
 			reset();
-			setActiveClinic(data.clinicId);
+			setActiveClinic(data.id);
 			router.push(next);
 		},
 		onError: () => alert('Error al crear la clínica'),

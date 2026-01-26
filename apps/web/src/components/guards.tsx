@@ -37,15 +37,17 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 export function ClinicGuard({ children }: { children: React.ReactNode }) {
-  const { activeClinicId, isLoading } = useClinic();
+  const { activeClinicId, isLoading, platformRole } = useClinic();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     if (!isLoading && !activeClinicId) {
-      router.push("/select-clinic?next=" + encodeURIComponent(pathname || "/app/dashboard"));
+      const target =
+        platformRole === "platform_admin" ? "/admin/clinics" : "/select-clinic";
+      router.push(target + "?next=" + encodeURIComponent(pathname || "/app/dashboard"));
     }
-  }, [activeClinicId, isLoading, router, pathname]);
+  }, [activeClinicId, isLoading, router, pathname, platformRole]);
 
   if (isLoading || (!activeClinicId && typeof window !== "undefined")) {
     return <LoadingScreen label="Seleccioná una clínica para continuar" />;
