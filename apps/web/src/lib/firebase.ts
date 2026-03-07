@@ -14,6 +14,9 @@ const firebaseConfig = {
 	appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+// Bandera para evitar que Next.js intente conectarse múltiples veces por el hot-reloading
+let isAuthEmulatorConnected = false;
+
 export function getFirebaseApp() {
 	if (!getApps().length) {
 		initializeApp(firebaseConfig);
@@ -24,16 +27,24 @@ export function getFirebaseApp() {
 export function getFirebaseAuth() {
 	const app = getFirebaseApp();
 	const auth = getAuth(app);
+
 	if (
-		typeof window !== 'undefined' &&
-		process.env.NEXT_PUBLIC_USE_EMULATORS === 'true'
+		process.env.NEXT_PUBLIC_USE_EMULATORS === 'true' &&
+		!isAuthEmulatorConnected
 	) {
 		const emulatorHost =
 			process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
+
 		connectAuthEmulator(auth, `http://${emulatorHost}`, {
-			disableWarnings: true,
+			disableWarnings: true, // Quita el cartel molesto de advertencia en la UI
 		});
+
+		isAuthEmulatorConnected = true;
+		console.log(
+			`[firebase-client] Conectado al emulador de Auth en ${emulatorHost}`,
+		);
 	}
+
 	return auth;
 }
 

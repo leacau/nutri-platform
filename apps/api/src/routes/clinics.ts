@@ -112,7 +112,6 @@ router.get(
 		}
 
 		const d = snap.docs[0];
-		// FIX CRÍTICO: Validación explícita para que compile TypeScript
 		if (!d) {
 			return res.status(200).json({ success: true, data: null });
 		}
@@ -193,6 +192,7 @@ router.post(
 			});
 		}
 
+		// 1. Asignamos la clínica al administrador que llenaste en el formulario
 		await db.collection('clinic_memberships').add({
 			clinicId: clinicRef.id,
 			uid,
@@ -202,6 +202,20 @@ router.post(
 			updatedAt: now,
 			createdByUid: req.auth?.uid ?? null,
 		});
+
+		// 2. FIX CRÍTICO: Te agregamos a vos (el superusuario creador) a la clínica
+		// para que puedas entrar automáticamente a configurarla.
+		if (req.auth?.uid && req.auth.uid !== uid) {
+			await db.collection('clinic_memberships').add({
+				clinicId: clinicRef.id,
+				uid: req.auth.uid,
+				role: 'clinic_admin',
+				isActive: true,
+				createdAt: now,
+				updatedAt: now,
+				createdByUid: req.auth.uid,
+			});
+		}
 
 		return res.status(201).json({
 			success: true,

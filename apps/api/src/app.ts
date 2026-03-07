@@ -14,31 +14,30 @@ import { devRouter } from './routes/dev.js';
 import { metricsMiddleware, metricsRegistry } from './middlewares/metrics.js';
 import { requireAuth } from './middlewares/requireAuth.js';
 
-const parseAllowedOrigins = (value: string | undefined): string[] =>
-	(value ?? '')
+// Si no hay orígenes definidos o es '*', permite todo. Si no, parsea la lista.
+const parseAllowedOrigins = (value?: string): string[] | string => {
+	if (!value || value === '*') return '*';
+	return value
 		.split(',')
-		.map((origin) => origin.trim())
-		.filter((origin) => origin.length > 0);
+		.map((o) => o.trim())
+		.filter(Boolean);
+};
 
 export function buildApp(): Express {
 	const app = express();
 	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+	const isProd = process.env.NODE_ENV === 'production';
 
+	// Seguridad y Parseo
 	app.use(helmet());
-	app.use(morgan('dev'));
-	app.use(metricsMiddleware);
+	app.use(morgan(isProd ? 'combined' : 'dev'));
 	app.use(express.json({ limit: '256kb' }));
 
+	// Configuración de CORS más limpia
 	app.use(
 		cors({
-			origin: (origin, callback) => {
-				if (!origin) return callback(null, true);
-				if (allowedOrigins.includes(origin)) {
-					return callback(null, true);
-				}
-				return callback(null, false);
-			},
-			credentials: false,
+			origin: allowedOrigins,
+			credentials: true,
 			methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 			allowedHeaders: [
 				'Content-Type',
@@ -46,24 +45,31 @@ export function buildApp(): Express {
 				'x-clinic-id',
 				'x-dev-secret',
 			],
-		})
+		}),
 	);
 
+	// Observabilidad (Métricas)
+	app.use(metricsMiddleware);
 	app.get('/metrics', async (_req: Request, res: Response) => {
 		res.setHeader('Content-Type', metricsRegistry.contentType);
 		res.send(await metricsRegistry.metrics());
 	});
 
-	app.get('/health', (_req: Request, res: Response) => {
-		res.status(200).json({ success: true, message: 'healthy' });
-	});
-
-	app.get('/api/health', (_req: Request, res: Response) => {
-		res.status(200).json({ success: true, message: 'api healthy' });
-	});
+	// Healthchecks (Útiles para el balanceador de carga de Cloud Run)
+	const healthCheck = (_req: Request, res: Response) => {
+		res
+			.status(200)
+			.json({
+				success: true,
+				message: 'healthy',
+				env: isProd ? 'production' : 'development',
+			});
+	};
+	app.get('/health', healthCheck);
+	app.get('/api/health', healthCheck);
 
 	// Rutas de Desarrollo (Excluidas de Auth Firebase, protegidas por Secret)
-	if (process.env.NODE_ENV !== 'production') {
+	if (!isProd) {
 		app.use(
 			'/api/dev',
 			(req: Request, res: Response, next: NextFunction) => {
@@ -75,17 +81,17 @@ export function buildApp(): Express {
 				}
 				return next();
 			},
-			devRouter
+			devRouter,
 		);
 	}
 
 	// API Principal Protegida
 	app.use('/api', requireAuth, apiRouter);
 
+	// 404 & Manejo centralizado de errores
 	app.use((_req: Request, res: Response) => {
 		res.status(404).json({ success: false, message: 'Not found' });
 	});
-
 	app.use(errorHandler);
 
 	return app;

@@ -41,30 +41,21 @@ type CreateClinicForm = z.infer<typeof createClinicSchema>;
 
 export default function SelectClinicPage() {
 	const qc = useQueryClient();
-	const { clinics, me, setActiveClinic, activeClinicId } = useClinic();
+	const { clinics, me, setActiveClinic } = useClinic();
 	const { logout, idToken } = useAuth();
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const { t } = useI18n();
 	const next = searchParams.get('next') || '/app/dashboard';
 
-	useEffect(() => {
-		if (activeClinicId) {
-			router.replace(next);
-		}
-	}, [activeClinicId, next, router]);
+	const isPlatformAdmin = me?.platformRole === 'platform_admin';
 
 	useEffect(() => {
 		(async () => {
 			const auth = getFirebaseAuth();
 			const user = auth.currentUser;
 
-			if (!user) {
-				console.log(
-					'No hay usuario logueado todavía (auth.currentUser = null).'
-				);
-				return;
-			}
+			if (!user) return;
 
 			const token = await user.getIdToken(true);
 			console.log('🔥 ID TOKEN (copiar completo):', token);
@@ -76,10 +67,10 @@ export default function SelectClinicPage() {
 		router.push(next);
 	};
 
-	const roleLabel = (clinicId: string) =>
-		me?.memberships.find((m) => m.clinicId === clinicId)?.role;
-
-	const isPlatformAdmin = me?.platformRole === 'platform_admin';
+	const roleLabel = (clinicId: string) => {
+		if (isPlatformAdmin) return 'Superusuario';
+		return me?.memberships.find((m) => m.clinicId === clinicId)?.role;
+	};
 
 	const {
 		register,
@@ -101,13 +92,13 @@ export default function SelectClinicPage() {
 						dni: data.adminDni,
 					},
 				},
-				idToken || undefined
+				idToken || undefined,
 			),
-		onSuccess: (data) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['clinics'] });
 			reset();
-			setActiveClinic(data.clinicId);
-			router.push(next);
+			// Ya no forzamos la redirección ni seteamos la clínica activa aquí,
+			// así te quedás en la pantalla viendo tu nueva clínica en la lista.
 		},
 		onError: () => alert('Error al crear la clínica'),
 	});
@@ -121,7 +112,7 @@ export default function SelectClinicPage() {
 							{t('clinic.select')}
 						</p>
 						<h1 className='text-3xl font-semibold text-primary'>
-							Clínica activa
+							{isPlatformAdmin ? 'Panel de Plataforma' : 'Clínica activa'}
 						</h1>
 					</div>
 					<Button variant='ghost' onClick={logout}>
@@ -151,7 +142,7 @@ export default function SelectClinicPage() {
 									variant='default'
 								>
 									<CheckCircle2 className='mr-2 h-4 w-4' />
-									Activar
+									Ingresar
 								</Button>
 							</CardContent>
 						</Card>
@@ -171,7 +162,7 @@ export default function SelectClinicPage() {
 						<CardContent>
 							<form
 								onSubmit={handleSubmit((data) =>
-									createClinicMutation.mutate(data)
+									createClinicMutation.mutate(data),
 								)}
 								className='grid gap-4 md:grid-cols-2'
 							>
@@ -220,7 +211,7 @@ export default function SelectClinicPage() {
 								</div>
 								<div className='flex items-end md:col-span-2'>
 									<Button type='submit' disabled={isSubmitting}>
-										Crear clínica
+										{isSubmitting ? 'Creando...' : 'Crear clínica'}
 									</Button>
 								</div>
 							</form>

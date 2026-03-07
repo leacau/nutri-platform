@@ -1,6 +1,7 @@
 'use client';
 
 import { LogIn, ShieldCheck } from 'lucide-react';
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { Button } from '../../../components/ui/button';
@@ -10,7 +11,6 @@ import Link from 'next/link';
 import { useAuth } from '../../../providers/auth-provider';
 import { useForm } from 'react-hook-form';
 import { useI18n } from '../../../providers/i18n-provider';
-import { useState } from 'react';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
@@ -21,7 +21,7 @@ const loginSchema = z.object({
 
 type LoginForm = z.infer<typeof loginSchema>;
 
-export default function LoginPage() {
+function LoginContent() {
 	const { loginWithEmail, loginWithGoogle } = useAuth();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -42,11 +42,10 @@ export default function LoginPage() {
 		try {
 			await loginWithEmail(data.email, data.password);
 			router.push(next);
-		} catch (err) {
-			console.error(err);
-			setError(
-				'No pudimos iniciar sesión. Revisá tus datos o probá con Google.'
-			);
+		} catch (err: any) {
+			console.error('[Login Error Detallado]:', err);
+			const firebaseError = err?.code || err?.message || 'Error desconocido';
+			setError(`Error devuelto por Firebase: ${firebaseError}`);
 		}
 	};
 
@@ -55,9 +54,9 @@ export default function LoginPage() {
 		try {
 			await loginWithGoogle();
 			router.push(next);
-		} catch (err) {
-			console.error(err);
-			setError('No pudimos iniciar sesión con Google');
+		} catch (err: any) {
+			console.error('[Google Login Error]:', err);
+			setError(`Error con Google: ${err?.code || err?.message}`);
 		}
 	};
 
@@ -112,11 +111,17 @@ export default function LoginPage() {
 							{...register('password')}
 						/>
 					</div>
-					{error ? <p className='text-sm text-destructive'>{error}</p> : null}
+
+					{error && (
+						<div className='rounded-md bg-destructive/15 p-3'>
+							<p className='text-sm font-medium text-destructive'>{error}</p>
+						</div>
+					)}
+
 					<div className='space-y-3'>
 						<Button type='submit' className='w-full' disabled={isSubmitting}>
 							<LogIn className='mr-2 h-4 w-4' />
-							{t('action.login')}
+							{isSubmitting ? 'Cargando...' : t('action.login')}
 						</Button>
 						<Button
 							type='button'
@@ -152,5 +157,19 @@ export default function LoginPage() {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+export default function LoginPage() {
+	return (
+		<Suspense
+			fallback={
+				<div className='flex min-h-screen items-center justify-center'>
+					Cargando...
+				</div>
+			}
+		>
+			<LoginContent />
+		</Suspense>
 	);
 }
