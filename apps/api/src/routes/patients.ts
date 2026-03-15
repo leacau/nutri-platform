@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 
+import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
 import { denyAuthz } from '../security/authz.js';
@@ -18,7 +19,7 @@ async function upsertUserForPatient(
 	dni: number,
 	name: string,
 	email: string | null,
-	phone: string | null
+	phone: string | null,
 ) {
 	const db = getFirestoreDb();
 	const now = Timestamp.now();
@@ -53,19 +54,21 @@ async function upsertUserForPatient(
 	return ref.id;
 }
 
+// FIX: Aceptamos string vacío para email y teléfono
 const createPatientSchema = z.object({
 	name: z.string().min(2),
 	dni: z.string().min(7).max(8),
-	email: z.string().email().optional().nullable(),
-	phone: z.string().min(5).optional().nullable(),
+	email: z.string().email().or(z.literal('')).optional().nullable(),
+	phone: z.string().or(z.literal('')).optional().nullable(),
 	assignedProfessionalUids: z.array(z.string().min(1)).optional().nullable(),
 });
 
+// FIX: Aceptamos string vacío para email y teléfono
 const patchPatientSchema = z.object({
 	name: z.string().min(2).optional(),
 	dni: z.string().min(7).max(8).optional(),
-	email: z.string().email().optional().nullable(),
-	phone: z.string().min(5).optional().nullable(),
+	email: z.string().email().or(z.literal('')).optional().nullable(),
+	phone: z.string().or(z.literal('')).optional().nullable(),
 	assignedProfessionalUids: z.array(z.string().min(1)).optional().nullable(),
 	status: z.string().optional(),
 });
@@ -77,13 +80,13 @@ const assignProfessionalSchema = z.object({
 function clinicScopedUnlessPlatformAdmin(
 	req: Request,
 	res: Response,
-	next: () => void
+	next: () => void,
 ) {
 	if (req.auth?.isPlatformAdmin) return next();
 	return requireClinicContext(req, res, next);
 }
 
-// Endpoint Lookup (Búsqueda por DNI)
+// Endpoint Lookup Mejorado: Busca en pacientes y en usuarios generales
 patientsRouter.get(
 	'/lookup',
 	requireClinicContext,
@@ -99,37 +102,62 @@ patientsRouter.get(
 		}
 
 		const db = getFirestoreDb();
-		// Búsqueda exacta numérica
+
+		// 1. Buscamos primero si ya tiene historia clínica en alguna parte
 		const snap = await db
 			.collection('patients')
 			.where('dni', '==', dniVal)
 			.limit(1)
 			.get();
 
-		if (snap.empty) {
-			return res.status(200).json({ success: true, data: null });
+		if (!snap.empty) {
+			const doc = snap.docs[0]!;
+			const data = doc.data() as any;
+
+			// FIX: Compatibilidad con registros viejos que usaban firstName/lastName
+			const fullName =
+				data.name ||
+				[data.firstName, data.lastName].filter(Boolean).join(' ') ||
+				'';
+
+			return res.status(200).json({
+				success: true,
+				data: {
+					id: doc.id,
+					name: fullName,
+					email: data.email,
+					phone: data.phone,
+					clinicId: data.clinicId,
+					assignedProfessionalUids: data.assignedProfessionalUids || [],
+				},
+			});
 		}
 
-		const doc = snap.docs[0];
-		// FIX CRÍTICO: Validación explícita para TS
-		if (!doc) {
-			return res.status(200).json({ success: true, data: null });
+		// 2. Si no es paciente, buscamos si existe como Persona/Usuario (Ej: Un médico que viene a atenderse)
+		const userSnap = await db
+			.collection('users')
+			.where('dni', '==', dniVal)
+			.limit(1)
+			.get();
+
+		if (!userSnap.empty) {
+			const uData = userSnap.docs[0]!.data();
+			return res.status(200).json({
+				success: true,
+				data: {
+					id: null,
+					name: uData.name || '',
+					email: uData.email,
+					phone: uData.phone,
+					clinicId: null,
+					assignedProfessionalUids: [],
+				},
+			});
 		}
 
-		const data = doc.data() as PatientDoc;
-
-		return res.status(200).json({
-			success: true,
-			data: {
-				id: doc.id,
-				name: data.name,
-				email: data.email,
-				phone: data.phone,
-				clinicId: data.clinicId,
-				assignedProfessionalUids: data.assignedProfessionalUids,
-			},
-		});
-	}
+		// No existe en ningún lado
+		return res.status(200).json({ success: true, data: null });
+	},
 );
 
 patientsRouter.get(
@@ -175,76 +203,82 @@ patientsRouter.get(
 		return res.status(200).json({
 			success: true,
 			data: items.map((p) =>
-				sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p)
+				sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p),
 			),
 		});
-	}
+	},
 );
 
-patientsRouter.get('/:id', async (req: Request, res: Response) => {
-	const auth = req.auth!;
-	const patientId = req.params.id;
+// FIX CRÍTICO: Agregado clinicScopedUnlessPlatformAdmin para resolver el auth.role
+patientsRouter.get(
+	'/:id',
+	authMiddleware,
+	clinicScopedUnlessPlatformAdmin,
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const patientId = req.params.id;
 
-	if (!patientId) {
-		return res
-			.status(400)
-			.json({ success: false, message: 'Missing patient id' });
-	}
+		if (!patientId) {
+			return res
+				.status(400)
+				.json({ success: false, message: 'Missing patient id' });
+		}
 
-	const db = getFirestoreDb();
-	const snap = await db.collection('patients').doc(patientId).get();
+		const db = getFirestoreDb();
+		const snap = await db.collection('patients').doc(patientId).get();
 
-	if (!snap.exists) {
-		return res
-			.status(404)
-			.json({ success: false, message: 'Patient not found' });
-	}
+		if (!snap.exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Patient not found' });
+		}
 
-	const patient = { id: snap.id, ...(snap.data() as PatientDoc) };
+		const patient = { id: snap.id, ...(snap.data() as PatientDoc) };
 
-	let isAllowed = false;
+		let isAllowed = false;
 
-	if (auth.isPlatformAdmin) {
-		isAllowed = true;
-	} else if (
-		auth.role === 'professional' &&
-		(patient.assignedProfessionalUids ?? []).includes(auth.uid)
-	) {
-		isAllowed = true;
-	} else {
-		// Verificar si el usuario pertenece a la misma clínica que el paciente
-		const membershipSnap = await db
-			.collection('clinic_memberships')
-			.where('clinicId', '==', patient.clinicId)
-			.where('uid', '==', auth.uid)
-			.where('isActive', '==', true)
-			.limit(1)
-			.get();
+		if (auth.isPlatformAdmin) {
+			isAllowed = true;
+		} else if (
+			auth.role === 'professional' &&
+			(patient.assignedProfessionalUids ?? []).includes(auth.uid)
+		) {
+			isAllowed = true;
+		} else {
+			// Verificar si el usuario pertenece a la misma clínica que el paciente
+			const membershipSnap = await db
+				.collection('clinic_memberships')
+				.where('clinicId', '==', patient.clinicId)
+				.where('uid', '==', auth.uid)
+				.where('isActive', '==', true)
+				.limit(1)
+				.get();
 
-		if (!membershipSnap.empty) {
-			const mem = membershipSnap.docs[0]?.data();
-			if (mem && ['clinic_admin', 'staff'].includes(mem.role)) {
-				isAllowed = true;
+			if (!membershipSnap.empty) {
+				const mem = membershipSnap.docs[0]?.data();
+				if (mem && ['clinic_admin', 'staff'].includes(mem.role)) {
+					isAllowed = true;
+				}
 			}
 		}
-	}
 
-	if (!isAllowed) {
-		return denyAuthz(
-			req,
-			res,
-			'You do not have permission to view this patient'
-		);
-	}
+		if (!isAllowed) {
+			return denyAuthz(
+				req,
+				res,
+				'You do not have permission to view this patient',
+			);
+		}
 
-	return res.status(200).json({
-		success: true,
-		data: sanitizePatientForRole(
-			(auth.role ?? 'platform_admin') as Role,
-			patient
-		),
-	});
-});
+		return res.status(200).json({
+			success: true,
+			data: sanitizePatientForRole(
+				(auth.role ?? 'platform_admin') as Role,
+				patient,
+			),
+		});
+	},
+);
 
 patientsRouter.post(
 	'/',
@@ -266,7 +300,7 @@ patientsRouter.post(
 			return denyAuthz(
 				req,
 				res,
-				'Missing clinic context when creating patient'
+				'Missing clinic context when creating patient',
 			);
 		}
 
@@ -279,7 +313,6 @@ patientsRouter.post(
 			});
 		}
 
-		// FIX: Buscar por valor numérico para evitar duplicados
 		const existingDniSnap = await db
 			.collection('patients')
 			.where('dni', '==', dniVal)
@@ -293,25 +326,26 @@ patientsRouter.post(
 				dniVal,
 				parsed.data.name,
 				parsed.data.email ?? null,
-				parsed.data.phone ?? null
+				parsed.data.phone ?? null,
 			);
 
 			const updateData: Partial<PatientDoc> = {
 				updatedAt: Timestamp.now(),
 				userId,
+				name: parsed.data.name, // Aseguramos que se actualice el nombre unificado
 			};
 
 			const existingProfessionals = existingData.assignedProfessionalUids ?? [];
 			if (auth.role === 'professional') {
 				updateData.assignedProfessionalUids = Array.from(
-					new Set([...existingProfessionals, auth.uid])
+					new Set([...existingProfessionals, auth.uid]),
 				);
 			} else if (parsed.data.assignedProfessionalUids) {
 				updateData.assignedProfessionalUids = Array.from(
 					new Set([
 						...existingProfessionals,
 						...parsed.data.assignedProfessionalUids,
-					])
+					]),
 				);
 			}
 
@@ -343,7 +377,7 @@ patientsRouter.post(
 			dniVal,
 			parsed.data.name,
 			parsed.data.email ?? null,
-			parsed.data.phone ?? null
+			parsed.data.phone ?? null,
 		);
 
 		const assignedProfessionalUids =
@@ -358,8 +392,8 @@ patientsRouter.post(
 			userId,
 			name: parsed.data.name,
 			dni: dniVal,
-			email: parsed.data.email ?? null,
-			phone: parsed.data.phone ?? null,
+			email: parsed.data.email || null, // Convertimos string vacío a null para la BD
+			phone: parsed.data.phone || null, // Convertimos string vacío a null para la BD
 			linkedUid: null,
 			status: 'active',
 			createdAt: now,
@@ -377,10 +411,10 @@ patientsRouter.post(
 			message: 'Patient created',
 			data: sanitizePatientForRole(
 				(auth.role ?? 'platform_admin') as Role,
-				created
+				created,
 			),
 		});
-	}
+	},
 );
 
 patientsRouter.patch(
@@ -422,7 +456,7 @@ patientsRouter.patch(
 				db,
 				'patients',
 				patientId,
-				clinicId
+				clinicId,
 			);
 		}
 
@@ -435,9 +469,14 @@ patientsRouter.patch(
 		const update: Partial<PatientDoc> = { updatedAt: Timestamp.now() };
 		const nextName = parsed.data.name ?? current.name;
 		const nextEmail =
-			parsed.data.email !== undefined ? parsed.data.email ?? null : current.email;
+			parsed.data.email !== undefined
+				? parsed.data.email || null
+				: current.email;
 		const nextPhone =
-			parsed.data.phone !== undefined ? parsed.data.phone ?? null : current.phone;
+			parsed.data.phone !== undefined
+				? parsed.data.phone || null
+				: current.phone;
+
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
 		if (parsed.data.dni !== undefined) {
 			const parsedDni = parseInt(parsed.data.dni, 10);
@@ -452,7 +491,9 @@ patientsRouter.patch(
 				.where('dni', '==', parsedDni)
 				.limit(1)
 				.get();
-			const conflictingDoc = existingDni.docs.find((doc) => doc.id !== patientId);
+			const conflictingDoc = existingDni.docs.find(
+				(doc) => doc.id !== patientId,
+			);
 			if (conflictingDoc) {
 				return res.status(400).json({
 					success: false,
@@ -462,14 +503,14 @@ patientsRouter.patch(
 			update.dni = parsedDni;
 		}
 		if (parsed.data.email !== undefined)
-			update.email = parsed.data.email ?? null;
+			update.email = parsed.data.email || null;
 		if (parsed.data.phone !== undefined)
-			update.phone = parsed.data.phone ?? null;
+			update.phone = parsed.data.phone || null;
 		if (parsed.data.assignedProfessionalUids !== undefined) {
 			update.assignedProfessionalUids =
 				auth.role === 'professional'
 					? [auth.uid]
-					: parsed.data.assignedProfessionalUids ?? [];
+					: (parsed.data.assignedProfessionalUids ?? []);
 		}
 		if (parsed.data.status !== undefined && auth.role !== 'staff') {
 			update.status = parsed.data.status as
@@ -489,7 +530,7 @@ patientsRouter.patch(
 				dniToUse,
 				nextName,
 				nextEmail,
-				nextPhone
+				nextPhone,
 			);
 		}
 
@@ -503,10 +544,10 @@ patientsRouter.patch(
 			message: 'Patient updated',
 			data: sanitizePatientForRole(
 				(auth.role ?? 'platform_admin') as Role,
-				fresh
+				fresh,
 			),
 		});
-	}
+	},
 );
 
 patientsRouter.post(
@@ -543,7 +584,7 @@ patientsRouter.post(
 			db,
 			'patients',
 			patientId,
-			clinicId
+			clinicId,
 		);
 		if (!patient) {
 			return res
@@ -576,22 +617,19 @@ patientsRouter.post(
 					new Set([
 						...(patient.assignedProfessionalUids ?? []),
 						professionalUid,
-					])
+					]),
 				)
 			: [];
 
-		await db
-			.collection('patients')
-			.doc(patientId)
-			.update({
-				assignedProfessionalUids: updatedProfessionals,
-				updatedAt: Timestamp.now(),
-			});
+		await db.collection('patients').doc(patientId).update({
+			assignedProfessionalUids: updatedProfessionals,
+			updatedAt: Timestamp.now(),
+		});
 
 		return res.status(200).json({
 			success: true,
 			message: 'Patient assigned',
 			data: { id: patientId, assignedProfessionalUids: updatedProfessionals },
 		});
-	}
+	},
 );

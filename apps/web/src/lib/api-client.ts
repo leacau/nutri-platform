@@ -28,8 +28,6 @@ type ApiResponse<T> = {
 };
 
 function joinUrl(base: string, path: string): string {
-	// Base puede venir como "https://.../api" o "/api"
-	// Path suele venir como "/session"
 	const b = base.endsWith('/') ? base.slice(0, -1) : base;
 	const p = path.startsWith('/') ? path : `/${path}`;
 	return `${b}${p}`;
@@ -45,7 +43,7 @@ async function safeReadText(res: Response): Promise<string> {
 
 async function request<T>(
 	path: string,
-	options: RequestOptions<T> = {}
+	options: RequestOptions<T> = {},
 ): Promise<T> {
 	const headers = new Headers({
 		'Content-Type': 'application/json',
@@ -77,17 +75,13 @@ async function request<T>(
 			}
 
 			const text = await safeReadText(res);
-			// Si el backend devuelve JSON error, lo mostramos
-			// Si devuelve text/plain (Cloud Run), también
 			throw new Error(
-				text || `Request failed: ${res.status} ${res.statusText}`
+				text || `Request failed: ${res.status} ${res.statusText}`,
 			);
 		}
 
-		// Algunas respuestas pueden no ser JSON (pero en tu API casi todo es JSON)
 		const contentType = res.headers.get('content-type') || '';
 		if (!contentType.includes('application/json')) {
-			// fallback: devolvemos texto como any
 			const text = await safeReadText(res);
 			return text as unknown as T;
 		}
@@ -117,10 +111,9 @@ const mockDb: any = {
 };
 
 export const apiClient = {
-	// ✅ FIX: existe como método de apiClient (como lo usa register/page.tsx)
 	upsertUserProfile: (
 		data: { name: string; email?: string; dni?: string },
-		token?: string
+		token?: string,
 	) =>
 		request<{ uid: string }>('/users/self', {
 			method: 'POST',
@@ -141,7 +134,7 @@ export const apiClient = {
 						clinicId: c.clinicId,
 						role: c.role,
 						clinicName: c.clinicName || c.clinicId,
-					}))
+					})),
 				);
 			}
 
@@ -151,7 +144,7 @@ export const apiClient = {
 						clinicId: c.clinicId,
 						role: 'patient',
 						clinicName: c.clinicName || 'Clínica',
-					}))
+					})),
 				);
 			}
 
@@ -189,7 +182,7 @@ export const apiClient = {
 	saveClinicSettings: (
 		clinicId: string,
 		settings: Partial<ClinicSettings>,
-		token?: string
+		token?: string,
 	) =>
 		request<ClinicSettings>(`/clinics/${clinicId}/settings`, {
 			method: 'PATCH',
@@ -235,7 +228,7 @@ export const apiClient = {
 			token,
 			clinicId,
 			body: { ...data },
-			mockFallback: () => ({ id: 'mock-id', ...data } as Patient),
+			mockFallback: () => ({ id: 'mock-id', ...data }) as Patient,
 		}),
 
 	appointments: (clinicId: string, token?: string) =>
@@ -245,17 +238,46 @@ export const apiClient = {
 			mockFallback: () => [],
 		}),
 
+	// NUEVO: Para crear turnos directamente desde cero
+	createAppointment: (
+		body: Partial<Appointment>,
+		clinicId: string,
+		token?: string,
+	) =>
+		request<Appointment>('/appointments', {
+			method: 'POST',
+			token,
+			clinicId,
+			body,
+			mockFallback: () =>
+				({ ...body, id: 'mock-id', status: 'scheduled' }) as Appointment,
+		}),
+
 	scheduleAppointment: (
 		body: Partial<Appointment>,
 		clinicId: string,
-		token?: string
+		token?: string,
 	) =>
 		request<Appointment>(`/appointments/${body.id || 'new'}/schedule`, {
 			method: 'POST',
 			token,
 			clinicId,
 			body,
-			mockFallback: () => ({ ...body } as Appointment),
+			mockFallback: () => ({ ...body }) as Appointment,
+		}),
+
+	// NUEVO: Para actualizar turnos existentes
+	updateAppointment: (
+		id: string,
+		clinicId: string,
+		data: Partial<Appointment>,
+		token?: string,
+	) =>
+		request<Appointment>(`/appointments/${id}`, {
+			method: 'PATCH',
+			token,
+			clinicId,
+			body: data,
 		}),
 
 	requestAppointment: (body: any, clinicId: string, token?: string) =>
@@ -271,7 +293,7 @@ export const apiClient = {
 			method: 'POST',
 			token,
 			clinicId,
-			mockFallback: () => ({ id, status: 'cancelled' } as any),
+			mockFallback: () => ({ id, status: 'cancelled' }) as any,
 		}),
 
 	templates: (clinicId: string, token?: string) =>
@@ -294,7 +316,7 @@ export const apiClient = {
 			clinicId,
 			mockFallback: () => [],
 		}).then((members: any) =>
-			members.filter((m: any) => m.role === 'professional')
+			members.filter((m: any) => m.role === 'professional'),
 		),
 
 	staff: (clinicId: string, token?: string) =>
@@ -310,13 +332,13 @@ export const apiClient = {
 			{
 				token,
 				mockFallback: () => null,
-			}
+			},
 		),
 
 	inviteMember: (
 		clinicId: string,
 		data: { name: string; email: string; dni: string; role: string },
-		token?: string
+		token?: string,
 	) =>
 		request<any>(`/clinics/${clinicId}/invite`, {
 			method: 'POST',
@@ -327,7 +349,7 @@ export const apiClient = {
 
 	createClinic: (
 		data: { name: string; admin: { name: string; email: string; dni: string } },
-		token?: string
+		token?: string,
 	) =>
 		request<{ clinicId: string; adminUid: string }>('/clinics', {
 			method: 'POST',

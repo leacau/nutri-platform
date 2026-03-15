@@ -6,7 +6,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from '../../../../components/ui/card';
-import { Filter, Plus, Search } from 'lucide-react';
+import { Filter, Link as LinkIcon, Plus, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -14,6 +14,7 @@ import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
+import Link from 'next/link';
 import { Select } from '../../../../components/ui/select';
 import { Textarea } from '../../../../components/ui/textarea';
 import { UserAccount } from '../../../../lib/types';
@@ -60,6 +61,7 @@ export default function PatientsPage() {
 
 	const [search, setSearch] = useState('');
 	const [selectedProfessional, setSelectedProfessional] = useState('all');
+	const [linkMessage, setLinkMessage] = useState<string | null>(null);
 
 	const mutation = useMutation({
 		mutationFn: async (data: PatientForm) => {
@@ -73,13 +75,14 @@ export default function PatientsPage() {
 					...data,
 					assignedProfessionalUids,
 				},
-				idToken ?? undefined
+				idToken ?? undefined,
 			);
 		},
-		onSuccess: (data) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['patients', activeClinicId] });
 			reset();
-			alert('Paciente guardado exitosamente');
+			setLinkMessage(null);
+			alert('Paciente guardado/vinculado exitosamente');
 		},
 		onError: () => {
 			alert('Error al guardar paciente');
@@ -97,33 +100,44 @@ export default function PatientsPage() {
 		defaultValues: { sexo: 'female' },
 	});
 
-	// Lógica mejorada para buscar paciente al salir del campo DNI
 	const handleDniBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
 		const dniVal = e.target.value;
-		// Solo buscar si tiene longitud válida (para evitar llamadas innecesarias)
-		if (dniVal.length < 7 || !activeClinicId) return;
+		if (dniVal.length < 7 || !activeClinicId) {
+			setLinkMessage(null);
+			return;
+		}
 
 		try {
 			const found = await apiClient.lookupPatient(
 				dniVal,
 				activeClinicId,
-				idToken ?? undefined
+				idToken ?? undefined,
 			);
+
 			if (found) {
-				// Rellenar campos automáticamente
-				setValue('name', found.name);
+				setValue('name', found.name || '');
 				if (found.email) setValue('email', found.email);
 				if (found.phone) setValue('phone', found.phone);
 
-				const mensaje =
-					found.clinicId === activeClinicId
-						? `El paciente ${found.name} ya existe en esta clínica.`
-						: `El paciente ${found.name} existe en otra clínica. Al guardar se moverá aquí.`;
-
-				alert(mensaje);
+				if (found.clinicId === activeClinicId) {
+					setLinkMessage(
+						`Este paciente ya está registrado en la clínica. Haz clic en Vincular para agregarlo a tu lista.`,
+					);
+				} else if (found.clinicId) {
+					setLinkMessage(
+						`Paciente encontrado en otra clínica de la red. Haz clic en Vincular para traer su perfil.`,
+					);
+				} else {
+					setLinkMessage(
+						`Persona encontrada en la plataforma. Haz clic en Vincular para crearle una ficha médica.`,
+					);
+				}
+			} else {
+				setLinkMessage(null);
 			}
 		} catch (error) {
 			console.error('Error buscando paciente:', error);
+			setLinkMessage(null);
 		}
 	};
 
@@ -201,7 +215,7 @@ export default function PatientsPage() {
 									</Badge>
 								</div>
 								<Button variant='outline' size='sm' asChild>
-									<a href={`/app/patients/${patient.id}`}>Ver ficha</a>
+									<Link href={`/app/patients/${patient.id}`}>Ver ficha</Link>
 								</Button>
 							</div>
 						))}
@@ -218,7 +232,7 @@ export default function PatientsPage() {
 				<CardHeader>
 					<CardTitle className='flex items-center gap-2 text-lg'>
 						<Plus className='h-4 w-4' />
-						Crear paciente
+						Crear o vincular paciente
 					</CardTitle>
 				</CardHeader>
 				<CardContent>
@@ -234,17 +248,27 @@ export default function PatientsPage() {
 								onBlur={handleDniBlur}
 							/>
 							{errors.dni && (
-								<span className='text-xs text-red-500 font-medium'>
+								<span className='text-xs font-medium text-red-500'>
 									{errors.dni.message}
 								</span>
 							)}
 						</div>
 
+						{linkMessage && (
+							<div className='rounded-md bg-secondary/15 p-3 text-sm text-secondary-foreground'>
+								<div className='flex items-center gap-2 font-semibold'>
+									<LinkIcon className='h-4 w-4' />
+									¡Coincidencia encontrada!
+								</div>
+								<p className='mt-1 opacity-90'>{linkMessage}</p>
+							</div>
+						)}
+
 						<div className='space-y-1'>
 							<Label>Nombre</Label>
 							<Input placeholder='Nombre y apellido' {...register('name')} />
 							{errors.name && (
-								<span className='text-xs text-red-500 font-medium'>
+								<span className='text-xs font-medium text-red-500'>
 									{errors.name.message}
 								</span>
 							)}
@@ -257,7 +281,7 @@ export default function PatientsPage() {
 								{...register('email')}
 							/>
 							{errors.email && (
-								<span className='text-xs text-red-500 font-medium'>
+								<span className='text-xs font-medium text-red-500'>
 									{errors.email.message}
 								</span>
 							)}
@@ -300,12 +324,21 @@ export default function PatientsPage() {
 							/>
 						</div>
 						<Button type='submit' className='w-full' disabled={isSubmitting}>
-							<Plus className='mr-2 h-4 w-4' />
-							Guardar
+							{isSubmitting ? (
+								'Procesando...'
+							) : linkMessage ? (
+								<>
+									<LinkIcon className='mr-2 h-4 w-4' /> Vincular a mi lista
+								</>
+							) : (
+								<>
+									<Plus className='mr-2 h-4 w-4' /> Guardar nuevo paciente
+								</>
+							)}
 						</Button>
 						{mutation.error ? (
 							<p className='text-sm text-destructive'>
-								No pudimos crear el paciente.
+								No pudimos procesar la solicitud.
 							</p>
 						) : null}
 					</form>

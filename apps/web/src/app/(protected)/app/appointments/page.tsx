@@ -15,7 +15,7 @@ import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Select } from '../../../../components/ui/select';
-import { UserAccount } from '../../../../lib/types'; // Import agregado
+import { UserAccount } from '../../../../lib/types';
 import { apiClient } from '../../../../lib/api-client';
 import { formatDate } from '../../../../lib/utils';
 import { useAuth } from '../../../../providers/auth-provider';
@@ -32,11 +32,25 @@ export default function AppointmentsPage() {
 
 	const isMeProfessional = activeMembership?.role === 'professional';
 
-	const [newAppointment, setNewAppointment] = useState({
+	const [newAppointment, setNewAppointment] = useState<{
+		id?: string;
+		patientId: string;
+		professionalUid: string;
+		scheduledFor: string;
+	}>({
 		patientId: '',
 		professionalUid: isMeProfessional && user ? user.uid : '',
 		scheduledFor: '',
 	});
+
+	const resetForm = () => {
+		setNewAppointment({
+			id: undefined,
+			patientId: '',
+			professionalUid: isMeProfessional && user ? user.uid : '',
+			scheduledFor: '',
+		});
+	};
 
 	useEffect(() => {
 		if (
@@ -71,23 +85,65 @@ export default function AppointmentsPage() {
 			) {
 				throw new Error('Faltan datos');
 			}
-			return apiClient.scheduleAppointment(
+
+			// FIX: Usamos createAppointment para crear turnos desde cero
+			return apiClient.createAppointment(
 				{
-					...newAppointment,
-					status: 'scheduled',
-					requestedAt: new Date().toISOString(),
+					patientId: newAppointment.patientId,
+					professionalUid: newAppointment.professionalUid,
+					scheduledFor: new Date(newAppointment.scheduledFor).toISOString(),
 				},
 				activeClinicId || '',
-				idToken || undefined
+				idToken || undefined,
 			);
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['appointments'] });
-			setNewAppointment({
-				patientId: '',
-				professionalUid: isMeProfessional && user ? user.uid : '',
-				scheduledFor: '',
-			});
+			resetForm();
+		},
+	});
+
+	const updateMutation = useMutation({
+		mutationFn: async () => {
+			if (!newAppointment.id || !newAppointment.scheduledFor) {
+				throw new Error('Faltan datos para actualizar');
+			}
+
+			return apiClient.updateAppointment(
+				newAppointment.id,
+				activeClinicId || '',
+				{
+					professionalUid: newAppointment.professionalUid,
+					scheduledFor: new Date(newAppointment.scheduledFor).toISOString(),
+				},
+				idToken || undefined,
+			);
+		},
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ['appointments'] });
+			resetForm();
+		},
+	});
+
+	const scheduleExistingMutation = useMutation({
+		mutationFn: async (appt: {
+			id: string;
+			professionalUid: string | null;
+		}) => {
+			return apiClient.scheduleAppointment(
+				{
+					id: appt.id,
+					professionalUid: appt.professionalUid || user?.uid || '',
+					scheduledFor: new Date(
+						newAppointment.scheduledFor || Date.now(),
+					).toISOString(),
+				},
+				activeClinicId || '',
+				idToken || undefined,
+			);
+		},
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ['appointments'] });
 		},
 	});
 
@@ -96,7 +152,7 @@ export default function AppointmentsPage() {
 			apiClient.cancelAppointment(
 				id,
 				activeClinicId || '',
-				idToken || undefined
+				idToken || undefined,
 			),
 		onSuccess: () => qc.invalidateQueries({ queryKey: ['appointments'] }),
 	});
@@ -106,6 +162,8 @@ export default function AppointmentsPage() {
 		if (filterStatus === 'all') return list;
 		return list.filter((appt) => appt.status === filterStatus);
 	}, [appointmentsQuery.data, filterStatus]);
+
+	const isSubmitting = scheduleMutation.isPending || updateMutation.isPending;
 
 	return (
 		<div className='space-y-6'>
@@ -147,17 +205,25 @@ export default function AppointmentsPage() {
 								className='flex items-center justify-between rounded-xl border p-3'
 							>
 								<div>
-									<p className='font-semibold'>Paciente {appt.patientId}</p>
+									<p className='font-semibold'>
+										{patientsQuery.data?.find((p) => p.id === appt.patientId)
+											?.name || `Paciente ${appt.patientId}`}
+									</p>
 									<p className='text-xs text-muted-foreground'>
-										Profesional: {appt.professionalUid}
+										Profesional:{' '}
+										{professionalsQuery.data?.find(
+											(p: UserAccount) => p.id === appt.professionalUid,
+										)?.name ||
+											appt.professionalUid ||
+											'N/A'}
 									</p>
 									<Badge
 										variant={
 											appt.status === 'requested'
 												? 'warning'
 												: appt.status === 'cancelled'
-												? 'outline'
-												: 'secondary'
+													? 'outline'
+													: 'secondary'
 										}
 										className='mt-1'
 									>
@@ -171,6 +237,28 @@ export default function AppointmentsPage() {
 											: 'Por programar'}
 									</p>
 									<div className='mt-2 flex justify-end gap-2'>
+										{appt.status === 'scheduled' ? (
+											<Button
+												size='sm'
+												variant='secondary'
+												onClick={() => {
+													setNewAppointment({
+														id: appt.id,
+														patientId: appt.patientId,
+														professionalUid: appt.professionalUid || '',
+														scheduledFor: appt.scheduledFor
+															? new Date(appt.scheduledFor as any)
+																	.toISOString()
+																	.slice(0, 16)
+															: '',
+													});
+													window.scrollTo({ top: 0, behavior: 'smooth' });
+												}}
+											>
+												Modificar
+											</Button>
+										) : null}
+
 										{appt.status !== 'cancelled' ? (
 											<Button
 												size='sm'
@@ -180,20 +268,16 @@ export default function AppointmentsPage() {
 												Cancelar
 											</Button>
 										) : null}
+
 										{appt.status === 'requested' &&
-										perms.canScheduleForOthers ? (
+										(perms.canScheduleForOthers || isMeProfessional) ? (
 											<Button
 												size='sm'
 												variant='secondary'
-												onClick={() =>
-													setNewAppointment({
-														patientId: appt.patientId,
-														professionalUid: appt.professionalUid,
-														scheduledFor: new Date().toISOString().slice(0, 16),
-													})
-												}
+												onClick={() => scheduleExistingMutation.mutate(appt)}
+												disabled={scheduleExistingMutation.isPending}
 											>
-												Programar
+												Programar ahora
 											</Button>
 										) : null}
 									</div>
@@ -212,7 +296,7 @@ export default function AppointmentsPage() {
 					<CardHeader>
 						<CardTitle className='flex items-center gap-2 text-lg'>
 							<PlusCircle className='h-4 w-4' />
-							Programar turno
+							{newAppointment.id ? 'Modificar turno' : 'Programar turno'}
 						</CardTitle>
 					</CardHeader>
 					<CardContent className='space-y-3'>
@@ -220,6 +304,7 @@ export default function AppointmentsPage() {
 							<Label>Paciente</Label>
 							<Select
 								value={newAppointment.patientId}
+								disabled={!!newAppointment.id}
 								onChange={(e) =>
 									setNewAppointment({
 										...newAppointment,
@@ -248,11 +333,15 @@ export default function AppointmentsPage() {
 								disabled={isMeProfessional}
 							>
 								<option value=''>Elegí profesional</option>
-								{professionalsQuery.data?.map((professional: UserAccount) => (
-									<option key={professional.id} value={professional.id}>
-										{professional.name}
-									</option>
-								))}
+								{isMeProfessional && user ? (
+									<option value={user.uid}>Yo</option>
+								) : (
+									professionalsQuery.data?.map((professional: UserAccount) => (
+										<option key={professional.id} value={professional.id}>
+											{professional.name}
+										</option>
+									))
+								)}
 							</Select>
 						</div>
 						<div className='space-y-1'>
@@ -270,23 +359,38 @@ export default function AppointmentsPage() {
 						</div>
 						<Button
 							className='w-full'
-							onClick={() => scheduleMutation.mutate()}
+							onClick={() =>
+								newAppointment.id
+									? updateMutation.mutate()
+									: scheduleMutation.mutate()
+							}
 							disabled={
-								scheduleMutation.isPending || !perms.canScheduleForOthers
+								isSubmitting ||
+								(!perms.canScheduleForOthers && !isMeProfessional)
 							}
 						>
 							<Clock3 className='mr-2 h-4 w-4' />
-							Guardar turno
+							{newAppointment.id ? 'Guardar cambios' : 'Guardar turno'}
 						</Button>
-						{!perms.canScheduleForOthers ? (
+
+						{newAppointment.id && (
+							<Button
+								variant='ghost'
+								onClick={resetForm}
+								className='mt-2 w-full'
+							>
+								Cancelar edición
+							</Button>
+						)}
+
+						{!perms.canScheduleForOthers && !isMeProfessional ? (
 							<p className='text-xs text-muted-foreground'>
-								Solo podés editar tus turnos. Pedí a un admin para agendar
-								otros.
+								No tenés permisos para agendar turnos.
 							</p>
 						) : null}
-						{scheduleMutation.error ? (
+						{scheduleMutation.error || updateMutation.error ? (
 							<p className='text-sm text-destructive'>
-								No pudimos programar el turno.
+								No pudimos procesar el turno.
 							</p>
 						) : null}
 						{cancelMutation.error ? (
