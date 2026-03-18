@@ -1,6 +1,6 @@
 'use client';
 
-import { Building2, CheckCircle2, Hospital } from 'lucide-react';
+import { Building2, CheckCircle2, Hospital, Loader2 } from 'lucide-react';
 import {
 	Card,
 	CardContent,
@@ -41,7 +41,8 @@ type CreateClinicForm = z.infer<typeof createClinicSchema>;
 
 export default function SelectClinicPage() {
 	const qc = useQueryClient();
-	const { clinics, me, setActiveClinic } = useClinic();
+	// FIX: Agregamos isLoading acá para saber cuándo terminó de buscar en el backend
+	const { clinics, me, setActiveClinic, isLoading } = useClinic();
 	const { logout, idToken } = useAuth();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -58,7 +59,6 @@ export default function SelectClinicPage() {
 			if (!user) return;
 
 			const token = await user.getIdToken(true);
-			console.log('🔥 ID TOKEN (copiar completo):', token);
 		})().catch((e) => console.error('Token debug error:', e));
 	}, []);
 
@@ -119,36 +119,58 @@ export default function SelectClinicPage() {
 						Cerrar sesión
 					</Button>
 				</div>
-				<div className='grid gap-6 md:grid-cols-2'>
-					{clinics?.map((clinic) => (
-						<Card key={clinic.id} className='border-primary/10 shadow-sm'>
-							<CardHeader className='flex flex-row items-center gap-3'>
-								<div className='flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary'>
-									<Building2 className='h-5 w-5' />
-								</div>
-								<div>
-									<CardTitle className='text-lg'>{clinic.name}</CardTitle>
-									<CardDescription>
-										{clinic.branding?.accentColor
-											? `Color: ${clinic.branding.accentColor}`
-											: 'Branding default'}
-									</CardDescription>
-								</div>
-							</CardHeader>
-							<CardContent className='flex items-center justify-between'>
-								<Badge variant='secondary'>Rol: {roleLabel(clinic.id)}</Badge>
-								<Button
-									onClick={() => handleSelect(clinic.id)}
-									variant='default'
-								>
-									<CheckCircle2 className='mr-2 h-4 w-4' />
-									Ingresar
-								</Button>
-							</CardContent>
-						</Card>
-					))}
-				</div>
-				{isPlatformAdmin ? (
+
+				{/* FIX: Mostramos un loader mientras está buscando las clínicas */}
+				{isLoading ? (
+					<div className='flex flex-col items-center justify-center py-12 text-muted-foreground'>
+						<Loader2 className='h-8 w-8 animate-spin mb-4 text-primary' />
+						<p>Cargando tus clínicas disponibles...</p>
+					</div>
+				) : (
+					<>
+						<div className='grid gap-6 md:grid-cols-2'>
+							{clinics?.map((clinic) => (
+								<Card key={clinic.id} className='border-primary/10 shadow-sm'>
+									<CardHeader className='flex flex-row items-center gap-3'>
+										<div className='flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary'>
+											<Building2 className='h-5 w-5' />
+										</div>
+										<div>
+											<CardTitle className='text-lg'>{clinic.name}</CardTitle>
+											<CardDescription>
+												{clinic.branding?.accentColor
+													? `Color: ${clinic.branding.accentColor}`
+													: 'Branding default'}
+											</CardDescription>
+										</div>
+									</CardHeader>
+									<CardContent className='flex items-center justify-between'>
+										<Badge variant='secondary'>
+											Rol: {roleLabel(clinic.id)}
+										</Badge>
+										<Button
+											onClick={() => handleSelect(clinic.id)}
+											variant='default'
+										>
+											<CheckCircle2 className='mr-2 h-4 w-4' />
+											Ingresar
+										</Button>
+									</CardContent>
+								</Card>
+							))}
+						</div>
+
+						{/* FIX: El error ahora SOLO aparece si terminó de cargar Y no hay clínicas */}
+						{!clinics?.length ? (
+							<div className='mt-8 rounded-xl border border-dashed p-6 text-center text-muted-foreground'>
+								No encontramos clínicas disponibles para tu usuario.
+							</div>
+						) : null}
+					</>
+				)}
+
+				{/* El formulario de superadmin se queda igual */}
+				{isPlatformAdmin && !isLoading ? (
 					<Card className='mt-8 border-primary/10 shadow-lg'>
 						<CardHeader>
 							<CardTitle className='flex items-center gap-2 text-lg'>
@@ -217,11 +239,6 @@ export default function SelectClinicPage() {
 							</form>
 						</CardContent>
 					</Card>
-				) : null}
-				{!clinics?.length ? (
-					<div className='mt-8 rounded-xl border border-dashed p-6 text-center text-muted-foreground'>
-						No encontramos clínicas disponibles para tu usuario.
-					</div>
 				) : null}
 			</main>
 		</AuthGuard>

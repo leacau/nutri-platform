@@ -1,7 +1,12 @@
-import type { Timestamp } from 'firebase-admin/firestore';
 import type { Role } from './auth.js';
+import type { Timestamp } from 'firebase-admin/firestore';
 
-export type AppointmentStatus = 'requested' | 'scheduled' | 'cancelled' | 'completed';
+export type AppointmentStatus =
+	| 'requested'
+	| 'scheduled'
+	| 'arrived'
+	| 'cancelled'
+	| 'completed';
 
 export type AppointmentDoc = {
 	clinicId: string;
@@ -11,6 +16,7 @@ export type AppointmentDoc = {
 	status: AppointmentStatus;
 	requestedAt: Timestamp;
 	scheduledFor: Timestamp | null;
+	arrivedAt?: Timestamp | null;
 	cancelledAt: Timestamp | null;
 	cancelledByUid: string | null;
 	cancelledByRole: Role | null;

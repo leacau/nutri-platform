@@ -4,11 +4,30 @@ import {
 	Clinic,
 	ClinicSettings,
 	MeResponse,
+	MeasurementTemplate,
 	Membership,
 	MessageTemplate,
 	Patient,
 	UserAccount,
 } from './types';
+
+// NUEVO: Tipos para el Historia Clínica
+export type ClinicalRecord = {
+	id: string;
+	clinicId: string;
+	patientId: string;
+	professionalUid: string;
+	type:
+		| 'note'
+		| 'measurement'
+		| 'dynamic_measurement'
+		| 'prescription'
+		| 'meal_plan'
+		| 'attachment';
+	date: string;
+	data: any;
+	createdAt?: string;
+};
 
 type RequestOptions<T> = {
 	method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -238,7 +257,6 @@ export const apiClient = {
 			mockFallback: () => [],
 		}),
 
-	// NUEVO: Para crear turnos directamente desde cero
 	createAppointment: (
 		body: Partial<Appointment>,
 		clinicId: string,
@@ -266,7 +284,6 @@ export const apiClient = {
 			mockFallback: () => ({ ...body }) as Appointment,
 		}),
 
-	// NUEVO: Para actualizar turnos existentes
 	updateAppointment: (
 		id: string,
 		clinicId: string,
@@ -288,6 +305,20 @@ export const apiClient = {
 			body,
 		}),
 
+	arriveAppointment: (id: string, clinicId: string, token?: string) =>
+		request<Appointment>(`/appointments/${id}/arrive`, {
+			method: 'POST',
+			token,
+			clinicId,
+		}),
+
+	completeAppointment: (id: string, clinicId: string, token?: string) =>
+		request<Appointment>(`/appointments/${id}/complete`, {
+			method: 'POST',
+			token,
+			clinicId,
+		}),
+
 	cancelAppointment: (id: string, clinicId: string, token?: string) =>
 		request<Appointment>(`/appointments/${id}/cancel`, {
 			method: 'POST',
@@ -301,6 +332,35 @@ export const apiClient = {
 			token,
 			clinicId,
 			mockFallback: () => [],
+		}),
+
+	// PLANTILLAS (TEMPLATES)
+	getTemplates: (clinicId: string, token?: string) =>
+		request<MeasurementTemplate[]>('/measurement-templates', {
+			token,
+			clinicId,
+		}),
+
+	createTemplate: (
+		data: { name: string; description?: string; fields: any[] },
+		clinicId: string,
+		token?: string,
+	) =>
+		request<{ success: boolean; data: MeasurementTemplate }>(
+			'/measurement-templates',
+			{
+				method: 'POST',
+				body: data,
+				token,
+				clinicId,
+			},
+		),
+
+	deleteTemplate: (id: string, clinicId: string, token?: string) =>
+		request<{ success: boolean }>(`/measurement-templates/${id}`, {
+			method: 'DELETE',
+			token,
+			clinicId,
 		}),
 
 	audit: (clinicId: string, token?: string) =>
@@ -354,6 +414,46 @@ export const apiClient = {
 		request<{ clinicId: string; adminUid: string }>('/clinics', {
 			method: 'POST',
 			token,
+			body: data,
+		}),
+
+	// NUEVO: Funciones para Registros Clínicos
+	getClinicalRecords: (patientId: string, clinicId: string, token?: string) =>
+		request<ClinicalRecord[]>(`/clinical-records/patient/${patientId}`, {
+			token,
+			clinicId,
+			mockFallback: () => [],
+		}),
+
+	createClinicalRecord: (
+		data: Omit<ClinicalRecord, 'id' | 'createdAt'>,
+		clinicId: string,
+		token?: string,
+	) =>
+		request<ClinicalRecord>('/clinical-records', {
+			method: 'POST',
+			token,
+			clinicId,
+			body: data,
+		}),
+
+	deleteClinicalRecord: (recordId: string, clinicId: string, token?: string) =>
+		request<{ success: boolean }>(`/clinical-records/${recordId}`, {
+			method: 'DELETE',
+			token,
+			clinicId,
+		}),
+
+	updateClinicalRecord: (
+		recordId: string,
+		data: { date?: string; data?: any },
+		clinicId: string,
+		token?: string,
+	) =>
+		request<ClinicalRecord>(`/clinical-records/${recordId}`, {
+			method: 'PATCH',
+			token,
+			clinicId,
 			body: data,
 		}),
 };

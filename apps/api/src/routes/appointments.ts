@@ -740,13 +740,11 @@ router.patch(
 		const parsedBody = updateBodySchema.safeParse(req.body);
 
 		if (!parsedBody.success) {
-			return res
-				.status(400)
-				.json({
-					success: false,
-					message: 'Invalid body',
-					errors: parsedBody.error.flatten(),
-				});
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsedBody.error.flatten(),
+			});
 		}
 
 		const db = getFirestoreDb();
@@ -1006,6 +1004,79 @@ router.post(
 );
 
 router.post(
+	'/:id/arrive',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'staff', 'professional'),
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const clinicId = auth.clinicId!;
+		const apptId = req.params.id as string;
+
+		if (!apptId)
+			return res
+				.status(400)
+				.json({ success: false, message: 'Missing appointment id' });
+
+		const db = getFirestoreDb();
+		const ref = db.collection('appointments').doc(apptId);
+
+		const result = await db.runTransaction(async (tx) => {
+			const snap = await tx.get(ref);
+			if (!snap.exists)
+				return {
+					http: 404 as const,
+					body: { success: false, message: 'Appointment not found' },
+				};
+
+			const appt = snap.data() as AppointmentDoc;
+
+			if (appt.clinicId !== clinicId)
+				return denyAuthz(req, res, 'Cross-clinic arrive') as any;
+			if (appt.status === 'cancelled' || appt.status === 'completed') {
+				return {
+					http: 409 as const,
+					body: {
+						success: false,
+						message: 'Cannot arrive a cancelled or completed appointment',
+					},
+				};
+			}
+			if (appt.status === 'arrived') {
+				return {
+					http: 200 as const,
+					body: {
+						success: true,
+						message: 'Already arrived',
+						data: { id: snap.id, ...appt },
+					},
+				};
+			}
+
+			const now = Timestamp.now();
+			const updated: Partial<AppointmentDoc> = {
+				status: 'arrived',
+				arrivedAt: now,
+				updatedAt: now,
+			};
+
+			tx.update(ref, updated);
+
+			return {
+				http: 200 as const,
+				body: {
+					success: true,
+					message: 'Patient in waiting room',
+					data: { id: snap.id, ...appt, ...updated },
+				},
+			};
+		});
+
+		return res.status(result.http).json(result.body);
+	},
+);
+
+router.post(
 	'/:id/complete',
 
 	authMiddleware,
@@ -1076,14 +1147,12 @@ router.post(
 				};
 			}
 
-			if (appt.status !== 'scheduled') {
+			if (appt.status !== 'scheduled' && appt.status !== 'arrived') {
 				return {
 					http: 409 as const,
-
 					body: {
 						success: false,
-
-						message: 'Only scheduled appointments can be completed',
+						message: 'Only scheduled or arrived appointments can be completed',
 					},
 				};
 			}

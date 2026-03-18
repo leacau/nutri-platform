@@ -11,8 +11,11 @@ import morgan from 'morgan';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { apiRouter } from './routes/api.js';
 import { devRouter } from './routes/dev.js';
+// NUEVO: Importamos el router de registros clínicos
+import { clinicalRecordsRouter } from './routes/clinical-records.js';
 import { metricsMiddleware, metricsRegistry } from './middlewares/metrics.js';
 import { requireAuth } from './middlewares/requireAuth.js';
+import { templatesRouter } from './routes/templates.js';
 
 // Si no hay orígenes definidos o es '*', permite todo. Si no, parsea la lista.
 const parseAllowedOrigins = (value?: string): string[] | string => {
@@ -57,13 +60,11 @@ export function buildApp(): Express {
 
 	// Healthchecks (Útiles para el balanceador de carga de Cloud Run)
 	const healthCheck = (_req: Request, res: Response) => {
-		res
-			.status(200)
-			.json({
-				success: true,
-				message: 'healthy',
-				env: isProd ? 'production' : 'development',
-			});
+		res.status(200).json({
+			success: true,
+			message: 'healthy',
+			env: isProd ? 'production' : 'development',
+		});
 	};
 	app.get('/health', healthCheck);
 	app.get('/api/health', healthCheck);
@@ -84,6 +85,12 @@ export function buildApp(): Express {
 			devRouter,
 		);
 	}
+
+	// NUEVO: Conectamos la ruta de registros clínicos protegiéndola con Auth
+	app.use('/api/clinical-records', requireAuth, clinicalRecordsRouter);
+
+	// NUEVO: Agregamos el router de plantillas
+	app.use('/api/measurement-templates', templatesRouter);
 
 	// API Principal Protegida
 	app.use('/api', requireAuth, apiRouter);

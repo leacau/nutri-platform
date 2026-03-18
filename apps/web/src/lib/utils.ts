@@ -5,40 +5,22 @@ export function cn(...inputs: ClassValue[]) {
 	return twMerge(clsx(inputs));
 }
 
-export function formatDate(date: any) {
-	if (!date) return 'Fecha no disponible';
+export function formatDate(input: string | Date | undefined | null): string {
+	// 1. Si no hay nada, no intentamos formatear
+	if (!input) return '—';
 
-	let d: Date;
+	// 2. Intentamos crear la fecha
+	const date = new Date(input);
 
-	// 1. Si ya es un objeto Date nativo
-	if (date instanceof Date) {
-		d = date;
-	}
-	// 2. Si es un texto (ISO string) o un número (milisegundos)
-	else if (typeof date === 'string' || typeof date === 'number') {
-		d = new Date(date);
-	}
-	// 3. Si es un objeto crudo (probablemente un Timestamp de Firebase)
-	else if (typeof date === 'object') {
-		if ('_seconds' in date) {
-			d = new Date(date._seconds * 1000);
-		} else if ('seconds' in date) {
-			d = new Date(date.seconds * 1000);
-		} else {
-			// Intento desesperado si es un objeto raro
-			d = new Date(String(date));
-		}
-	} else {
-		return 'Fecha inválida';
+	// 3. Chequeamos si la fecha resultante es válida (es un truco de JS: getTime() en una Invalid Date da NaN)
+	if (isNaN(date.getTime())) {
+		return '—'; // o podés poner "Fecha inválida"
 	}
 
-	// Validamos si el objeto Date final se pudo construir correctamente
-	if (isNaN(d.getTime())) {
-		return 'Fecha inválida';
-	}
-
-	return new Intl.DateTimeFormat(undefined, {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(d);
+	// 4. Si llegamos acá, la fecha es perfecta, la formateamos
+	return new Intl.DateTimeFormat('es-AR', {
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+	}).format(date);
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { Calendar, Clock3, PlusCircle } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock3, PlusCircle } from 'lucide-react';
 import {
 	Card,
 	CardContent,
@@ -22,6 +22,24 @@ import { useAuth } from '../../../../providers/auth-provider';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
 import { useClinic } from '../../../../providers/clinic-provider';
 import { usePermissions } from '../../../../hooks/use-permissions';
+
+// FUNCIÓN ESCUDO: Ataja Firebase Timestamps, objetos Date, o strings
+const parseSafeDate = (dateVal: any): Date | null => {
+	if (!dateVal) return null;
+	if (dateVal instanceof Date) return dateVal;
+
+	// Si es un Timestamp nativo de Firebase en el cliente
+	if (typeof dateVal.toDate === 'function') return dateVal.toDate();
+
+	// Si es un Timestamp "crudo" que llega desde el backend (EL SALVAVIDAS)
+	if (typeof dateVal === 'object' && '_seconds' in dateVal) {
+		return new Date(dateVal._seconds * 1000);
+	}
+
+	// Si es un string o número normal
+	const parsed = new Date(dateVal);
+	return isNaN(parsed.getTime()) ? null : parsed;
+};
 
 export default function AppointmentsPage() {
 	const qc = useQueryClient();
@@ -86,11 +104,11 @@ export default function AppointmentsPage() {
 				throw new Error('Faltan datos');
 			}
 
-			// FIX: Usamos createAppointment para crear turnos desde cero
 			return apiClient.createAppointment(
 				{
 					patientId: newAppointment.patientId,
 					professionalUid: newAppointment.professionalUid,
+					// Guardamos la fecha correcta en formato ISO estándar UTC
 					scheduledFor: new Date(newAppointment.scheduledFor).toISOString(),
 				},
 				activeClinicId || '',
@@ -147,6 +165,16 @@ export default function AppointmentsPage() {
 		},
 	});
 
+	const completeMutation = useMutation({
+		mutationFn: async (id: string) =>
+			apiClient.completeAppointment(
+				id,
+				activeClinicId || '',
+				idToken || undefined,
+			),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ['appointments'] }),
+	});
+
 	const cancelMutation = useMutation({
 		mutationFn: async (id: string) =>
 			apiClient.cancelAppointment(
@@ -199,91 +227,118 @@ export default function AppointmentsPage() {
 						<Badge variant='secondary'>Vista rápida</Badge>
 					</CardHeader>
 					<CardContent className='space-y-3'>
-						{appointments.map((appt) => (
-							<div
-								key={appt.id}
-								className='flex items-center justify-between rounded-xl border p-3'
-							>
-								<div>
-									<p className='font-semibold'>
-										{patientsQuery.data?.find((p) => p.id === appt.patientId)
-											?.name || `Paciente ${appt.patientId}`}
-									</p>
-									<p className='text-xs text-muted-foreground'>
-										Profesional:{' '}
-										{professionalsQuery.data?.find(
-											(p: UserAccount) => p.id === appt.professionalUid,
-										)?.name ||
-											appt.professionalUid ||
-											'N/A'}
-									</p>
-									<Badge
-										variant={
-											appt.status === 'requested'
-												? 'warning'
-												: appt.status === 'cancelled'
-													? 'outline'
-													: 'secondary'
-										}
-										className='mt-1'
-									>
-										{appt.status}
-									</Badge>
-								</div>
-								<div className='text-right'>
-									<p className='text-sm font-semibold'>
-										{appt.scheduledFor
-											? formatDate(appt.scheduledFor)
-											: 'Por programar'}
-									</p>
-									<div className='mt-2 flex justify-end gap-2'>
-										{appt.status === 'scheduled' ? (
-											<Button
-												size='sm'
-												variant='secondary'
-												onClick={() => {
-													setNewAppointment({
-														id: appt.id,
-														patientId: appt.patientId,
-														professionalUid: appt.professionalUid || '',
-														scheduledFor: appt.scheduledFor
-															? new Date(appt.scheduledFor as any)
-																	.toISOString()
-																	.slice(0, 16)
-															: '',
-													});
-													window.scrollTo({ top: 0, behavior: 'smooth' });
-												}}
-											>
-												Modificar
-											</Button>
-										) : null}
+						{appointments.map((appt) => {
+							const safeDate = parseSafeDate(appt.scheduledFor);
+							return (
+								<div
+									key={appt.id}
+									className='flex items-center justify-between rounded-xl border p-3'
+								>
+									<div>
+										<p className='font-semibold'>
+											{patientsQuery.data?.find((p) => p.id === appt.patientId)
+												?.name || `Paciente ${appt.patientId}`}
+										</p>
+										<p className='text-xs text-muted-foreground'>
+											Profesional:{' '}
+											{professionalsQuery.data?.find(
+												(p: UserAccount) => p.id === appt.professionalUid,
+											)?.name ||
+												appt.professionalUid ||
+												'N/A'}
+										</p>
+										<Badge
+											variant={
+												appt.status === 'requested'
+													? 'warning'
+													: appt.status === 'cancelled'
+														? 'outline'
+														: 'secondary'
+											}
+											className='mt-1'
+										>
+											{appt.status}
+										</Badge>
+									</div>
+									<div className='text-right'>
+										<p className='text-sm font-semibold'>
+											{/* Usamos el safeDate para formatear sin que explote */}
+											{safeDate
+												? formatDate(safeDate.toISOString())
+												: 'Por programar'}
+										</p>
+										<div className='mt-2 flex justify-end gap-2'>
+											{appt.status === 'scheduled' ? (
+												<Button
+													size='sm'
+													variant='secondary'
+													onClick={() => {
+														// Convertimos la fecha segura a formato local para el input datetime-local (YYYY-MM-DDThh:mm)
+														let localDateTime = '';
+														if (safeDate) {
+															const offset =
+																safeDate.getTimezoneOffset() * 60000;
+															localDateTime = new Date(
+																safeDate.getTime() - offset,
+															)
+																.toISOString()
+																.slice(0, 16);
+														}
 
-										{appt.status !== 'cancelled' ? (
-											<Button
-												size='sm'
-												variant='ghost'
-												onClick={() => cancelMutation.mutate(appt.id)}
-											>
-												Cancelar
-											</Button>
-										) : null}
+														setNewAppointment({
+															id: appt.id,
+															patientId: appt.patientId,
+															professionalUid: appt.professionalUid || '',
+															scheduledFor: localDateTime,
+														});
+														window.scrollTo({ top: 0, behavior: 'smooth' });
+													}}
+												>
+													Modificar
+												</Button>
+											) : null}
 
-										{appt.status === 'requested' &&
-										(perms.canScheduleForOthers || isMeProfessional) ? (
-											<Button
-												size='sm'
-												variant='secondary'
-												onClick={() => scheduleExistingMutation.mutate(appt)}
-												disabled={scheduleExistingMutation.isPending}
-											>
-												Programar ahora
-											</Button>
-										) : null}
+											{appt.status === 'scheduled' ? (
+												<Button
+													size='sm'
+													variant='default'
+													className='bg-emerald-600 hover:bg-emerald-700 text-white'
+													onClick={() => completeMutation.mutate(appt.id)}
+													disabled={completeMutation.isPending}
+												>
+													<CheckCircle2 className='mr-1.5 h-4 w-4' />
+													Atendido
+												</Button>
+											) : null}
+
+											{appt.status !== 'cancelled' ? (
+												<Button
+													size='sm'
+													variant='ghost'
+													onClick={() => cancelMutation.mutate(appt.id)}
+												>
+													Cancelar
+												</Button>
+											) : null}
+
+											{appt.status === 'requested' &&
+											(perms.canScheduleForOthers || isMeProfessional) ? (
+												<Button
+													size='sm'
+													variant='secondary'
+													onClick={() =>
+														scheduleExistingMutation.mutate(appt as any)
+													}
+													disabled={scheduleExistingMutation.isPending}
+												>
+													Programar ahora
+												</Button>
+											) : null}
+										</div>
 									</div>
 								</div>
-							</div>
-						))}
+							);
+						})}
 						{!appointments.length ? (
 							<p className='text-sm text-muted-foreground'>
 								No hay turnos para el filtro.
