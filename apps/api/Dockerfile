@@ -3,7 +3,7 @@
 FROM node:22-slim AS base
 WORKDIR /app
 
-# ---- deps (root + workspace api) ----
+# ---- deps (root + workspace api)
 FROM base AS deps
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
