@@ -5,7 +5,9 @@ import {
 	Calculator,
 	Hash,
 	LayoutTemplate,
+	Link as LinkIcon,
 	Loader2,
+	Pencil,
 	Plus,
 	Save,
 	Trash2,
@@ -18,19 +20,23 @@ import {
 	CardHeader,
 	CardTitle,
 } from '../../../../components/ui/card';
-import { TemplateField, TemplateFieldType } from '../../../../lib/types';
+import {
+	MeasurementTemplate,
+	TemplateField,
+	TemplateFieldType,
+} from '../../../../lib/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
+import { Select } from '../../../../components/ui/select';
 import { apiClient } from '../../../../lib/api-client';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useClinic } from '../../../../providers/clinic-provider';
 import { useState } from 'react';
 
-// Generador automático de IDs seguros (ej: "Peso Corporal" -> "peso_corporal")
 const generateSafeId = (label: string) => {
 	return label
 		.toLowerCase()
@@ -41,12 +47,27 @@ const generateSafeId = (label: string) => {
 		.replace(/^_|_$/g, '');
 };
 
+// Nuestro diccionario maestro de estándares de la OMS/Omron
+const STANDARD_MAPPINGS = [
+	{ id: '', label: 'Ninguno (Campo Libre)' },
+	{ id: 'weight', label: '⚖️ Peso Corporal' },
+	{ id: 'height', label: '📏 Altura / Talla' },
+	{ id: 'bmi', label: '📊 IMC (Índice de Masa Corporal)' },
+	{ id: 'body_fat', label: '🟡 Porcentaje de Grasa Corporal' },
+	{ id: 'visceral_fat', label: '🔴 Nivel de Grasa Visceral' },
+	{ id: 'muscle', label: '💪 Porcentaje de Músculo Esquelético' },
+];
+
 export default function MeasurementTemplatesPage() {
 	const { activeClinicId } = useClinic();
 	const { idToken } = useAuth();
 	const qc = useQueryClient();
 
 	const [isCreating, setIsCreating] = useState(false);
+	const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
+		null,
+	);
+
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [fields, setFields] = useState<TemplateField[]>([]);
@@ -58,30 +79,37 @@ export default function MeasurementTemplatesPage() {
 		enabled: Boolean(activeClinicId && idToken),
 	});
 
-	const createMutation = useMutation({
+	const saveMutation = useMutation({
 		mutationFn: async () => {
 			if (!name) throw new Error('El nombre es obligatorio');
 			if (fields.length === 0)
 				throw new Error('Debes agregar al menos un campo');
 
-			// Forzamos los IDs para que sean seguros antes de enviar
 			const safeFields = fields.map((f: TemplateField) => ({
 				...f,
 				id: generateSafeId(f.label) || f.id,
 			}));
 
-			return apiClient.createTemplate(
-				{ name, description, fields: safeFields },
-				activeClinicId!,
-				idToken ?? undefined,
-			);
+			const payload = { name, description, fields: safeFields };
+
+			if (editingTemplateId) {
+				return apiClient.updateTemplate(
+					editingTemplateId,
+					payload,
+					activeClinicId!,
+					idToken ?? undefined,
+				);
+			} else {
+				return apiClient.createTemplate(
+					payload,
+					activeClinicId!,
+					idToken ?? undefined,
+				);
+			}
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['measurement-templates'] });
-			setIsCreating(false);
-			setName('');
-			setDescription('');
-			setFields([]);
+			resetForm();
 		},
 		onError: (err: any) =>
 			alert(err.message || 'Error al guardar la plantilla'),
@@ -94,6 +122,22 @@ export default function MeasurementTemplatesPage() {
 			qc.invalidateQueries({ queryKey: ['measurement-templates'] }),
 	});
 
+	const resetForm = () => {
+		setIsCreating(false);
+		setEditingTemplateId(null);
+		setName('');
+		setDescription('');
+		setFields([]);
+	};
+
+	const startEditing = (template: MeasurementTemplate) => {
+		setEditingTemplateId(template.id);
+		setName(template.name);
+		setDescription(template.description || '');
+		setFields(template.fields);
+		setIsCreating(true);
+	};
+
 	const addField = (type: TemplateFieldType) => {
 		const newField: TemplateField = {
 			id: `campo_${Date.now()}`,
@@ -102,6 +146,7 @@ export default function MeasurementTemplatesPage() {
 			required: false,
 			unit: '',
 			decimals: type === 'formula' || type === 'number' ? 2 : undefined,
+			standardMapping: '',
 		};
 		setFields([...fields, newField]);
 	};
@@ -131,8 +176,7 @@ export default function MeasurementTemplatesPage() {
 						<Activity className='h-8 w-8 text-primary' /> Plantillas de Medición
 					</h1>
 					<p className='text-slate-500 mt-1'>
-						Creá mediciones personalizadas y fórmulas automáticas para la ficha
-						clínica.
+						Creá y editá mediciones personalizadas y fórmulas automáticas.
 					</p>
 				</div>
 				{!isCreating && (
@@ -149,7 +193,11 @@ export default function MeasurementTemplatesPage() {
 				<div className='space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500'>
 					<Card className='border-primary/20 shadow-md'>
 						<CardHeader className='bg-slate-50/50 border-b border-slate-100'>
-							<CardTitle>Configuración de la Plantilla</CardTitle>
+							<CardTitle>
+								{editingTemplateId
+									? 'Editar Plantilla'
+									: 'Configuración de la Plantilla'}
+							</CardTitle>
 							<CardDescription>
 								Nombrá esta plantilla (ej: Antropometría Completa)
 							</CardDescription>
@@ -180,100 +228,178 @@ export default function MeasurementTemplatesPage() {
 						<h3 className='text-lg font-semibold text-slate-800'>
 							Campos Dinámicos
 						</h3>
+						{fields.map((field, index) => {
+							const availableVars = fields.filter(
+								(f, i) => f.type === 'number' && i !== index && f.label,
+							);
+							return (
+								<Card
+									key={index}
+									className='border-slate-200 overflow-hidden relative'
+								>
+									<div className='flex flex-col md:flex-row items-stretch'>
+										<div
+											className={`w-full md:w-2 ${field.type === 'formula' ? 'bg-purple-500' : field.type === 'number' ? 'bg-blue-500' : 'bg-slate-300'}`}
+										></div>
+										<div className='flex-1 p-4 grid grid-cols-1 md:grid-cols-12 gap-4 items-start'>
+											<div className='md:col-span-4 space-y-2'>
+												<Label>Nombre del Campo</Label>
+												<Input
+													value={field.label}
+													onChange={(e) =>
+														updateField(index, { label: e.target.value })
+													}
+													placeholder={
+														field.type === 'formula'
+															? 'Ej: IMC'
+															: 'Ej: Peso Actual'
+													}
+												/>
+												{field.label && field.type !== 'formula' && (
+													<p className='text-[10px] text-slate-400 font-mono'>
+														Variable: {'{'} {generateSafeId(field.label)} {'}'}
+													</p>
+												)}
+											</div>
 
-						{fields.map((field, index) => (
-							<Card key={index} className='border-slate-200 overflow-hidden'>
-								<div className='flex flex-col md:flex-row items-stretch'>
-									{/* Indicador visual de tipo */}
-									<div
-										className={`w-full md:w-2 ${field.type === 'formula' ? 'bg-purple-500' : field.type === 'number' ? 'bg-blue-500' : 'bg-slate-300'}`}
-									></div>
-
-									<div className='flex-1 p-4 grid grid-cols-1 md:grid-cols-12 gap-4 items-start'>
-										<div className='md:col-span-4 space-y-2'>
-											<Label>Nombre del Campo</Label>
-											<Input
-												value={field.label}
-												onChange={(e) =>
-													updateField(index, { label: e.target.value })
-												}
-												placeholder={
-													field.type === 'formula'
-														? 'Ej: IMC'
-														: 'Ej: Peso Actual'
-												}
-											/>
-											{field.label && (
-												<p className='text-[10px] text-slate-400 font-mono'>
-													Variable: {'{'} {generateSafeId(field.label)} {'}'}
-												</p>
+											{/* NUEVO: MAPEO DE ESTÁNDARES MÉDICOS */}
+											{(field.type === 'number' ||
+												field.type === 'formula') && (
+												<div className='md:col-span-4 space-y-2'>
+													<Label className='flex items-center gap-1 text-emerald-700'>
+														<LinkIcon className='h-3 w-3' /> Mapeo Estándar OMS
+													</Label>
+													<Select
+														value={field.standardMapping || ''}
+														onChange={(e) =>
+															updateField(index, {
+																standardMapping: e.target.value,
+															})
+														}
+													>
+														{STANDARD_MAPPINGS.map((map) => (
+															<option key={map.id} value={map.id}>
+																{map.label}
+															</option>
+														))}
+													</Select>
+													<p className='text-[10px] text-muted-foreground leading-tight'>
+														Enlaza esto para que el sistema pinte de colores las
+														alertas.
+													</p>
+												</div>
 											)}
-										</div>
 
-										{field.type === 'number' && (
-											<div className='md:col-span-3 space-y-2'>
-												<Label>Unidad de medida</Label>
-												<Input
-													value={field.unit || ''}
-													onChange={(e) =>
-														updateField(index, { unit: e.target.value })
-													}
-													placeholder='Ej: kg, cm'
-												/>
+											{field.type === 'number' && (
+												<div className='md:col-span-3 space-y-2'>
+													<Label>Unidad de medida</Label>
+													<Input
+														value={field.unit || ''}
+														onChange={(e) =>
+															updateField(index, { unit: e.target.value })
+														}
+														placeholder='Ej: kg, cm'
+													/>
+												</div>
+											)}
+
+											{field.type === 'formula' && (
+												<div className='md:col-span-8 space-y-2 mt-2'>
+													<Label className='text-purple-700'>
+														Ecuación Matemática
+													</Label>
+													<Input
+														value={field.formula || ''}
+														onChange={(e) =>
+															updateField(index, { formula: e.target.value })
+														}
+														placeholder='Ej: {peso} / (({altura}/100) * ({altura}/100))'
+														className='font-mono text-sm border-purple-200 bg-purple-50 focus-visible:ring-purple-500'
+													/>
+													<div className='pt-2'>
+														{availableVars.length > 0 ? (
+															<>
+																<p className='text-[11px] text-muted-foreground mb-2'>
+																	Variables disponibles (Arrastrá a la caja o
+																	hacé clic):
+																</p>
+																<div className='flex flex-wrap gap-2'>
+																	{availableVars.map((v) => {
+																		const varName = `{${generateSafeId(v.label)}}`;
+																		return (
+																			<Badge
+																				key={v.id}
+																				variant='outline'
+																				className='cursor-grab active:cursor-grabbing border-purple-200 bg-purple-100/50 text-purple-700 hover:bg-purple-200 transition-colors select-none'
+																				draggable
+																				onDragStart={(e) =>
+																					e.dataTransfer.setData(
+																						'text/plain',
+																						varName,
+																					)
+																				}
+																				onClick={() => {
+																					const current = field.formula || '';
+																					const prefix =
+																						current && !current.endsWith(' ')
+																							? current + ' '
+																							: current;
+																					updateField(index, {
+																						formula: prefix + varName,
+																					});
+																				}}
+																			>
+																				{v.label}
+																			</Badge>
+																		);
+																	})}
+																</div>
+															</>
+														) : (
+															<p className='text-[11px] text-amber-600 mt-1'>
+																Agregá campos de tipo "Número" primero para
+																usarlos acá.
+															</p>
+														)}
+													</div>
+												</div>
+											)}
+
+											{(field.type === 'formula' ||
+												field.type === 'number') && (
+												<div
+													className={`md:col-span-2 space-y-2 ${field.type === 'formula' ? 'mt-2' : ''}`}
+												>
+													<Label>Decimales</Label>
+													<Input
+														type='number'
+														min='0'
+														max='4'
+														value={field.decimals || 0}
+														onChange={(e) =>
+															updateField(index, {
+																decimals: parseInt(e.target.value),
+															})
+														}
+													/>
+												</div>
+											)}
+
+											<div className='absolute top-2 right-2'>
+												<Button
+													variant='ghost'
+													size='icon'
+													className='text-red-400 hover:text-red-700 hover:bg-red-50 h-8 w-8'
+													onClick={() => removeField(index)}
+												>
+													<Trash2 className='h-4 w-4' />
+												</Button>
 											</div>
-										)}
-
-										{field.type === 'formula' && (
-											<div className='md:col-span-6 space-y-2'>
-												<Label className='text-purple-700'>
-													Ecuación Matemática
-												</Label>
-												<Input
-													value={field.formula || ''}
-													onChange={(e) =>
-														updateField(index, { formula: e.target.value })
-													}
-													placeholder='Ej: {peso} / (({altura}/100) * ({altura}/100))'
-													className='font-mono text-sm border-purple-200 bg-purple-50 focus-visible:ring-purple-500'
-												/>
-												<p className='text-xs text-muted-foreground'>
-													Usá las variables entre llaves {'{}'} de los otros
-													campos numéricos.
-												</p>
-											</div>
-										)}
-
-										{(field.type === 'formula' || field.type === 'number') && (
-											<div className='md:col-span-2 space-y-2'>
-												<Label>Decimales</Label>
-												<Input
-													type='number'
-													min='0'
-													max='4'
-													value={field.decimals || 0}
-													onChange={(e) =>
-														updateField(index, {
-															decimals: parseInt(e.target.value),
-														})
-													}
-												/>
-											</div>
-										)}
-
-										<div className='md:col-span-1 flex justify-end pt-8'>
-											<Button
-												variant='ghost'
-												size='icon'
-												className='text-red-500 hover:text-red-700 hover:bg-red-50'
-												onClick={() => removeField(index)}
-											>
-												<Trash2 className='h-4 w-4' />
-											</Button>
 										</div>
 									</div>
-								</div>
-							</Card>
-						))}
+								</Card>
+							);
+						})}
 
 						<div className='flex flex-wrap gap-3 pt-2'>
 							<Button
@@ -301,21 +427,19 @@ export default function MeasurementTemplatesPage() {
 					</div>
 
 					<div className='flex justify-end gap-3 pt-6 border-t'>
-						<Button variant='ghost' onClick={() => setIsCreating(false)}>
+						<Button variant='ghost' onClick={resetForm}>
 							Cancelar
 						</Button>
 						<Button
-							onClick={() => createMutation.mutate()}
-							disabled={
-								createMutation.isPending || fields.length === 0 || !name
-							}
+							onClick={() => saveMutation.mutate()}
+							disabled={saveMutation.isPending || fields.length === 0 || !name}
 						>
-							{createMutation.isPending ? (
+							{saveMutation.isPending ? (
 								<Loader2 className='mr-2 h-4 w-4 animate-spin' />
 							) : (
 								<Save className='mr-2 h-4 w-4' />
 							)}
-							Guardar Plantilla
+							{editingTemplateId ? 'Guardar Cambios' : 'Guardar Plantilla'}
 						</Button>
 					</div>
 				</div>
@@ -328,22 +452,32 @@ export default function MeasurementTemplatesPage() {
 						>
 							<CardHeader>
 								<CardTitle className='text-lg flex justify-between items-start'>
-									<span className='truncate'>{template.name}</span>
-									<Button
-										variant='ghost'
-										size='icon'
-										className='h-8 w-8 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-all'
-										onClick={() => {
-											if (
-												confirm(
-													'¿Borrar plantilla? Esto no borrará los registros clínicos de los pacientes, solo el molde.',
+									<span className='truncate pr-2'>{template.name}</span>
+									<div className='flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
+										<Button
+											variant='ghost'
+											size='icon'
+											className='h-8 w-8 text-slate-400 hover:text-blue-600'
+											onClick={() => startEditing(template)}
+										>
+											<Pencil className='h-4 w-4' />
+										</Button>
+										<Button
+											variant='ghost'
+											size='icon'
+											className='h-8 w-8 text-slate-400 hover:text-red-600'
+											onClick={() => {
+												if (
+													confirm(
+														'¿Borrar plantilla? Esto no borrará los registros clínicos de los pacientes.',
+													)
 												)
-											)
-												deleteMutation.mutate(template.id);
-										}}
-									>
-										<Trash2 className='h-4 w-4' />
-									</Button>
+													deleteMutation.mutate(template.id);
+											}}
+										>
+											<Trash2 className='h-4 w-4' />
+										</Button>
+									</div>
 								</CardTitle>
 								{template.description && (
 									<CardDescription className='truncate'>
@@ -359,12 +493,12 @@ export default function MeasurementTemplatesPage() {
 									>
 										{template.fields.length} campos
 									</Badge>
-									{template.fields.some((f) => f.type === 'formula') && (
+									{template.fields.some((f) => f.standardMapping) && (
 										<Badge
 											variant='outline'
-											className='border-purple-200 text-purple-700 bg-purple-50'
+											className='border-emerald-200 text-emerald-700 bg-emerald-50'
 										>
-											<Calculator className='h-3 w-3 mr-1' /> Autocalculable
+											<LinkIcon className='h-3 w-3 mr-1' /> Inteligencia OMS
 										</Badge>
 									)}
 								</div>
@@ -378,8 +512,8 @@ export default function MeasurementTemplatesPage() {
 								Sin plantillas médicas
 							</h3>
 							<p className='text-sm text-slate-500 mt-1'>
-								Creá tu primer molde de mediciones (ej: Antropometría) para usar
-								en la Historia Clínica.
+								Creá tu primer molde de mediciones para usar en la Historia
+								Clínica.
 							</p>
 						</div>
 					)}

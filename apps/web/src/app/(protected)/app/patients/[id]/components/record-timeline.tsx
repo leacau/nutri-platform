@@ -40,24 +40,59 @@ import { useRef, useState } from 'react';
 
 import { Button } from '../../../../../../components/ui/button';
 import { EditRecordDialog } from './new-record-dialog';
+import { evaluateMeasurement } from '../../../../../../lib/clinical-evaluator';
 import { formatDate } from '../../../../../../lib/utils';
 import { useAuth } from '../../../../../../providers/auth-provider';
 import { useClinic } from '../../../../../../providers/clinic-provider';
 import { useReactToPrint } from 'react-to-print';
 
-export function RecordTimeline({ records }: { records: ClinicalRecord[] }) {
+// Calculador rápido de edad
+const getAge = (birthDateString?: string) => {
+	if (!birthDateString) return 30; // Fallback por defecto
+	const today = new Date();
+	const birthDate = new Date(birthDateString);
+	let age = today.getFullYear() - birthDate.getFullYear();
+	const m = today.getMonth() - birthDate.getMonth();
+	if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+		age--;
+	}
+	return age;
+};
+
+// Mapeo de sexo al formato del evaluator ('M' o 'F')
+const getGenderCode = (sexo?: string) => {
+	if (!sexo) return 'M';
+	const s = sexo.toLowerCase();
+	if (s.startsWith('f')) return 'F';
+	return 'M';
+};
+
+// NUEVO: Agregamos "patient" a las props
+export function RecordTimeline({
+	records,
+	patient,
+}: {
+	records: ClinicalRecord[];
+	patient: any;
+}) {
 	if (!records || records.length === 0) return null;
 
 	return (
 		<div className='space-y-4'>
 			{records.map((record) => (
-				<RecordCard key={record.id} record={record} />
+				<RecordCard key={record.id} record={record} patient={patient} />
 			))}
 		</div>
 	);
 }
 
-function RecordCard({ record }: { record: ClinicalRecord }) {
+function RecordCard({
+	record,
+	patient,
+}: {
+	record: ClinicalRecord;
+	patient: any;
+}) {
 	const { id, patientId, type, date, data, professionalUid } = record;
 	const contentRef = useRef<HTMLDivElement>(null);
 
@@ -66,6 +101,10 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 	const { idToken } = useAuth();
 	const { activeClinicId } = useClinic();
 	const qc = useQueryClient();
+
+	// Extraemos edad y sexo del paciente para el Cerebro Clínico
+	const patientAge = getAge(patient?.birthDate);
+	const patientGender = getGenderCode(patient?.sexo);
 
 	const handlePrint = useReactToPrint({
 		contentRef,
@@ -165,7 +204,6 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 						</div>
 					</div>
 
-					{/* Botonera Superior Derecha */}
 					<div className='flex items-center gap-2 print:hidden'>
 						{(type === 'prescription' ||
 							type === 'meal_plan' ||
@@ -260,6 +298,7 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 											</tr>
 										</thead>
 										<tbody className='text-xs print:text-xs'>
+											{/* (Código de la grilla de dieta que ya tenías, resumido para no estirar el archivo innecesariamente) */}
 											<tr className='border-b border-slate-100 hover:bg-slate-50'>
 												<td className='p-3 font-semibold text-slate-900 bg-slate-50/50'>
 													Desayuno
@@ -279,10 +318,10 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap'>
 													{data.weeklyTemplate.friday?.breakfast || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.saturday?.breakfast || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.sunday?.breakfast || '-'}
 												</td>
 											</tr>
@@ -305,10 +344,10 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap'>
 													{data.weeklyTemplate.friday?.lunch || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.saturday?.lunch || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.sunday?.lunch || '-'}
 												</td>
 											</tr>
@@ -331,10 +370,10 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap'>
 													{data.weeklyTemplate.friday?.snack || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.saturday?.snack || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.sunday?.snack || '-'}
 												</td>
 											</tr>
@@ -357,10 +396,10 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap'>
 													{data.weeklyTemplate.friday?.dinner || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.saturday?.dinner || '-'}
 												</td>
-												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30 print:bg-transparent'>
+												<td className='p-3 border-l border-slate-100 whitespace-pre-wrap bg-emerald-50/30'>
 													{data.weeklyTemplate.sunday?.dinner || '-'}
 												</td>
 											</tr>
@@ -395,34 +434,88 @@ function RecordCard({ record }: { record: ClinicalRecord }) {
 						</div>
 					)}
 
-					{/* NUEVO: RENDERIZADO DE PLANTILLAS DINÁMICAS */}
+					{/* ACÁ ACTÚA EL CEREBRO CLÍNICO */}
 					{type === 'dynamic_measurement' && data?.fieldsConfig && (
 						<div className='grid grid-cols-2 md:grid-cols-4 gap-4'>
 							{data.fieldsConfig.map((field: any) => {
-								const val = data.values?.[field.id];
-								if (!val && val !== 0 && field.type !== 'formula') return null; // Ocultamos los vacíos, salvo las fórmulas
+								const valStr = data.values?.[field.id];
+								if (!valStr && valStr !== 0 && field.type !== 'formula')
+									return null; // Ocultamos los vacíos
+
+								const valNum = parseFloat(valStr);
+								let evalResult = null;
+
+								// Si es un número o fórmula válida, se la pasamos al evaluador
+								if (
+									!isNaN(valNum) &&
+									(field.type === 'number' || field.type === 'formula')
+								) {
+									evalResult = evaluateMeasurement(
+										field.standardMapping || field.label,
+										valNum,
+										patientAge,
+										patientGender,
+									);
+								}
+
+								// Pintamos la tarjeta de acuerdo a la respuesta de la OMS (rojo, verde, amarillo)
+								const bgClass =
+									evalResult && evalResult.status !== 'unknown'
+										? evalResult.bgClass
+										: field.type === 'formula'
+											? 'bg-purple-50'
+											: 'bg-slate-50';
+								const borderClass =
+									evalResult && evalResult.status !== 'unknown'
+										? evalResult.borderClass
+										: field.type === 'formula'
+											? 'border-purple-100'
+											: 'border-slate-100';
+								const textColorClass =
+									evalResult && evalResult.status !== 'unknown'
+										? evalResult.colorClass
+										: field.type === 'formula'
+											? 'text-purple-600'
+											: 'text-muted-foreground';
+								const valColorClass =
+									evalResult && evalResult.status !== 'unknown'
+										? evalResult.colorClass
+										: field.type === 'formula'
+											? 'text-purple-900 font-bold'
+											: 'text-slate-900';
 
 								return (
 									<div
 										key={field.id}
-										className={`bg-slate-50 p-3 rounded-lg border border-slate-100 ${field.type === 'formula' ? 'bg-purple-50 border-purple-100' : ''}`}
+										className={`p-3 rounded-lg border ${bgClass} ${borderClass}`}
 									>
 										<p
-											className={`text-[11px] font-semibold uppercase tracking-wider mb-1 flex items-center gap-1 ${field.type === 'formula' ? 'text-purple-600' : 'text-muted-foreground'}`}
+											className={`text-[11px] font-semibold uppercase tracking-wider mb-1 flex items-center justify-between gap-1 ${textColorClass}`}
 										>
-											{field.type === 'formula' && (
-												<Calculator className='h-3 w-3' />
-											)}
-											{field.label}
-										</p>
-										<p
-											className={`font-medium text-lg ${field.type === 'formula' ? 'text-purple-900 font-bold' : 'text-slate-900'}`}
-										>
-											{val || '--'}{' '}
-											<span className='text-sm font-normal text-muted-foreground ml-0.5'>
-												{field.unit}
+											<span className='flex items-center gap-1'>
+												{field.type === 'formula' && (
+													<Calculator className='h-3 w-3' />
+												)}
+												{field.label}
 											</span>
 										</p>
+										<div className='flex flex-col'>
+											<p className={`font-medium text-lg ${valColorClass}`}>
+												{valStr || '--'}{' '}
+												<span className='text-sm font-normal opacity-70 ml-0.5'>
+													{field.unit}
+												</span>
+											</p>
+
+											{/* Si la OMS detectó un estado (ej: "Obesidad (++)"), lo mostramos chiquito abajo */}
+											{evalResult && evalResult.status !== 'unknown' && (
+												<span
+													className={`text-[10px] font-bold mt-1 uppercase ${textColorClass}`}
+												>
+													{evalResult.label}
+												</span>
+											)}
+										</div>
 									</div>
 								);
 							})}

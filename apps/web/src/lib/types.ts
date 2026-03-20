@@ -133,6 +133,7 @@ export type TemplateField = {
 	required: boolean;
 	formula?: string; // ej: {peso} / (({altura}/100) * ({altura}/100))
 	decimals?: number;
+	standardMapping?: string; // <-- Mapeo al estándar (ej: "bmi", "body_fat")
 };
 
 export type MeasurementTemplate = {

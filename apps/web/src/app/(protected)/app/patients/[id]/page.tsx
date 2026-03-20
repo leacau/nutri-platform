@@ -305,7 +305,7 @@ export default function PatientDetailPage() {
 							</CardContent>
 						</Card>
 					) : (
-						<RecordTimeline records={records} />
+						<RecordTimeline records={records} patient={patient} />
 					)}
 				</div>
 			</div>

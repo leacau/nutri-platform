@@ -1,6 +1,7 @@
 'use client';
 
 import {
+	Activity,
 	BarChart3,
 	CalendarClock,
 	ClipboardList,
@@ -64,10 +65,16 @@ const navItems: NavItem[] = [
 		roles: ['clinic_admin'],
 	},
 	{
-		label: 'Plantillas',
+		label: 'Mensajes automáticos', // Le cambié un poco el nombre para que no se confunda
 		href: '/app/templates',
 		icon: <FileText className='h-4 w-4' />,
 		roles: ['clinic_admin', 'staff', 'professional'],
+	},
+	{
+		label: 'Plantillas Médicas', // <-- NUESTRO NUEVO ACCESO
+		href: '/app/measurement-templates',
+		icon: <Activity className='h-4 w-4' />,
+		roles: ['clinic_admin', 'professional'], // Fijate que el staff no tiene acceso a esto
 	},
 	{
 		label: 'Auditoría',

@@ -356,6 +356,22 @@ export const apiClient = {
 			},
 		),
 
+	updateTemplate: (
+		id: string,
+		data: { name: string; description?: string; fields: any[] },
+		clinicId: string,
+		token?: string,
+	) =>
+		request<{ success: boolean; data: MeasurementTemplate }>(
+			`/measurement-templates/${id}`,
+			{
+				method: 'PATCH',
+				body: data,
+				token,
+				clinicId,
+			},
+		),
+
 	deleteTemplate: (id: string, clinicId: string, token?: string) =>
 		request<{ success: boolean }>(`/measurement-templates/${id}`, {
 			method: 'DELETE',

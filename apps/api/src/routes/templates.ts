@@ -112,4 +112,53 @@ router.delete(
 	},
 );
 
+// PATCH: Editar una plantilla existente
+router.patch(
+	'/:id',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'professional'),
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const clinicId = auth.clinicId!;
+		const templateId = req.params.id as string;
+
+		const db = getFirestoreDb();
+		const ref = db.collection('measurement_templates').doc(templateId);
+
+		const snap = await ref.get();
+		if (!snap.exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Template not found' });
+		}
+
+		const data = snap.data() as MeasurementTemplateDoc;
+		if (data.clinicId !== clinicId) {
+			return denyAuthz(req, res, 'Cross-clinic template update') as any;
+		}
+
+		const parsed = createTemplateSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid template format',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const now = Timestamp.now();
+		const updates = {
+			name: parsed.data.name,
+			description: parsed.data.description || '',
+			fields: parsed.data.fields,
+			updatedAt: now,
+		};
+
+		await ref.update(updates);
+
+		return res.status(200).json({ success: true, message: 'Template updated' });
+	},
+);
+
 export const templatesRouter = router;
