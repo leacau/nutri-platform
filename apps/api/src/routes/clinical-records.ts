@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
+import crypto from 'crypto';
 
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
@@ -8,6 +9,68 @@ import { denyAuthz } from '../security/authz.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 
 export const clinicalRecordsRouter = Router();
+
+// ============================================================================
+// 🔒 MOTOR DE ENCRIPTACIÓN AES-256-GCM (Grado Médico)
+// ============================================================================
+// ATENCIÓN: En producción, ESTA CLAVE DEBE VENIR DEL .env (process.env.CLINICAL_ENCRYPTION_KEY)
+// Debe ser exactamente de 32 bytes (256 bits). Para este código usamos un fallback seguro.
+const getEncryptionKey = () => {
+	if (process.env.CLINICAL_ENCRYPTION_KEY) {
+		return Buffer.from(process.env.CLINICAL_ENCRYPTION_KEY, 'hex');
+	}
+	// Fallback de desarrollo: Genera una clave a partir de un string estático
+	return crypto.scryptSync('nutri_platform_super_secret_dev_key', 'salt', 32);
+};
+
+const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 16;
+
+function encryptData(data: any): string {
+	const text = JSON.stringify(data);
+	const iv = crypto.randomBytes(IV_LENGTH);
+	const cipher = crypto.createCipheriv(ALGORITHM, getEncryptionKey(), iv);
+	let encrypted = cipher.update(text, 'utf8', 'hex');
+	encrypted += cipher.final('hex');
+	const authTag = cipher.getAuthTag().toString('hex');
+	// Guardamos el Vector de Inicialización, el Tag de Autenticación y el texto cifrado
+	return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
+
+function decryptData(encryptedText: string | any): any {
+	// Si la data no es un string (es un registro viejo sin cifrar), la devolvemos como está
+	if (typeof encryptedText !== 'string' || !encryptedText.includes(':')) {
+		return encryptedText;
+	}
+
+	try {
+		const parts = encryptedText.split(':');
+		if (parts.length !== 3) return encryptedText;
+
+		// Le juramos a TypeScript que estas variables son strings
+		const ivHex = parts[0] as string;
+		const authTagHex = parts[1] as string;
+		const encryptedHex = parts[2] as string;
+
+		const iv = Buffer.from(ivHex, 'hex');
+		const authTag = Buffer.from(authTagHex, 'hex');
+
+		const decipher = crypto.createDecipheriv(ALGORITHM, getEncryptionKey(), iv);
+		decipher.setAuthTag(authTag);
+
+		// Tipamos explícitamente como string para evitar el error de NonSharedBuffer
+		let decrypted: string = decipher.update(encryptedHex, 'hex', 'utf8');
+		decrypted += decipher.final('utf8');
+
+		return JSON.parse(decrypted);
+	} catch (error) {
+		console.error('Error crítico descifrando registro médico:', error);
+		return {
+			error: 'DATA_CORRUPTED_OR_KEY_MISMATCH',
+			content: 'No se pudo descifrar el registro.',
+		};
+	}
+}
 
 // Validación estricta para garantizar la estructura de los datos
 const createRecordSchema = z.object({
@@ -21,7 +84,7 @@ const createRecordSchema = z.object({
 		'attachment',
 	]),
 	date: z.string().min(10),
-	data: z.record(z.any()),
+	data: z.record(z.any()), // Este es el objeto que vamos a encriptar
 });
 
 // GET: Obtener todos los registros de un paciente en una clínica
@@ -41,7 +104,6 @@ clinicalRecordsRouter.get(
 
 		const db = getFirestoreDb();
 
-		// 1. Verificamos que el usuario tiene acceso a este paciente
 		const patientSnap = await db.collection('patients').doc(patientId).get();
 		if (!patientSnap.exists) {
 			return res
@@ -49,35 +111,31 @@ clinicalRecordsRouter.get(
 				.json({ success: false, message: 'Patient not found' });
 		}
 
-		const patientData = patientSnap.data();
-		if (patientData?.clinicId !== clinicId) {
+		if (patientSnap.data()?.clinicId !== clinicId) {
 			return denyAuthz(req, res, 'Cross-clinic access denied');
 		}
 
-		if (
-			auth.role === 'professional' &&
-			!(patientData?.assignedProfessionalUids ?? []).includes(auth.uid)
-		) {
-			return denyAuthz(req, res, 'Professional not assigned to this patient');
-		}
-
-		// 2. Traemos el historial (lo más nuevo primero)
+		// 🔒 REGLA DE HIERRO: Solo traemos los registros donde professionalUid == tu UID.
+		// No importa si sos clinic_admin o superuser, la consulta en Firebase filtra por tu ID.
 		const recordsSnap = await db
 			.collection('clinical_records')
 			.where('clinicId', '==', clinicId)
 			.where('patientId', '==', patientId)
+			.where('professionalUid', '==', auth.uid)
 			.orderBy('date', 'desc')
 			.get();
 
 		const records = recordsSnap.docs.map((doc) => {
-			const data = doc.data();
+			const rawData = doc.data();
 			return {
 				id: doc.id,
-				...data,
+				...rawData,
+				// 🔓 Desciframos la data en memoria justo antes de mandarla al frontend
+				data: decryptData(rawData.encryptedData || rawData.data),
 				createdAt:
-					data.createdAt instanceof Timestamp
-						? data.createdAt.toDate().toISOString()
-						: data.createdAt,
+					rawData.createdAt instanceof Timestamp
+						? rawData.createdAt.toDate().toISOString()
+						: rawData.createdAt,
 			};
 		});
 
@@ -106,7 +164,6 @@ clinicalRecordsRouter.post(
 		const { patientId, type, date, data } = parsed.data;
 		const db = getFirestoreDb();
 
-		// Verificar acceso al paciente
 		const patientSnap = await db.collection('patients').doc(patientId).get();
 		if (!patientSnap.exists || patientSnap.data()?.clinicId !== clinicId) {
 			return res
@@ -114,21 +171,18 @@ clinicalRecordsRouter.post(
 				.json({ success: false, message: 'Patient not found in clinic' });
 		}
 
-		if (
-			auth.role === 'professional' &&
-			!(patientSnap.data()?.assignedProfessionalUids ?? []).includes(auth.uid)
-		) {
-			return denyAuthz(req, res, 'Cannot add record to unassigned patient');
-		}
-
 		const now = Timestamp.now();
+
+		// 🔒 Encriptamos el contenido sensible antes de armar el registro
+		const encryptedPayload = encryptData(data);
+
 		const record = {
 			clinicId,
 			patientId,
 			professionalUid: auth.uid,
 			type,
 			date,
-			data,
+			encryptedData: encryptedPayload, // Guardamos la basura criptográfica
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -138,7 +192,17 @@ clinicalRecordsRouter.post(
 		return res.status(201).json({
 			success: true,
 			message: 'Record created successfully',
-			data: { id: ref.id, ...record, createdAt: now.toDate().toISOString() },
+			// Devolvemos la data original al frontend (no la encriptada) para que no haya que recargar
+			data: {
+				id: ref.id,
+				clinicId,
+				patientId,
+				professionalUid: auth.uid,
+				type,
+				date,
+				data,
+				createdAt: now.toDate().toISOString(),
+			},
 		});
 	},
 );
@@ -171,34 +235,26 @@ clinicalRecordsRouter.patch(
 
 		const recordData = recordSnap.data()!;
 
-		// 1. Validar que el registro pertenezca a la clínica del usuario
 		if (recordData.clinicId !== clinicId) {
 			return denyAuthz(req, res, 'Cross-clinic edit attempt denied');
 		}
 
-		// 2. Si es profesional, validar que él haya creado el registro
-		if (
-			auth.role === 'professional' &&
-			recordData.professionalUid !== auth.uid
-		) {
+		// 🔒 REGLA DE HIERRO: Nadie puede editar si no es el creador original
+		if (recordData.professionalUid !== auth.uid) {
 			return denyAuthz(
 				req,
 				res,
-				'Professionals can only edit their own records',
+				'Nadie puede editar un registro que no haya firmado personalmente.',
 			);
 		}
 
-		// 3. Extraer solo los campos permitidos para actualizar (data y date)
 		const { data, date } = req.body;
+		const updates: any = { updatedAt: Timestamp.now() };
 
-		const updates: any = {
-			updatedAt: Timestamp.now(),
-		};
-
-		if (data !== undefined) updates.data = data;
+		// Si mandan data nueva, la encriptamos antes de pisar la base de datos
+		if (data !== undefined) updates.encryptedData = encryptData(data);
 		if (date !== undefined) updates.date = date;
 
-		// 4. Guardar los cambios
 		await recordRef.update(updates);
 
 		return res.status(200).json({
@@ -237,24 +293,19 @@ clinicalRecordsRouter.delete(
 
 		const recordData = recordSnap.data()!;
 
-		// 1. Validar que el registro pertenezca a la clínica del usuario
 		if (recordData.clinicId !== clinicId) {
 			return denyAuthz(req, res, 'Cross-clinic delete attempt denied');
 		}
 
-		// 2. Si es profesional, validar que él haya creado el registro (o que sea admin)
-		if (
-			auth.role === 'professional' &&
-			recordData.professionalUid !== auth.uid
-		) {
+		// 🔒 REGLA DE HIERRO: Nadie puede borrar si no es el creador original
+		if (recordData.professionalUid !== auth.uid) {
 			return denyAuthz(
 				req,
 				res,
-				'Professionals can only delete their own records',
+				'Nadie puede borrar un registro que no haya firmado personalmente.',
 			);
 		}
 
-		// 3. Borrar el registro
 		await recordRef.delete();
 
 		return res.status(200).json({

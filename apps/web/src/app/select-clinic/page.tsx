@@ -41,7 +41,6 @@ type CreateClinicForm = z.infer<typeof createClinicSchema>;
 
 export default function SelectClinicPage() {
 	const qc = useQueryClient();
-	// FIX: Agregamos isLoading acá para saber cuándo terminó de buscar en el backend
 	const { clinics, me, setActiveClinic, isLoading } = useClinic();
 	const { logout, idToken } = useAuth();
 	const router = useRouter();
@@ -103,6 +102,10 @@ export default function SelectClinicPage() {
 		onError: () => alert('Error al crear la clínica'),
 	});
 
+	// Pequeño hack visual: a veces isLoading es false pero idToken sigue calculándose.
+	// Usamos esta variable para asegurarnos de que la carga sea real y completa.
+	const isFullyLoading = isLoading || !idToken;
+
 	return (
 		<AuthGuard>
 			<main className='mx-auto max-w-5xl px-6 py-14'>
@@ -120,8 +123,7 @@ export default function SelectClinicPage() {
 					</Button>
 				</div>
 
-				{/* FIX: Mostramos un loader mientras está buscando las clínicas */}
-				{isLoading ? (
+				{isFullyLoading ? (
 					<div className='flex flex-col items-center justify-center py-12 text-muted-foreground'>
 						<Loader2 className='h-8 w-8 animate-spin mb-4 text-primary' />
 						<p>Cargando tus clínicas disponibles...</p>
@@ -160,8 +162,9 @@ export default function SelectClinicPage() {
 							))}
 						</div>
 
-						{/* FIX: El error ahora SOLO aparece si terminó de cargar Y no hay clínicas */}
-						{!clinics?.length ? (
+						{/* ACÁ ESTÁ EL ARREGLO MAGISTRAL */}
+						{/* Solo mostramos el cartel de vacío si YA terminó de cargar y NO hay clínicas */}
+						{!clinics?.length && !isFullyLoading ? (
 							<div className='mt-8 rounded-xl border border-dashed p-6 text-center text-muted-foreground'>
 								No encontramos clínicas disponibles para tu usuario.
 							</div>
@@ -170,7 +173,7 @@ export default function SelectClinicPage() {
 				)}
 
 				{/* El formulario de superadmin se queda igual */}
-				{isPlatformAdmin && !isLoading ? (
+				{isPlatformAdmin && !isFullyLoading ? (
 					<Card className='mt-8 border-primary/10 shadow-lg'>
 						<CardHeader>
 							<CardTitle className='flex items-center gap-2 text-lg'>

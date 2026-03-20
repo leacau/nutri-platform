@@ -25,6 +25,7 @@ router.get(
 		const snap = await db
 			.collection('measurement_templates')
 			.where('clinicId', '==', clinicId)
+			.where('createdByUid', '==', auth.uid)
 			.orderBy('createdAt', 'desc')
 			.get();
 
