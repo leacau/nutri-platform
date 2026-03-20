@@ -1,23 +1,35 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22-slim
+FROM node:22-slim AS base
 WORKDIR /app
 
-# Como Google Cloud ya nos encerró en la carpeta apps/api/, 
-# el package.json está directamente acá al lado nuestro.
-COPY package.json ./
+# ---- deps (root + workspace api) ----
+FROM base AS deps
+COPY package.json package-lock.json* ./
+COPY apps/api/package.json apps/api/package.json
 
-# Instalamos las dependencias
-RUN npm install
+# instala deps del root + del workspace apps/api
+RUN npm install --legacy-peer-deps --workspace apps/api --include-workspace-root
 
-# Copiamos el resto del código (la carpeta src, tsconfig.json, etc.)
+# ---- build ----
+FROM base AS build
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm run build --workspace apps/api
 
-# Compilamos el TypeScript (esto crea la carpeta dist/)
-RUN npm run build
+# ---- runner ----
+FROM node:22-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=8080
 
-# Exponemos el puerto de Cloud Run
+COPY package.json package-lock.json* ./
+COPY apps/api/package.json apps/api/package.json
+
+# instala prod deps root + workspace (sin dev)
+RUN npm install --omit=dev --legacy-peer-deps --workspace apps/api --include-workspace-root
+
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+
 EXPOSE 8080
-
-# Arrancamos la API
-CMD ["npm", "start"]
+CMD ["node", "apps/api/dist/index.js"]
