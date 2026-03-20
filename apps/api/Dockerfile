@@ -23,7 +23,7 @@
     ENV NODE_ENV=production
     ENV PORT=8080
 
-    COPY package.json package-lock.json ./
+   COPY package.json package-lock.json* ./
     COPY apps/api/package.json apps/api/package.json
 
     # instala prod deps root + workspace (sin dev)
