@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
+import { inviteUser } from '../controllers/invitation.controller.js';
 
 const router = Router();
 
@@ -47,7 +48,7 @@ router.post('/self', authMiddleware, async (req: Request, res: Response) => {
 		dni: dniInt ?? undefined,
 		updatedAt: now,
 		createdAt: existing.exists
-			? (existing.data() as { createdAt?: Timestamp }).createdAt ?? now
+			? ((existing.data() as { createdAt?: Timestamp }).createdAt ?? now)
 			: now,
 	};
 
@@ -59,5 +60,8 @@ router.post('/self', authMiddleware, async (req: Request, res: Response) => {
 		data: { uid: req.auth.uid },
 	});
 });
+
+// 👇 NUEVA RUTA DE INVITACIÓN
+router.post('/invite', authMiddleware, inviteUser);
 
 export const usersRouter = router;
