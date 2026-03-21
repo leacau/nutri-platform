@@ -106,10 +106,14 @@ export async function requireAuth(
 		(req as any).auth = authContext;
 
 		return next();
-	} catch (err) {
+	} catch (err: any) {
+		// ESTA ES LA MAGIA: Imprimir el error real en los logs de Cloud Run
+		console.error('[AUTH FATAL ERROR] Detalles:', err);
+
 		return res.status(401).json({
 			success: false,
 			message: 'Invalid or expired token',
+			errorDetails: err.message || 'Error desconocido', // Mandamos la pista al frontend
 		});
 	}
 }
