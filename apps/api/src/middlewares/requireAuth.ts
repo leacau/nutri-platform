@@ -107,13 +107,13 @@ export async function requireAuth(
 
 		return next();
 	} catch (err: any) {
-		// ESTA ES LA MAGIA: Imprimir el error real en los logs de Cloud Run
-		console.error('[AUTH FATAL ERROR] Detalles:', err);
-
+		// En lugar de devolver un mensaje genérico, mandamos el error real
+		// Esto es solo temporal para depurar, no lo dejes en producción
 		return res.status(401).json({
 			success: false,
-			message: 'Invalid or expired token',
-			errorDetails: err.message || 'Error desconocido', // Mandamos la pista al frontend
+			message: 'Firebase Token Error',
+			errorDetails: err.message,
+			tokenQueLlego: req.header('Authorization')?.substring(0, 15) + '...',
 		});
 	}
 }
