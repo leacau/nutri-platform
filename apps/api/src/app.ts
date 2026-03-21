@@ -17,39 +17,47 @@ import { metricsMiddleware, metricsRegistry } from './middlewares/metrics.js';
 import { requireAuth } from './middlewares/requireAuth.js';
 import { templatesRouter } from './routes/templates.js';
 
-// Si no hay orígenes definidos o es '*', permite todo. Si no, parsea la lista.
-const parseAllowedOrigins = (value?: string): string[] | string => {
-	if (!value || value === '*') return '*';
-	return value
-		.split(',')
-		.map((o) => o.trim())
-		.filter(Boolean);
-};
-
 export function buildApp(): Express {
 	const app = express();
-	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 	const isProd = process.env.NODE_ENV === 'production';
 
-	// Seguridad y Parseo
-	app.use(helmet());
-	app.use(morgan(isProd ? 'combined' : 'dev'));
-	app.use(express.json({ limit: '256kb' }));
-
-	// Configuración de CORS más limpia
+	// 1. CORS DEBE IR PRIMERO (Antes que Helmet y cualquier otro middleware)
 	app.use(
 		cors({
-			origin: allowedOrigins,
+			origin: function (origin, callback) {
+				// Permitir peticiones sin origen (como Postman o preflight requests internas)
+				if (!origin) return callback(null, true);
+
+				const allowedOrigins = process.env.ALLOWED_ORIGINS
+					? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+					: ['*'];
+
+				// Si está configurado el asterisco o el origen coincide, pasa
+				if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+					return callback(null, true);
+				} else {
+					console.warn(`[CORS] Origen bloqueado: ${origin}`);
+					return callback(null, false);
+				}
+			},
 			credentials: true,
 			methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 			allowedHeaders: [
+				'Origin',
+				'X-Requested-With',
 				'Content-Type',
+				'Accept',
 				'Authorization',
 				'x-clinic-id',
 				'x-dev-secret',
 			],
 		}),
 	);
+
+	// 2. Seguridad y Parseo
+	app.use(helmet());
+	app.use(morgan(isProd ? 'combined' : 'dev'));
+	app.use(express.json({ limit: '256kb' }));
 
 	// Observabilidad (Métricas)
 	app.use(metricsMiddleware);
