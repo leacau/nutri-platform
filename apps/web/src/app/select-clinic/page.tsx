@@ -8,6 +8,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from '../../components/ui/card';
+import { Suspense, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 
@@ -20,7 +21,6 @@ import { apiClient } from '../../lib/api-client';
 import { getFirebaseAuth } from '../../lib/firebase';
 import { useAuth } from '../../providers/auth-provider';
 import { useClinic } from '../../providers/clinic-provider';
-import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useI18n } from '../../providers/i18n-provider';
 import { z } from 'zod';
@@ -39,7 +39,7 @@ const createClinicSchema = z.object({
 
 type CreateClinicForm = z.infer<typeof createClinicSchema>;
 
-export default function SelectClinicPage() {
+function SelectClinicContent() {
 	const qc = useQueryClient();
 	const { clinics, me, setActiveClinic, isLoading } = useClinic();
 	const { logout, idToken } = useAuth();
@@ -245,5 +245,19 @@ export default function SelectClinicPage() {
 				) : null}
 			</main>
 		</AuthGuard>
+	);
+}
+
+export default function SelectClinicPage() {
+	return (
+		<Suspense
+			fallback={
+				<div className='flex justify-center py-20'>
+					<Loader2 className='h-8 w-8 animate-spin text-primary' />
+				</div>
+			}
+		>
+			<SelectClinicContent />
+		</Suspense>
 	);
 }
