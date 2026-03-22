@@ -416,11 +416,16 @@ export const apiClient = {
 		data: { name: string; email: string; dni: string; role: string },
 		token?: string,
 	) =>
-		request<any>(`/clinics/${clinicId}/invite`, {
+		request<any>(`/users/invite`, {
 			method: 'POST',
 			token,
-			clinicId,
-			body: data,
+			clinicId, // El backend lo atrapa desde el body ahora
+			body: {
+				email: data.email,
+				fullName: data.name, // Mapeamos el 'name' del form a 'fullName'
+				role: data.role,
+				clinicId: clinicId,
+			},
 		}),
 
 	createClinic: (
