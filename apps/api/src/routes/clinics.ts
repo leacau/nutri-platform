@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
+import crypto from 'crypto';
+import { getFirebaseAdmin } from '../firebase/admin.js';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
@@ -180,10 +182,38 @@ router.post(
 				updatedAt: now,
 			});
 		} else {
-			const newUserRef = db.collection('users').doc();
-			uid = newUserRef.id;
+			// CREACIÓN OBLIGATORIA EN AUTHENTICATION
+			const { auth } = getFirebaseAdmin();
+			try {
+				const randomPassword = crypto.randomBytes(20).toString('hex');
+				const userRecord = await auth.createUser({
+					email: parsed.data.admin.email,
+					displayName: parsed.data.admin.name,
+					password: randomPassword,
+				});
+				uid = userRecord.uid;
 
-			await newUserRef.set({
+				const inviteLink = await auth.generatePasswordResetLink(
+					parsed.data.admin.email,
+				);
+				console.log(
+					`\n📧 [NUEVA CLÍNICA] Enviando link a admin: ${parsed.data.admin.email}`,
+				);
+				console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+			} catch (error: any) {
+				// Si por alguna razón desincronizada existe en Auth pero no en Firestore
+				if (error.code === 'auth/email-already-exists') {
+					const existingUser = await auth.getUserByEmail(
+						parsed.data.admin.email,
+					);
+					uid = existingUser.uid;
+				} else {
+					throw error;
+				}
+			}
+
+			// Creamos en Firestore con el UID real
+			await db.collection('users').doc(uid).set({
 				email: parsed.data.admin.email,
 				dni: dniInt,
 				name: parsed.data.admin.name,
@@ -192,7 +222,7 @@ router.post(
 			});
 		}
 
-		// 1. Asignamos la clínica SOLO al administrador que llenaste en el formulario.
+		// 1. Asignamos la clínica SOLO al administrador
 		await db.collection('clinic_memberships').add({
 			clinicId: clinicRef.id,
 			uid,
@@ -202,9 +232,6 @@ router.post(
 			updatedAt: now,
 			createdByUid: req.auth?.uid ?? null,
 		});
-
-		// NOTA: Se eliminó el bloque de código que te agregaba como miembro.
-		// Ahora tu usuario superadmin no se ensucia con membresías redundantes.
 
 		return res.status(201).json({
 			success: true,
@@ -223,6 +250,31 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 	}
 
 	const db = getFirestoreDb();
+
+	// INICIO MODO DIOS: Si es admin global, listamos todo para el selector visual
+	if (req.auth.isPlatformAdmin) {
+		const snap = await db
+			.collection('clinics')
+			.orderBy('createdAt', 'desc')
+			.limit(50)
+			.get();
+		const clinics = snap.docs.map((doc) => ({
+			clinicId: doc.id,
+			role: 'clinic_admin' as ClinicRole,
+			clinicName: doc.data().name ?? null,
+		}));
+
+		return res.status(200).json({
+			success: true,
+			data: {
+				uid: req.auth.uid,
+				email: req.auth.email,
+				isPlatformAdmin: true,
+				clinics,
+			},
+		});
+	}
+
 	const membershipsSnap = await db
 		.collection('clinic_memberships')
 		.where('uid', '==', req.auth.uid)
@@ -389,10 +441,34 @@ router.post(
 				updatedAt: now,
 			});
 		} else {
-			const newUserRef = db.collection('users').doc();
-			uid = newUserRef.id;
+			// CREACIÓN OBLIGATORIA EN AUTHENTICATION TAMBIÉN ACÁ
+			const { auth } = getFirebaseAdmin();
+			try {
+				const randomPassword = crypto.randomBytes(20).toString('hex');
+				const userRecord = await auth.createUser({
+					email: parsed.data.email,
+					displayName: parsed.data.name,
+					password: randomPassword,
+				});
+				uid = userRecord.uid;
 
-			await newUserRef.set({
+				const inviteLink = await auth.generatePasswordResetLink(
+					parsed.data.email,
+				);
+				console.log(
+					`\n📧 [INVITACIÓN CLÍNICA] Enviando link a: ${parsed.data.email}`,
+				);
+				console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+			} catch (error: any) {
+				if (error.code === 'auth/email-already-exists') {
+					const existingUser = await auth.getUserByEmail(parsed.data.email);
+					uid = existingUser.uid;
+				} else {
+					throw error;
+				}
+			}
+
+			await db.collection('users').doc(uid).set({
 				email: parsed.data.email,
 				dni: dniInt,
 				name: parsed.data.name,

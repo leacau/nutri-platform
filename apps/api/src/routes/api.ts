@@ -27,7 +27,13 @@ apiRouter.get(
 
 		try {
 			const xClinicId = req.header('x-clinic-id') as string | undefined;
-			const analysis = await analyzeUserSession(req.auth.uid, xClinicId);
+
+			// PASAMOS EL isPlatformAdmin AL ANALIZADOR
+			const analysis = await analyzeUserSession(
+				req.auth.uid,
+				xClinicId,
+				req.auth.isPlatformAdmin,
+			);
 
 			logEvent('session', {
 				req,

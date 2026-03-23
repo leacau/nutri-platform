@@ -40,7 +40,8 @@ export interface SessionAnalysisResult {
  */
 export async function analyzeUserSession(
 	uid: string,
-	xClinicIdHeader: string | undefined
+	xClinicIdHeader: string | undefined,
+	isPlatformAdmin: boolean = false, // <-- NUEVO PARÁMETRO
 ): Promise<SessionAnalysisResult> {
 	const db = getFirestoreDb();
 
@@ -49,6 +50,43 @@ export async function analyzeUserSession(
 		patientClinics: [],
 		resolved: { role: null, clinicId: null, patientId: null },
 	};
+
+	// --- INICIO MODO DIOS (isPlatformAdmin) ---
+	if (isPlatformAdmin) {
+		if (xClinicIdHeader) {
+			// Si el frontend envía el header, le damos acceso total a esa clínica
+			const clinicDoc = await db
+				.collection('clinics')
+				.doc(xClinicIdHeader)
+				.get();
+			if (clinicDoc.exists) {
+				result.resolved.role = 'clinic_admin';
+				result.resolved.clinicId = xClinicIdHeader;
+				result.staffClinics.push({
+					clinicId: xClinicIdHeader,
+					role: 'clinic_admin',
+					clinicName: (clinicDoc.data() as any)?.name ?? 'Sin nombre',
+				});
+			}
+			return result; // Salimos temprano
+		} else {
+			// Si no hay header, pre-cargamos las clínicas para el selector (límite 50)
+			const snap = await db
+				.collection('clinics')
+				.orderBy('createdAt', 'desc')
+				.limit(50)
+				.get();
+			snap.forEach((doc) => {
+				result.staffClinics.push({
+					clinicId: doc.id,
+					role: 'clinic_admin',
+					clinicName: (doc.data() as any)?.name ?? 'Sin nombre',
+				});
+			});
+			return result; // Salimos temprano
+		}
+	}
+	// --- FIN MODO DIOS ---
 
 	// 1) Buscar Membresías (Prioridad Staff)
 	const membershipsSnap = await db
@@ -80,11 +118,9 @@ export async function analyzeUserSession(
 		}
 
 		// Lógica STAFF:
-		// - Si mandan header y coincide con una membresía, resolvemos.
-		// - Si no, queda null (el staff debe elegir explícitamente).
 		if (xClinicIdHeader) {
 			const match = result.staffClinics.find(
-				(c) => c.clinicId === xClinicIdHeader
+				(c) => c.clinicId === xClinicIdHeader,
 			);
 			if (match) {
 				result.resolved.role = match.role;
@@ -120,7 +156,7 @@ export async function analyzeUserSession(
 				console.warn(
 					`[Session] Duplicate patient record for uid ${uid} in clinic ${
 						pData.clinicId
-					}. Using ${uniquePatientsMap.get(pData.clinicId)?.id}`
+					}. Using ${uniquePatientsMap.get(pData.clinicId)?.id}`,
 				);
 			}
 		});
@@ -148,7 +184,7 @@ export async function analyzeUserSession(
 		} else if (xClinicIdHeader) {
 			// Caso múltiple: depende del header
 			const match = result.patientClinics.find(
-				(p) => p.clinicId === xClinicIdHeader
+				(p) => p.clinicId === xClinicIdHeader,
 			);
 			if (match) {
 				result.resolved.clinicId = match.clinicId;
@@ -165,7 +201,7 @@ export async function analyzeUserSession(
  */
 async function fetchClinicNames(
 	db: Firestore,
-	ids: string[]
+	ids: string[],
 ): Promise<Map<string, string>> {
 	const map = new Map<string, string>();
 	if (ids.length === 0) return map;
@@ -189,7 +225,7 @@ async function fetchClinicNames(
 export async function resolveSessionContext(
 	req: Request,
 	res: Response,
-	next: NextFunction
+	next: NextFunction,
 ) {
 	if (!req.auth) {
 		return res.status(401).json({ success: false, message: 'Unauthenticated' });
@@ -197,7 +233,13 @@ export async function resolveSessionContext(
 
 	try {
 		const xClinicId = req.header('x-clinic-id') as string | undefined;
-		const analysis = await analyzeUserSession(req.auth.uid, xClinicId);
+
+		// PASAMOS EL isPlatformAdmin AL ANALIZADOR
+		const analysis = await analyzeUserSession(
+			req.auth.uid,
+			xClinicId,
+			req.auth.isPlatformAdmin,
+		);
 
 		// 1) Aplicar Role
 		if (analysis.resolved.role) {
