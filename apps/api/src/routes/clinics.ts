@@ -171,11 +171,43 @@ router.post(
 			.get();
 
 		let uid: string;
+		const { auth } = getFirebaseAdmin();
 
 		if (!userSnap.empty) {
 			const userDoc = userSnap.docs[0];
 			if (!userDoc) throw new Error('Unexpected null doc');
 			uid = userDoc.id;
+
+			// --- INICIO AUTO-SANACIÓN ---
+			try {
+				await auth.getUser(uid);
+			} catch (error: any) {
+				if (error.code === 'auth/user-not-found') {
+					console.log(
+						`[AUTO-SANACIÓN] Resucitando usuario fantasma (Auth) para DNI ${dniInt}`,
+					);
+					try {
+						const randomPassword = crypto.randomBytes(20).toString('hex');
+						await auth.createUser({
+							uid: uid, // Forzamos que se cree con el ID que ya tiene en Firestore
+							email: parsed.data.admin.email,
+							displayName: parsed.data.admin.name,
+							password: randomPassword,
+						});
+						const inviteLink = await auth.generatePasswordResetLink(
+							parsed.data.admin.email,
+						);
+						console.log(
+							`\n📧 [AUTO-SANACIÓN CLÍNICA] Enviando link a admin: ${parsed.data.admin.email}`,
+						);
+						console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+					} catch (createErr: any) {
+						console.error('No se pudo sanar al usuario:', createErr.message);
+					}
+				}
+			}
+			// --- FIN AUTO-SANACIÓN ---
+
 			await userDoc.ref.update({
 				name: parsed.data.admin.name,
 				email: parsed.data.admin.email,
@@ -183,7 +215,6 @@ router.post(
 			});
 		} else {
 			// CREACIÓN OBLIGATORIA EN AUTHENTICATION
-			const { auth } = getFirebaseAdmin();
 			try {
 				const randomPassword = crypto.randomBytes(20).toString('hex');
 				const userRecord = await auth.createUser({
@@ -430,11 +461,43 @@ router.post(
 
 		let uid: string;
 		const now = Timestamp.now();
+		const { auth } = getFirebaseAdmin();
 
 		if (!userSnap.empty) {
 			const userDoc = userSnap.docs[0];
 			if (!userDoc) throw new Error('Unexpected null doc');
 			uid = userDoc.id;
+
+			// --- INICIO AUTO-SANACIÓN ---
+			try {
+				await auth.getUser(uid);
+			} catch (error: any) {
+				if (error.code === 'auth/user-not-found') {
+					console.log(
+						`[AUTO-SANACIÓN] Resucitando usuario fantasma (Auth) para DNI ${dniInt}`,
+					);
+					try {
+						const randomPassword = crypto.randomBytes(20).toString('hex');
+						await auth.createUser({
+							uid: uid, // Forzamos que se cree con el ID que ya tiene en Firestore
+							email: parsed.data.email,
+							displayName: parsed.data.name,
+							password: randomPassword,
+						});
+						const inviteLink = await auth.generatePasswordResetLink(
+							parsed.data.email,
+						);
+						console.log(
+							`\n📧 [AUTO-SANACIÓN INVITACIÓN] Enviando link a: ${parsed.data.email}`,
+						);
+						console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+					} catch (createErr: any) {
+						console.error('No se pudo sanar al usuario:', createErr.message);
+					}
+				}
+			}
+			// --- FIN AUTO-SANACIÓN ---
+
 			await userDoc.ref.update({
 				name: parsed.data.name,
 				email: parsed.data.email,
@@ -442,7 +505,6 @@ router.post(
 			});
 		} else {
 			// CREACIÓN OBLIGATORIA EN AUTHENTICATION TAMBIÉN ACÁ
-			const { auth } = getFirebaseAdmin();
 			try {
 				const randomPassword = crypto.randomBytes(20).toString('hex');
 				const userRecord = await auth.createUser({
