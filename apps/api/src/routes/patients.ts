@@ -200,38 +200,33 @@ patientsRouter.get(
 				),
 			});
 		} catch (error: any) {
-			if (error.message && error.message.includes('index')) {
-				console.warn(
-					'[FIRESTORE] Falta índice para pacientes. Usando filtro en memoria temporal.',
+			console.warn(
+				'[FIRESTORE] Falló la query de pacientes. Usando fallback en memoria temporal.',
+				error.message,
+			);
+			const fallbackSnap = await db
+				.collection('patients')
+				.where('clinicId', '==', clinicId)
+				.get();
+			let items = fallbackSnap.docs.map((d) => ({
+				id: d.id,
+				...(d.data() as PatientDoc),
+			}));
+
+			if (auth.role === 'professional') {
+				items = items.filter((p) =>
+					(p.assignedProfessionalUids || []).includes(auth.uid),
 				);
-				const fallbackSnap = await db
-					.collection('patients')
-					.where('clinicId', '==', clinicId)
-					.get();
-				let items = fallbackSnap.docs.map((d) => ({
-					id: d.id,
-					...(d.data() as PatientDoc),
-				}));
-
-				if (auth.role === 'professional') {
-					items = items.filter((p) =>
-						(p.assignedProfessionalUids || []).includes(auth.uid),
-					);
-				}
-
-				return res.status(200).json({
-					success: true,
-					data: items
-						.slice(0, 100)
-						.map((p) =>
-							sanitizePatientForRole(
-								(auth.role ?? 'platform_admin') as Role,
-								p,
-							),
-						),
-				});
 			}
-			throw error;
+
+			return res.status(200).json({
+				success: true,
+				data: items
+					.slice(0, 100)
+					.map((p) =>
+						sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p),
+					),
+			});
 		}
 	},
 );
@@ -532,12 +527,11 @@ patientsRouter.patch(
 		if (parsed.data.phone !== undefined)
 			update.phone = parsed.data.phone || null;
 
-		// FIX: Evitamos que el profesional sobreescriba a los demás asignados si edita el paciente.
-		// Si llega nulo o undefined desde el cliente, forzamos un array vacío.
+		// FIX: Forzamos array si viene nulo para que TypeScript y la Base de Datos estén contentos
 		if (parsed.data.assignedProfessionalUids !== undefined) {
 			if (auth.role !== 'professional') {
 				update.assignedProfessionalUids =
-					parsed.data.assignedProfessionalUids ?? [];
+					parsed.data.assignedProfessionalUids || [];
 			}
 		}
 
