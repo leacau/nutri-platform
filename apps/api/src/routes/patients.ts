@@ -54,7 +54,6 @@ async function upsertUserForPatient(
 	return ref.id;
 }
 
-// FIX: Aceptamos string vacío para email y teléfono
 const createPatientSchema = z.object({
 	name: z.string().min(2),
 	dni: z.string().min(7).max(8),
@@ -63,7 +62,6 @@ const createPatientSchema = z.object({
 	assignedProfessionalUids: z.array(z.string().min(1)).optional().nullable(),
 });
 
-// FIX: Aceptamos string vacío para email y teléfono
 const patchPatientSchema = z.object({
 	name: z.string().min(2).optional(),
 	dni: z.string().min(7).max(8).optional(),
@@ -86,7 +84,6 @@ function clinicScopedUnlessPlatformAdmin(
 	return requireClinicContext(req, res, next);
 }
 
-// Endpoint Lookup Mejorado: Busca en pacientes y en usuarios generales
 patientsRouter.get(
 	'/lookup',
 	requireClinicContext,
@@ -103,7 +100,6 @@ patientsRouter.get(
 
 		const db = getFirestoreDb();
 
-		// 1. Buscamos primero si ya tiene historia clínica en alguna parte
 		const snap = await db
 			.collection('patients')
 			.where('dni', '==', dniVal)
@@ -114,7 +110,6 @@ patientsRouter.get(
 			const doc = snap.docs[0]!;
 			const data = doc.data() as any;
 
-			// FIX: Compatibilidad con registros viejos que usaban firstName/lastName
 			const fullName =
 				data.name ||
 				[data.firstName, data.lastName].filter(Boolean).join(' ') ||
@@ -133,7 +128,6 @@ patientsRouter.get(
 			});
 		}
 
-		// 2. Si no es paciente, buscamos si existe como Persona/Usuario (Ej: Un médico que viene a atenderse)
 		const userSnap = await db
 			.collection('users')
 			.where('dni', '==', dniVal)
@@ -155,7 +149,6 @@ patientsRouter.get(
 			});
 		}
 
-		// No existe en ningún lado
 		return res.status(200).json({ success: true, data: null });
 	},
 );
@@ -165,7 +158,6 @@ patientsRouter.get(
 	clinicScopedUnlessPlatformAdmin,
 	async (req: Request, res: Response) => {
 		const auth = req.auth!;
-
 		const db = getFirestoreDb();
 		let clinicId: string | null = auth.clinicId;
 
@@ -186,30 +178,64 @@ patientsRouter.get(
 			return denyAuthz(req, res, 'Missing clinicId for clinic listing');
 		}
 
-		const query =
-			auth.role === 'professional'
-				? db
-						.collection('patients')
-						.where('clinicId', '==', clinicId)
-						.where('assignedProfessionalUids', 'array-contains', auth.uid)
-				: db.collection('patients').where('clinicId', '==', clinicId);
+		try {
+			const query =
+				auth.role === 'professional'
+					? db
+							.collection('patients')
+							.where('clinicId', '==', clinicId)
+							.where('assignedProfessionalUids', 'array-contains', auth.uid)
+					: db.collection('patients').where('clinicId', '==', clinicId);
 
-		const snap = await query.limit(100).get();
-		const items = snap.docs.map((d) => ({
-			id: d.id,
-			...(d.data() as PatientDoc),
-		}));
+			const snap = await query.limit(100).get();
+			const items = snap.docs.map((d) => ({
+				id: d.id,
+				...(d.data() as PatientDoc),
+			}));
 
-		return res.status(200).json({
-			success: true,
-			data: items.map((p) =>
-				sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p),
-			),
-		});
+			return res.status(200).json({
+				success: true,
+				data: items.map((p) =>
+					sanitizePatientForRole((auth.role ?? 'platform_admin') as Role, p),
+				),
+			});
+		} catch (error: any) {
+			if (error.message && error.message.includes('index')) {
+				console.warn(
+					'[FIRESTORE] Falta índice para pacientes. Usando filtro en memoria temporal.',
+				);
+				const fallbackSnap = await db
+					.collection('patients')
+					.where('clinicId', '==', clinicId)
+					.get();
+				let items = fallbackSnap.docs.map((d) => ({
+					id: d.id,
+					...(d.data() as PatientDoc),
+				}));
+
+				if (auth.role === 'professional') {
+					items = items.filter((p) =>
+						(p.assignedProfessionalUids || []).includes(auth.uid),
+					);
+				}
+
+				return res.status(200).json({
+					success: true,
+					data: items
+						.slice(0, 100)
+						.map((p) =>
+							sanitizePatientForRole(
+								(auth.role ?? 'platform_admin') as Role,
+								p,
+							),
+						),
+				});
+			}
+			throw error;
+		}
 	},
 );
 
-// FIX CRÍTICO: Agregado clinicScopedUnlessPlatformAdmin para resolver el auth.role
 patientsRouter.get(
 	'/:id',
 	authMiddleware,
@@ -245,7 +271,6 @@ patientsRouter.get(
 		) {
 			isAllowed = true;
 		} else {
-			// Verificar si el usuario pertenece a la misma clínica que el paciente
 			const membershipSnap = await db
 				.collection('clinic_memberships')
 				.where('clinicId', '==', patient.clinicId)
@@ -332,7 +357,7 @@ patientsRouter.post(
 			const updateData: Partial<PatientDoc> = {
 				updatedAt: Timestamp.now(),
 				userId,
-				name: parsed.data.name, // Aseguramos que se actualice el nombre unificado
+				name: parsed.data.name,
 			};
 
 			const existingProfessionals = existingData.assignedProfessionalUids ?? [];
@@ -392,8 +417,8 @@ patientsRouter.post(
 			userId,
 			name: parsed.data.name,
 			dni: dniVal,
-			email: parsed.data.email || null, // Convertimos string vacío a null para la BD
-			phone: parsed.data.phone || null, // Convertimos string vacío a null para la BD
+			email: parsed.data.email || null,
+			phone: parsed.data.phone || null,
 			linkedUid: null,
 			status: 'active',
 			createdAt: now,
@@ -506,12 +531,16 @@ patientsRouter.patch(
 			update.email = parsed.data.email || null;
 		if (parsed.data.phone !== undefined)
 			update.phone = parsed.data.phone || null;
+
+		// FIX: Evitamos que el profesional sobreescriba a los demás asignados si edita el paciente.
+		// Si llega nulo o undefined desde el cliente, forzamos un array vacío.
 		if (parsed.data.assignedProfessionalUids !== undefined) {
-			update.assignedProfessionalUids =
-				auth.role === 'professional'
-					? [auth.uid]
-					: (parsed.data.assignedProfessionalUids ?? []);
+			if (auth.role !== 'professional') {
+				update.assignedProfessionalUids =
+					parsed.data.assignedProfessionalUids ?? [];
+			}
 		}
+
 		if (parsed.data.status !== undefined && auth.role !== 'staff') {
 			update.status = parsed.data.status as
 				| 'active'

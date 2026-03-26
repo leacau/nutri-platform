@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import { getFirebaseAdmin } from '../firebase/admin.js';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
@@ -11,6 +12,15 @@ import type { ClinicMembershipDoc } from '../types/clinics.js';
 import type { ClinicRole } from '../types/auth.js';
 
 const router = Router();
+
+// --- CONFIGURACIÓN DE NODEMAILER (GMAIL) ---
+const transporter = nodemailer.createTransport({
+	service: 'gmail',
+	auth: {
+		user: process.env.EMAIL_USER || 'tu_correo_de_prueba@gmail.com',
+		pass: process.env.EMAIL_PASS || 'tu_contraseña_de_aplicacion',
+	},
+});
 
 const inviteMemberSchema = z.object({
 	name: z.string().min(2),
@@ -32,7 +42,6 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	const auth = req.auth!;
 	const db = getFirestoreDb();
 
-	// Platform admin: puede listar todas (útil para backoffice / bootstrap)
 	if (auth.isPlatformAdmin) {
 		const snap = await db
 			.collection('clinics')
@@ -44,7 +53,6 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		return res.status(200).json({ success: true, data: items });
 	}
 
-	// Usuario normal: clínicas donde tiene membership activo
 	const membershipsSnap = await db
 		.collection('clinic_memberships')
 		.where('uid', '==', auth.uid)
@@ -59,7 +67,6 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		(d) => d.data() as ClinicMembershipDoc,
 	);
 
-	// clinicIds únicos
 	const clinicIds = Array.from(
 		new Set(memberships.map((m) => m.clinicId).filter(Boolean)),
 	);
@@ -178,18 +185,14 @@ router.post(
 			if (!userDoc) throw new Error('Unexpected null doc');
 			uid = userDoc.id;
 
-			// --- INICIO AUTO-SANACIÓN ---
 			try {
 				await auth.getUser(uid);
 			} catch (error: any) {
 				if (error.code === 'auth/user-not-found') {
-					console.log(
-						`[AUTO-SANACIÓN] Resucitando usuario fantasma (Auth) para DNI ${dniInt}`,
-					);
 					try {
 						const randomPassword = crypto.randomBytes(20).toString('hex');
 						await auth.createUser({
-							uid: uid, // Forzamos que se cree con el ID que ya tiene en Firestore
+							uid: uid,
 							email: parsed.data.admin.email,
 							displayName: parsed.data.admin.name,
 							password: randomPassword,
@@ -197,16 +200,27 @@ router.post(
 						const inviteLink = await auth.generatePasswordResetLink(
 							parsed.data.admin.email,
 						);
-						console.log(
-							`\n📧 [AUTO-SANACIÓN CLÍNICA] Enviando link a admin: ${parsed.data.admin.email}`,
-						);
-						console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+
+						await transporter.sendMail({
+							from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+							to: parsed.data.admin.email,
+							subject: '¡Bienvenido a tu nueva clínica en Nutri Platform!',
+							html: `
+								<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+									<h2 style="color: #2F8F7B;">¡Hola, ${parsed.data.admin.name}!</h2>
+									<p>Tu clínica ha sido configurada exitosamente.</p>
+									<p>Haz clic en el botón para establecer tu contraseña y comenzar a gestionar tu espacio:</p>
+									<div style="text-align: center; margin: 30px 0;">
+										<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer Contraseña</a>
+									</div>
+								</div>
+							`,
+						});
 					} catch (createErr: any) {
 						console.error('No se pudo sanar al usuario:', createErr.message);
 					}
 				}
 			}
-			// --- FIN AUTO-SANACIÓN ---
 
 			await userDoc.ref.update({
 				name: parsed.data.admin.name,
@@ -214,7 +228,6 @@ router.post(
 				updatedAt: now,
 			});
 		} else {
-			// CREACIÓN OBLIGATORIA EN AUTHENTICATION
 			try {
 				const randomPassword = crypto.randomBytes(20).toString('hex');
 				const userRecord = await auth.createUser({
@@ -227,12 +240,23 @@ router.post(
 				const inviteLink = await auth.generatePasswordResetLink(
 					parsed.data.admin.email,
 				);
-				console.log(
-					`\n📧 [NUEVA CLÍNICA] Enviando link a admin: ${parsed.data.admin.email}`,
-				);
-				console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+
+				await transporter.sendMail({
+					from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+					to: parsed.data.admin.email,
+					subject: '¡Bienvenido a tu nueva clínica en Nutri Platform!',
+					html: `
+						<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+							<h2 style="color: #2F8F7B;">¡Hola, ${parsed.data.admin.name}!</h2>
+							<p>Tu clínica ha sido configurada exitosamente.</p>
+							<p>Haz clic en el botón para establecer tu contraseña y comenzar a gestionar tu espacio:</p>
+							<div style="text-align: center; margin: 30px 0;">
+								<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer Contraseña</a>
+							</div>
+						</div>
+					`,
+				});
 			} catch (error: any) {
-				// Si por alguna razón desincronizada existe en Auth pero no en Firestore
 				if (error.code === 'auth/email-already-exists') {
 					const existingUser = await auth.getUserByEmail(
 						parsed.data.admin.email,
@@ -243,7 +267,6 @@ router.post(
 				}
 			}
 
-			// Creamos en Firestore con el UID real
 			await db.collection('users').doc(uid).set({
 				email: parsed.data.admin.email,
 				dni: dniInt,
@@ -253,7 +276,6 @@ router.post(
 			});
 		}
 
-		// 1. Asignamos la clínica SOLO al administrador
 		await db.collection('clinic_memberships').add({
 			clinicId: clinicRef.id,
 			uid,
@@ -282,7 +304,6 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 
 	const db = getFirestoreDb();
 
-	// INICIO MODO DIOS: Si es admin global, listamos todo para el selector visual
 	if (req.auth.isPlatformAdmin) {
 		const snap = await db
 			.collection('clinics')
@@ -468,18 +489,14 @@ router.post(
 			if (!userDoc) throw new Error('Unexpected null doc');
 			uid = userDoc.id;
 
-			// --- INICIO AUTO-SANACIÓN ---
 			try {
 				await auth.getUser(uid);
 			} catch (error: any) {
 				if (error.code === 'auth/user-not-found') {
-					console.log(
-						`[AUTO-SANACIÓN] Resucitando usuario fantasma (Auth) para DNI ${dniInt}`,
-					);
 					try {
 						const randomPassword = crypto.randomBytes(20).toString('hex');
 						await auth.createUser({
-							uid: uid, // Forzamos que se cree con el ID que ya tiene en Firestore
+							uid: uid,
 							email: parsed.data.email,
 							displayName: parsed.data.name,
 							password: randomPassword,
@@ -487,16 +504,27 @@ router.post(
 						const inviteLink = await auth.generatePasswordResetLink(
 							parsed.data.email,
 						);
-						console.log(
-							`\n📧 [AUTO-SANACIÓN INVITACIÓN] Enviando link a: ${parsed.data.email}`,
-						);
-						console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+
+						await transporter.sendMail({
+							from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+							to: parsed.data.email,
+							subject: '¡Te han invitado a Nutri Platform!',
+							html: `
+								<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+									<h2 style="color: #2F8F7B;">¡Hola, ${parsed.data.name}!</h2>
+									<p>Te han invitado a unirte como ${parsed.data.role} en Nutri Platform.</p>
+									<p>Haz clic en el botón para aceptar la invitación y establecer tu contraseña:</p>
+									<div style="text-align: center; margin: 30px 0;">
+										<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Aceptar Invitación</a>
+									</div>
+								</div>
+							`,
+						});
 					} catch (createErr: any) {
-						console.error('No se pudo sanar al usuario:', createErr.message);
+						console.error('Error sanando y enviando email:', createErr.message);
 					}
 				}
 			}
-			// --- FIN AUTO-SANACIÓN ---
 
 			await userDoc.ref.update({
 				name: parsed.data.name,
@@ -504,7 +532,6 @@ router.post(
 				updatedAt: now,
 			});
 		} else {
-			// CREACIÓN OBLIGATORIA EN AUTHENTICATION TAMBIÉN ACÁ
 			try {
 				const randomPassword = crypto.randomBytes(20).toString('hex');
 				const userRecord = await auth.createUser({
@@ -517,10 +544,22 @@ router.post(
 				const inviteLink = await auth.generatePasswordResetLink(
 					parsed.data.email,
 				);
-				console.log(
-					`\n📧 [INVITACIÓN CLÍNICA] Enviando link a: ${parsed.data.email}`,
-				);
-				console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+
+				await transporter.sendMail({
+					from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+					to: parsed.data.email,
+					subject: '¡Te han invitado a Nutri Platform!',
+					html: `
+						<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+							<h2 style="color: #2F8F7B;">¡Hola, ${parsed.data.name}!</h2>
+							<p>Te han invitado a unirte como ${parsed.data.role} en Nutri Platform.</p>
+							<p>Haz clic en el botón para aceptar la invitación y establecer tu contraseña:</p>
+							<div style="text-align: center; margin: 30px 0;">
+								<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Aceptar Invitación</a>
+							</div>
+						</div>
+					`,
+				});
 			} catch (error: any) {
 				if (error.code === 'auth/email-already-exists') {
 					const existingUser = await auth.getUserByEmail(parsed.data.email);

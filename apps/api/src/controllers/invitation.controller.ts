@@ -4,7 +4,17 @@ import { Timestamp } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 import { getFirebaseAdmin } from '../firebase/admin.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
+import nodemailer from 'nodemailer';
 import { z } from 'zod';
+
+// --- CONFIGURACIÓN DE NODEMAILER (GMAIL) ---
+const transporter = nodemailer.createTransport({
+	service: 'gmail',
+	auth: {
+		user: process.env.EMAIL_USER || 'tu_correo_de_prueba@gmail.com', // CONFIGURAR EN CLOUD RUN
+		pass: process.env.EMAIL_PASS || 'tu_contraseña_de_aplicacion', // CONFIGURAR EN CLOUD RUN
+	},
+});
 
 // Validamos los datos de entrada con Zod (manteniendo tu estándar)
 const inviteSchema = z.object({
@@ -70,16 +80,39 @@ export async function inviteUser(
 		// 5. ¡El Link Mágico!
 		const inviteLink = await auth.generatePasswordResetLink(email);
 
-		// 6. SIMULACIÓN DE EMAIL (Acá enchufaremos Resend o SendGrid luego)
-		console.log(`\n📧 [EMAIL SIMULADO] Enviando invitación a: ${email}`);
-		console.log(`🔗 Link de acceso: ${inviteLink}\n`);
+		// 6. ENVÍO DE EMAIL REAL
+		try {
+			await transporter.sendMail({
+				from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+				to: email,
+				subject: '¡Te han invitado a unirte a Nutri Platform!',
+				html: `
+					<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+						<h2 style="color: #2F8F7B;">¡Hola, ${fullName}!</h2>
+						<p>Te han invitado a formar parte del equipo en <strong>Nutri Platform</strong>.</p>
+						<p>Para aceptar la invitación y configurar tu contraseña de acceso, por favor haz clic en el siguiente botón:</p>
+						<div style="text-align: center; margin: 30px 0;">
+							<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Aceptar Invitación</a>
+						</div>
+						<p style="color: #666; font-size: 0.9em;">Si tienes problemas con el botón, copia y pega el siguiente enlace en tu navegador:</p>
+						<p style="color: #666; font-size: 0.8em; word-break: break-all;">${inviteLink}</p>
+					</div>
+				`,
+			});
+			console.log(`\n✅ [EMAIL ENVIADO] Invitación entregada a: ${email}\n`);
+		} catch (emailError) {
+			console.error(
+				`\n❌ [ERROR EMAIL] Falló el envío a ${email}:`,
+				emailError,
+			);
+		}
 
 		return res.status(200).json({
 			success: true,
 			message: 'Usuario invitado correctamente.',
 			data: {
 				uid,
-				inviteLink, // Temporal para que lo puedas probar en Postman/Frontend
+				inviteLink,
 			},
 		});
 	} catch (error: any) {
