@@ -8,6 +8,7 @@ import {
 	Membership,
 	MessageTemplate,
 	Patient,
+	QaUsersResponse,
 	UserAccount,
 } from './types';
 
@@ -40,11 +41,25 @@ type RequestOptions<T> = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === 'true';
 
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+	console.info('[api-client] API_BASE_URL', API_BASE);
+}
+
 type ApiResponse<T> = {
 	success: boolean;
 	data: T;
 	message?: string;
 };
+
+export class ApiError extends Error {
+	status: number;
+
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = 'ApiError';
+		this.status = status;
+	}
+}
 
 function joinUrl(base: string, path: string): string {
 	const b = base.endsWith('/') ? base.slice(0, -1) : base;
@@ -85,8 +100,8 @@ async function request<T>(
 			body: options.body ? JSON.stringify(options.body) : undefined,
 		});
 
-		if (res.status === 401) throw new Error('unauthorized');
-		if (res.status === 403) throw new Error('forbidden');
+		if (res.status === 401) throw new ApiError('unauthorized', 401);
+		if (res.status === 403) throw new ApiError('forbidden', 403);
 
 		if (!res.ok) {
 			if (USE_MOCKS && options.mockFallback) {
@@ -94,8 +109,9 @@ async function request<T>(
 			}
 
 			const text = await safeReadText(res);
-			throw new Error(
+			throw new ApiError(
 				text || `Request failed: ${res.status} ${res.statusText}`,
+				res.status,
 			);
 		}
 
@@ -130,6 +146,8 @@ const mockDb: any = {
 };
 
 export const apiClient = {
+	qaUsers: () => request<QaUsersResponse>('/dev/qa-users'),
+
 	upsertUserProfile: (
 		data: { name: string; email?: string; dni?: string },
 		token?: string,
@@ -186,6 +204,80 @@ export const apiClient = {
 				name: c.clinicName || c.clinicId,
 				branding: null,
 			})) as Clinic[];
+		}),
+
+	adminClinics: (token?: string) =>
+		request<Clinic[]>('/admin/clinics', {
+			token,
+			mockFallback: () => mockDb.clinics,
+		}),
+
+	updateClinic: (
+		clinicId: string,
+		data: { name?: string; isActive?: boolean },
+		token?: string,
+	) =>
+		request<Clinic>(`/admin/clinics/${clinicId}`, {
+			method: 'PATCH',
+			token,
+			body: data,
+		}),
+
+	deleteClinic: (clinicId: string, token?: string) =>
+		request<{ id: string; deleted: Record<string, number> }>(
+			`/admin/clinics/${clinicId}`,
+			{
+				method: 'DELETE',
+				token,
+			},
+		),
+
+	adminClinicMembers: (clinicId: string, token?: string) =>
+		request<UserAccount[]>(`/admin/clinics/${clinicId}/members`, {
+			token,
+		}),
+
+	addAdminClinicMember: (
+		clinicId: string,
+		data: { uid: string; role: 'clinic_admin' | 'professional' | 'staff'; isActive?: boolean },
+		token?: string,
+	) =>
+		request<UserAccount>(`/admin/clinics/${clinicId}/members`, {
+			method: 'POST',
+			token,
+			body: data,
+		}),
+
+	updateAdminClinicMember: (
+		clinicId: string,
+		membershipId: string,
+		data: { role?: 'clinic_admin' | 'professional' | 'staff'; isActive?: boolean },
+		token?: string,
+	) =>
+		request<UserAccount>(`/admin/clinics/${clinicId}/members/${membershipId}`, {
+			method: 'PATCH',
+			token,
+			body: data,
+		}),
+
+	deleteAdminClinicMember: (
+		clinicId: string,
+		membershipId: string,
+		token?: string,
+	) =>
+		request<{ id: string }>(`/admin/clinics/${clinicId}/members/${membershipId}`, {
+			method: 'DELETE',
+			token,
+		}),
+
+	clinic: (clinicId: string, token?: string) =>
+		request<Clinic>(`/clinics/${clinicId}`, {
+			token,
+			mockFallback: () => ({
+				id: clinicId,
+				name: clinicId,
+				branding: null,
+			}),
 		}),
 
 	clinicSettings: (clinicId: string, token?: string) =>
@@ -432,7 +524,7 @@ export const apiClient = {
 		data: { name: string; admin: { name: string; email: string; dni: string } },
 		token?: string,
 	) =>
-		request<{ clinicId: string; adminUid: string }>('/clinics', {
+		request<Clinic & { clinicId?: string; adminUid: string }>('/admin/clinics', {
 			method: 'POST',
 			token,
 			body: data,

@@ -27,7 +27,10 @@ export type ClinicBranding = {
 export type Clinic = {
 	id: string;
 	name: string;
-	branding?: ClinicBranding;
+	createdAt?: string | null;
+	updatedAt?: string | null;
+	isActive?: boolean;
+	branding?: ClinicBranding | null;
 };
 
 export type UserAccount = {
@@ -35,7 +38,34 @@ export type UserAccount = {
 	name: string;
 	email: string;
 	role: ClinicMembershipRole | 'platform_admin';
-	status?: 'active' | 'invited';
+	status?: 'active' | 'inactive' | 'invited';
+	uid?: string;
+	isActive?: boolean;
+};
+
+export type QaUserRole =
+	| 'platform_admin'
+	| 'clinic_admin'
+	| 'staff'
+	| 'professional'
+	| 'patient';
+
+export type QaUser = {
+	uid: string;
+	email: string | null;
+	name: string;
+	roles: QaUserRole[];
+	clinics: Array<{
+		clinicId: string;
+		clinicName: string | null;
+		role: QaUserRole;
+		isActive: boolean;
+	}>;
+};
+
+export type QaUsersResponse = {
+	roles: Record<QaUserRole | 'unassigned', QaUser[]>;
+	all: QaUser[];
 };
 
 export type Patient = {

@@ -3,6 +3,7 @@ import type { ClinicRole } from './auth.js';
 
 export type ClinicDoc = {
 	name: string;
+	isActive?: boolean;
 	createdAt: Timestamp;
 	updatedAt: Timestamp;
 };

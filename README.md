@@ -25,12 +25,14 @@ FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8088
 DEV_ADMIN_SECRET=local-dev-secret
 PORT=8081
+ENABLE_QA_LOGIN=true              # solo dev/staging: permite Authorization: Bearer qa:<uid>
 ```
 
 Frontend AMSA Core (`apps/web/.env.local`, hay plantilla en `.env.example`):
 
 ```
 NEXT_PUBLIC_API_BASE_URL=/api       # proxy local hacia backend
+NEXT_PUBLIC_ENABLE_QA_LOGIN=true    # solo dev/staging: muestra acceso QA por rol
 BACKEND_PROXY_TARGET=http://localhost:8081
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=amsa-core-stg
 NEXT_PUBLIC_FIREBASE_API_KEY=demo-key

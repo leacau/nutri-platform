@@ -5,6 +5,7 @@ import { getFirestoreDb } from '../firebase/firestore.js';
 import type { ClinicMembershipDoc, ClinicDoc } from '../types/clinics.js';
 import type { PatientDoc } from '../types/patients.js';
 import { getFirebaseAdmin } from '../firebase/admin.js';
+import type { ClinicRole, Role } from '../types/auth.js';
 
 const router = Router();
 
@@ -146,6 +147,124 @@ router.post('/seed', async (req: Request, res: Response) => {
 			stack: error instanceof Error ? error.stack : undefined,
 		});
 	}
+});
+
+type QaUser = {
+	uid: string;
+	email: string | null;
+	name: string;
+	roles: Role[];
+	clinics: Array<{
+		clinicId: string;
+		clinicName: string | null;
+		role: Role;
+		isActive: boolean;
+	}>;
+};
+
+function addRole(user: QaUser, role: Role) {
+	if (!user.roles.includes(role)) user.roles.push(role);
+}
+
+router.get('/qa-users', async (_req: Request, res: Response) => {
+	const db = getFirestoreDb();
+	const users = new Map<string, QaUser>();
+
+	const getOrCreateUser = (uid: string, data?: any): QaUser => {
+		const existing = users.get(uid);
+		if (existing) return existing;
+
+		const user: QaUser = {
+			uid,
+			email: data?.email ?? null,
+			name: data?.name ?? data?.displayName ?? data?.email ?? uid,
+			roles: [],
+			clinics: [],
+		};
+		users.set(uid, user);
+		return user;
+	};
+
+	const [usersSnap, adminsSnap, membershipsSnap, patientsSnap, clinicsSnap] =
+		await Promise.all([
+			db.collection('users').get(),
+			db.collection('platformAdmins').get(),
+			db.collection('clinic_memberships').get(),
+			db.collection('patients').get(),
+			db.collection('clinics').get(),
+		]);
+
+	const clinicNames = new Map<string, string | null>();
+	clinicsSnap.forEach((doc) => {
+		clinicNames.set(doc.id, (doc.data() as ClinicDoc).name ?? null);
+	});
+
+	usersSnap.forEach((doc) => getOrCreateUser(doc.id, doc.data()));
+
+	adminsSnap.forEach((doc) => {
+		const data = doc.data() as any;
+		if (
+			data?.enabled === true ||
+			data?.granted === true ||
+			data?.isPlatformAdmin === true
+		) {
+			const user = getOrCreateUser(doc.id);
+			addRole(user, 'platform_admin');
+		}
+	});
+
+	membershipsSnap.forEach((doc) => {
+		const membership = doc.data() as ClinicMembershipDoc;
+		const user = getOrCreateUser(membership.uid);
+		addRole(user, membership.role as ClinicRole);
+		user.clinics.push({
+			clinicId: membership.clinicId,
+			clinicName: clinicNames.get(membership.clinicId) ?? null,
+			role: membership.role,
+			isActive: membership.isActive !== false,
+		});
+	});
+
+	patientsSnap.forEach((doc) => {
+		const patient = doc.data() as PatientDoc;
+		if (!patient.linkedUid) return;
+		const user = getOrCreateUser(patient.linkedUid, {
+			name: patient.name,
+			email: patient.email,
+		});
+		addRole(user, 'patient');
+		user.clinics.push({
+			clinicId: patient.clinicId,
+			clinicName: clinicNames.get(patient.clinicId) ?? null,
+			role: 'patient',
+			isActive: patient.status !== 'inactive',
+		});
+	});
+
+	const allUsers = Array.from(users.values()).sort((a, b) =>
+		a.name.localeCompare(b.name),
+	);
+
+	return res.status(200).json({
+		success: true,
+		data: {
+			roles: {
+				platform_admin: allUsers.filter((user) =>
+					user.roles.includes('platform_admin'),
+				),
+				clinic_admin: allUsers.filter((user) =>
+					user.roles.includes('clinic_admin'),
+				),
+				staff: allUsers.filter((user) => user.roles.includes('staff')),
+				professional: allUsers.filter((user) =>
+					user.roles.includes('professional'),
+				),
+				patient: allUsers.filter((user) => user.roles.includes('patient')),
+				unassigned: allUsers.filter((user) => user.roles.length === 0),
+			},
+			all: allUsers,
+		},
+	});
 });
 
 const setPlatformAdminSchema = z.object({

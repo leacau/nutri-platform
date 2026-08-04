@@ -14,6 +14,7 @@ Crear `apps/web/.env.local` (ver `.env.example`):
 
 ```
 NEXT_PUBLIC_API_BASE_URL=/api
+NEXT_PUBLIC_ENABLE_QA_LOGIN=true
 BACKEND_PROXY_TARGET=http://localhost:8081
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-nutri-platform
 NEXT_PUBLIC_FIREBASE_API_KEY=demo-key
@@ -27,6 +28,8 @@ NEXT_PUBLIC_ENV=dev
 ```
 
 `NEXT_PUBLIC_API_BASE_URL=/api` usa el rewrite definido en `next.config.ts` hacia `BACKEND_PROXY_TARGET` (por defecto `http://localhost:8081`).
+
+`NEXT_PUBLIC_ENABLE_QA_LOGIN=true` muestra el selector QA por rol en `/login`. La API tambien debe tener `ENABLE_QA_LOGIN=true` para aceptar tokens `qa:<uid>`. Usarlo solo en dev/staging.
 
 ## Scripts
 

@@ -51,13 +51,19 @@ function SelectClinicContent() {
 	const isPlatformAdmin = me?.platformRole === 'platform_admin';
 
 	useEffect(() => {
+		if (!isLoading && isPlatformAdmin) {
+			router.replace('/admin/clinics');
+		}
+	}, [isLoading, isPlatformAdmin, router]);
+
+	useEffect(() => {
 		(async () => {
 			const auth = getFirebaseAuth();
 			const user = auth.currentUser;
 
 			if (!user) return;
 
-			const token = await user.getIdToken(true);
+			await user.getIdToken(true);
 		})().catch((e) => console.error('Token debug error:', e));
 	}, []);
 

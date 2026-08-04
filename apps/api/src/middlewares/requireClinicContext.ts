@@ -6,6 +6,21 @@ import type { ClinicRole } from '../types/auth.js';
 
 const HEADER = 'x-clinic-id';
 
+async function assertClinicIsActive(clinicId: string, res: Response) {
+	const db = getFirestoreDb();
+	const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+	if (!clinicSnap.exists) {
+		res.status(404).json({ success: false, message: 'Clinic not found' });
+		return false;
+	}
+	const data = clinicSnap.data() as { isActive?: boolean } | undefined;
+	if (data?.isActive === false) {
+		res.status(403).json({ success: false, message: 'Clinic inactive' });
+		return false;
+	}
+	return true;
+}
+
 export async function requireClinicContext(
 	req: Request,
 	res: Response,
@@ -25,6 +40,7 @@ export async function requireClinicContext(
 				message: 'Missing X-Clinic-Id header',
 			});
 		}
+		if (!(await assertClinicIsActive(headerClinicId, res))) return;
 		req.auth = { ...req.auth, clinicId: headerClinicId, role: 'platform_admin' };
 		return next();
 	}
@@ -55,6 +71,7 @@ export async function requireClinicContext(
 			);
 		}
 
+		if (!(await assertClinicIsActive(resolvedClinicId, res))) return;
 		req.auth = { ...req.auth, clinicId: resolvedClinicId, role: 'patient' };
 		return next();
 	}
@@ -66,6 +83,8 @@ export async function requireClinicContext(
 			message: 'Missing X-Clinic-Id header',
 		});
 	}
+
+	if (!(await assertClinicIsActive(headerClinicId, res))) return;
 
 	const db = getFirestoreDb();
 	const snap = await db

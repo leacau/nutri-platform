@@ -21,6 +21,13 @@ function parseBearer(headerValue: string | undefined): string | null {
 	return token;
 }
 
+function isQaLoginEnabled(): boolean {
+	return (
+		process.env.ENABLE_QA_LOGIN === 'true' ||
+		process.env.NODE_ENV !== 'production'
+	);
+}
+
 async function isPlatformAdminFromFirestore(uid: string): Promise<boolean> {
 	// ✅ Multi-database friendly: usamos el helper del proyecto, NO admin.firestore()
 	const db = getFirestoreDb();
@@ -50,6 +57,25 @@ async function isPlatformAdminFromFirestore(uid: string): Promise<boolean> {
 	return false;
 }
 
+async function authFromUid(uid: string, email: string | null) {
+	const isPlatformAdmin = await isPlatformAdminFromFirestore(uid);
+	const user: AuthenticatedUser = {
+		uid,
+		email,
+		claims: {},
+	};
+
+	const authContext: AuthContext = {
+		uid,
+		email,
+		isPlatformAdmin,
+		role: null,
+		clinicId: null,
+	};
+
+	return { user, authContext };
+}
+
 export async function requireAuth(
 	req: Request,
 	res: Response,
@@ -70,6 +96,28 @@ export async function requireAuth(
 				success: false,
 				message: 'Missing Authorization Bearer token',
 			});
+		}
+
+		if (isQaLoginEnabled() && token.startsWith('qa:')) {
+			const uid = token.slice('qa:'.length).trim();
+			if (!uid) {
+				return res.status(401).json({
+					success: false,
+					message: 'Invalid QA token',
+				});
+			}
+
+			const db = getFirestoreDb();
+			const userDoc = await db.collection('users').doc(uid).get();
+			const data = userDoc.exists ? (userDoc.data() as any) : {};
+			const { user, authContext } = await authFromUid(
+				uid,
+				data?.email ?? `${uid}@qa.local`,
+			);
+
+			(req as any).user = user;
+			(req as any).auth = authContext;
+			return next();
 		}
 
 		const { auth } = getFirebaseAdmin();

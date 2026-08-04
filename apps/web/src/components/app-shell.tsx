@@ -3,6 +3,7 @@
 import {
 	Activity,
 	BarChart3,
+	Building2,
 	CalendarClock,
 	ClipboardList,
 	FileText,
@@ -35,6 +36,12 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
+	{
+		label: 'Clinicas',
+		href: '/admin/clinics',
+		icon: <Building2 className='h-4 w-4' />,
+		roles: ['platform_admin'],
+	},
 	{
 		label: 'Dashboard',
 		href: '/app/dashboard',

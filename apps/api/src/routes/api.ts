@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { patientsRouter } from './patients.js';
 import { appointmentsRouter } from './appointments.js';
-import { clinicsRouter } from './clinics.js';
+import { adminClinicsRouter, clinicsRouter } from './clinics.js';
 import { metricsRouter } from './metrics.js';
 import { usersRouter } from './users.js';
 import { logEvent } from '../observability/eventLogger.js';
@@ -73,6 +73,9 @@ apiRouter.use('/appointments', appointmentsRouter);
 
 // Clinics
 apiRouter.use('/clinics', clinicsRouter);
+
+// Platform admin
+apiRouter.use('/admin/clinics', adminClinicsRouter);
 
 // Users
 apiRouter.use('/users', usersRouter);

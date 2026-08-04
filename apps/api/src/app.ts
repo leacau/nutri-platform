@@ -20,6 +20,8 @@ import { templatesRouter } from './routes/templates.js';
 export function buildApp(): Express {
 	const app = express();
 	const isProd = process.env.NODE_ENV === 'production';
+	const isQaLoginEnabled =
+		process.env.ENABLE_QA_LOGIN === 'true' || process.env.NODE_ENV !== 'production';
 
 	// 1. CORS DEBE IR PRIMERO (Antes que Helmet y cualquier otro middleware)
 	app.use(
@@ -77,11 +79,15 @@ export function buildApp(): Express {
 	app.get('/health', healthCheck);
 	app.get('/api/health', healthCheck);
 
-	// Rutas de Desarrollo (Excluidas de Auth Firebase, protegidas por Secret)
-	if (!isProd) {
+	// Rutas de Desarrollo/QA (Excluidas de Auth Firebase, protegidas por Secret salvo QA users)
+	if (!isProd || isQaLoginEnabled) {
 		app.use(
 			'/api/dev',
 			(req: Request, res: Response, next: NextFunction) => {
+				if (isQaLoginEnabled && req.method === 'GET' && req.path === '/qa-users') {
+					return next();
+				}
+
 				const secret = req.header('x-dev-secret');
 				if (!secret || secret !== process.env.DEV_ADMIN_SECRET) {
 					return res

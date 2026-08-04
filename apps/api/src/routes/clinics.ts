@@ -8,10 +8,11 @@ import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
-import type { ClinicMembershipDoc } from '../types/clinics.js';
+import type { ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
 import type { ClinicRole } from '../types/auth.js';
 
 const router = Router();
+const adminRouter = Router();
 
 // --- CONFIGURACIÓN DE NODEMAILER (GMAIL) ---
 const transporter = nodemailer.createTransport({
@@ -38,6 +39,275 @@ const createClinicSchema = z.object({
 	}),
 });
 
+const updateClinicSchema = z
+	.object({
+		name: z.string().min(2).optional(),
+		isActive: z.boolean().optional(),
+	})
+	.refine((data) => data.name !== undefined || data.isActive !== undefined, {
+		message: 'At least one field is required',
+	});
+
+const adminMemberSchema = z.object({
+	uid: z.string().min(1),
+	role: z.enum(['clinic_admin', 'professional', 'staff']),
+	isActive: z.boolean().optional(),
+});
+
+const updateAdminMemberSchema = z
+	.object({
+		role: z.enum(['clinic_admin', 'professional', 'staff']).optional(),
+		isActive: z.boolean().optional(),
+	})
+	.refine((data) => data.role !== undefined || data.isActive !== undefined, {
+		message: 'At least one field is required',
+	});
+
+type CreateClinicInput = z.infer<typeof createClinicSchema>;
+
+function serializeTimestamp(value: unknown): string | null {
+	if (value instanceof Timestamp) return value.toDate().toISOString();
+	if (value instanceof Date) return value.toISOString();
+	if (typeof value === 'string') return value;
+	return null;
+}
+
+function serializeClinic(id: string, data: Partial<ClinicDoc>) {
+	return {
+		id,
+		name: data.name ?? '',
+		createdAt: serializeTimestamp(data.createdAt),
+		updatedAt: serializeTimestamp(data.updatedAt),
+		isActive: data.isActive !== false,
+	};
+}
+
+async function sendInviteEmail(email: string, name: string, subject: string) {
+	const { auth } = getFirebaseAdmin();
+	const inviteLink = await auth.generatePasswordResetLink(email);
+
+	await transporter.sendMail({
+		from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+		to: email,
+		subject,
+		html: `
+			<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+				<h2 style="color: #2F8F7B;">Hola, ${name}</h2>
+				<p>Tu clinica ha sido configurada exitosamente.</p>
+				<p>Hace clic en el boton para establecer tu contrasena y comenzar a gestionar tu espacio:</p>
+				<div style="text-align: center; margin: 30px 0;">
+					<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer contrasena</a>
+				</div>
+			</div>
+		`,
+	});
+}
+
+async function resolveOrCreateClinicAdmin(
+	input: CreateClinicInput,
+	now: Timestamp,
+): Promise<string> {
+	const db = getFirestoreDb();
+	const { auth } = getFirebaseAdmin();
+	const dniInt = parseInt(input.admin.dni, 10);
+
+	if (dniInt < 1000000 || dniInt > 99999999) {
+		throw new Error('DNI_RANGE');
+	}
+
+	const userSnap = await db
+		.collection('users')
+		.where('dni', '==', dniInt)
+		.limit(1)
+		.get();
+
+	if (!userSnap.empty) {
+		const userDoc = userSnap.docs[0];
+		if (!userDoc) throw new Error('Unexpected null doc');
+		const uid = userDoc.id;
+
+		try {
+			await auth.getUser(uid);
+		} catch (error: any) {
+			if (error.code !== 'auth/user-not-found') throw error;
+
+			try {
+				const randomPassword = crypto.randomBytes(20).toString('hex');
+				await auth.createUser({
+					uid,
+					email: input.admin.email,
+					displayName: input.admin.name,
+					password: randomPassword,
+				});
+				await sendInviteEmail(
+					input.admin.email,
+					input.admin.name,
+					'Bienvenido a tu nueva clinica en Nutri Platform!',
+				);
+			} catch (createErr: any) {
+				console.error('No se pudo sanar al usuario:', createErr.message);
+			}
+		}
+
+		await userDoc.ref.update({
+			name: input.admin.name,
+			email: input.admin.email,
+			updatedAt: now,
+		});
+
+		return uid;
+	}
+
+	let uid: string;
+	try {
+		const randomPassword = crypto.randomBytes(20).toString('hex');
+		const userRecord = await auth.createUser({
+			email: input.admin.email,
+			displayName: input.admin.name,
+			password: randomPassword,
+		});
+		uid = userRecord.uid;
+		await sendInviteEmail(
+			input.admin.email,
+			input.admin.name,
+			'Bienvenido a tu nueva clinica en Nutri Platform!',
+		);
+	} catch (error: any) {
+		if (error.code !== 'auth/email-already-exists') throw error;
+		const existingUser = await auth.getUserByEmail(input.admin.email);
+		uid = existingUser.uid;
+	}
+
+	await db.collection('users').doc(uid).set(
+		{
+			email: input.admin.email,
+			dni: dniInt,
+			name: input.admin.name,
+			createdAt: now,
+			updatedAt: now,
+		},
+		{ merge: true },
+	);
+
+	return uid;
+}
+
+async function createClinicWithAdmin(input: CreateClinicInput, creatorUid: string) {
+	const db = getFirestoreDb();
+	const now = Timestamp.now();
+	const adminUid = await resolveOrCreateClinicAdmin(input, now);
+	const clinicRef = db.collection('clinics').doc();
+	const clinicDoc: ClinicDoc = {
+		name: input.name,
+		isActive: true,
+		createdAt: now,
+		updatedAt: now,
+	};
+
+	await clinicRef.set(clinicDoc);
+
+	await db.collection('clinic_memberships').add({
+		clinicId: clinicRef.id,
+		uid: adminUid,
+		role: 'clinic_admin',
+		isActive: true,
+		createdAt: now,
+		updatedAt: now,
+		createdByUid: creatorUid,
+	});
+
+	console.info('[clinics:create]', {
+		clinicId: clinicRef.id,
+		createdByUid: creatorUid,
+	});
+
+	return {
+		...serializeClinic(clinicRef.id, clinicDoc),
+		clinicId: clinicRef.id,
+		adminUid,
+	};
+}
+
+async function hasActiveClinicMembership(uid: string, clinicId: string) {
+	const db = getFirestoreDb();
+	const snap = await db
+		.collection('clinic_memberships')
+		.where('clinicId', '==', clinicId)
+		.where('uid', '==', uid)
+		.where('isActive', '==', true)
+		.limit(1)
+		.get();
+
+	return !snap.empty;
+}
+
+const HARD_DELETE_CLINIC_COLLECTIONS = [
+	'clinic_memberships',
+	'appointments',
+	'clinical_records',
+	'metrics',
+	'visits',
+	'notes',
+	'plans',
+	'measurement_templates',
+] as const;
+
+async function ensureClinicExists(clinicId: string) {
+	const db = getFirestoreDb();
+	const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+	return clinicSnap.exists ? clinicSnap : null;
+}
+
+async function deleteQueryInBatches(query: any) {
+	let deleted = 0;
+	while (true) {
+		const snap = await query.limit(450).get();
+		if (snap.empty) return deleted;
+		const batch = getFirestoreDb().batch();
+		snap.docs.forEach((doc: any) => batch.delete(doc.ref));
+		await batch.commit();
+		deleted += snap.size;
+	}
+}
+
+async function hardDeleteClinicData(clinicId: string) {
+	const db = getFirestoreDb();
+	const deleted: Record<string, number> = {};
+	const patientsSnap = await db
+		.collection('patients')
+		.where('clinicId', '==', clinicId)
+		.get();
+	const patientIds = patientsSnap.docs.map((doc) => doc.id);
+
+	if (!patientsSnap.empty) {
+		const batch = db.batch();
+		patientsSnap.docs.forEach((doc) => batch.delete(doc.ref));
+		await batch.commit();
+	}
+	deleted.patients = patientsSnap.size;
+
+	let deletedProfiles = 0;
+	for (let i = 0; i < patientIds.length; i += 450) {
+		const batch = db.batch();
+		const ids = patientIds.slice(i, i + 450);
+		ids.forEach((patientId) => {
+			batch.delete(db.collection('patient_profiles').doc(patientId));
+		});
+		await batch.commit();
+		deletedProfiles += ids.length;
+	}
+	deleted.patient_profiles = deletedProfiles;
+
+	for (const collectionName of HARD_DELETE_CLINIC_COLLECTIONS) {
+		deleted[collectionName] = await deleteQueryInBatches(
+			db.collection(collectionName).where('clinicId', '==', clinicId),
+		);
+	}
+
+	await db.collection('clinics').doc(clinicId).delete();
+	deleted.clinics = 1;
+	return deleted;
+}
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	const auth = req.auth!;
 	const db = getFirestoreDb();
@@ -75,7 +345,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	const clinicDocs = refs.length ? await db.getAll(...refs) : [];
 
 	const clinics = clinicDocs
-		.filter((d) => d.exists)
+		.filter((d) => d.exists && ((d.data() as ClinicDoc | undefined)?.isActive !== false))
 		.map((d) => {
 			const data = d.data() as any;
 			const membership = memberships.find((m) => m.clinicId === d.id) ?? null;
@@ -139,6 +409,298 @@ router.get(
 	},
 );
 
+adminRouter.get(
+	'/',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (_req: Request, res: Response) => {
+		const db = getFirestoreDb();
+		const snap = await db.collection('clinics').orderBy('createdAt', 'desc').get();
+		const clinics = snap.docs.map((doc) =>
+			serializeClinic(doc.id, doc.data() as ClinicDoc),
+		);
+
+		return res.status(200).json({ success: true, data: clinics });
+	},
+);
+
+adminRouter.post(
+	'/',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const parsed = createClinicSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		try {
+			const clinic = await createClinicWithAdmin(parsed.data, req.auth!.uid);
+			return res.status(201).json({
+				success: true,
+				message: 'Clinic created',
+				data: clinic,
+			});
+		} catch (error: any) {
+			if (error.message === 'DNI_RANGE') {
+				return res.status(400).json({
+					success: false,
+					message: 'DNI must be between 1000000 and 99999999',
+				});
+			}
+			throw error;
+		}
+	},
+);
+adminRouter.patch(
+	'/:clinicId',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId) {
+			return res.status(400).json({ success: false, message: 'Missing clinicId' });
+		}
+
+		const parsed = updateClinicSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const clinicSnap = await ensureClinicExists(clinicId);
+		if (!clinicSnap) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const update: Partial<ClinicDoc> = { updatedAt: Timestamp.now() };
+		if (parsed.data.name !== undefined) update.name = parsed.data.name;
+		if (parsed.data.isActive !== undefined) update.isActive = parsed.data.isActive;
+
+		await clinicSnap.ref.update(update);
+		const fresh = await clinicSnap.ref.get();
+		console.info('[admin:clinics:update]', {
+			clinicId,
+			uid: req.auth?.uid,
+			changes: Object.keys(parsed.data),
+		});
+
+		return res.status(200).json({
+			success: true,
+			data: serializeClinic(fresh.id, fresh.data() as ClinicDoc),
+		});
+	},
+);
+
+adminRouter.delete(
+	'/:clinicId',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId) {
+			return res.status(400).json({ success: false, message: 'Missing clinicId' });
+		}
+
+		const clinicSnap = await ensureClinicExists(clinicId);
+		if (!clinicSnap) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const deleted = await hardDeleteClinicData(clinicId);
+		console.warn('[admin:clinics:hard_delete]', {
+			clinicId,
+			uid: req.auth?.uid,
+			deleted,
+		});
+
+		return res.status(200).json({ success: true, data: { id: clinicId, deleted } });
+	},
+);
+
+adminRouter.get(
+	'/:clinicId/members',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId) {
+			return res.status(400).json({ success: false, message: 'Missing clinicId' });
+		}
+
+		const clinicSnap = await ensureClinicExists(clinicId);
+		if (!clinicSnap) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const db = getFirestoreDb();
+		const snap = await db
+			.collection('clinic_memberships')
+			.where('clinicId', '==', clinicId)
+			.get();
+
+		const members = await Promise.all(
+			snap.docs.map(async (doc) => {
+				const member = doc.data() as ClinicMembershipDoc;
+				const userSnap = await db.collection('users').doc(member.uid).get();
+				const userData = userSnap.exists ? userSnap.data() : {};
+				return {
+					id: doc.id,
+					clinicId,
+					uid: member.uid,
+					role: member.role,
+					isActive: member.isActive !== false,
+					name: userData?.name ?? 'Usuario',
+					email: userData?.email ?? 'sin-email',
+					createdAt: serializeTimestamp(member.createdAt),
+					updatedAt: serializeTimestamp(member.updatedAt),
+				};
+			}),
+		);
+
+		return res.status(200).json({ success: true, data: members });
+	},
+);
+
+adminRouter.post(
+	'/:clinicId/members',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId) {
+			return res.status(400).json({ success: false, message: 'Missing clinicId' });
+		}
+
+		const parsed = adminMemberSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const clinicSnap = await ensureClinicExists(clinicId);
+		if (!clinicSnap) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const db = getFirestoreDb();
+		const userSnap = await db.collection('users').doc(parsed.data.uid).get();
+		if (!userSnap.exists) {
+			return res.status(404).json({ success: false, message: 'User not found' });
+		}
+
+		const now = Timestamp.now();
+		const existing = await db
+			.collection('clinic_memberships')
+			.where('clinicId', '==', clinicId)
+			.where('uid', '==', parsed.data.uid)
+			.limit(1)
+			.get();
+
+		if (!existing.empty) {
+			const doc = existing.docs[0]!;
+			await doc.ref.update({
+				role: parsed.data.role,
+				isActive: parsed.data.isActive ?? true,
+				updatedAt: now,
+			});
+			return res.status(200).json({
+				success: true,
+				data: {
+					id: doc.id,
+					clinicId,
+					uid: parsed.data.uid,
+					role: parsed.data.role,
+					isActive: parsed.data.isActive ?? true,
+				},
+			});
+		}
+
+		const doc: ClinicMembershipDoc = {
+			clinicId,
+			uid: parsed.data.uid,
+			role: parsed.data.role,
+			isActive: parsed.data.isActive ?? true,
+			createdAt: now,
+			updatedAt: now,
+			createdByUid: req.auth?.uid ?? null,
+		};
+		const ref = db.collection('clinic_memberships').doc();
+		await ref.set(doc);
+		return res.status(201).json({ success: true, data: { id: ref.id, ...doc } });
+	},
+);
+
+adminRouter.patch(
+	'/:clinicId/members/:membershipId',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const { clinicId, membershipId } = req.params;
+		if (!clinicId || !membershipId) {
+			return res.status(400).json({ success: false, message: 'Missing params' });
+		}
+
+		const parsed = updateAdminMemberSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const db = getFirestoreDb();
+		const ref = db.collection('clinic_memberships').doc(membershipId);
+		const snap = await ref.get();
+		if (!snap.exists || (snap.data() as ClinicMembershipDoc).clinicId !== clinicId) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const update: Partial<ClinicMembershipDoc> = { updatedAt: Timestamp.now() };
+		if (parsed.data.role !== undefined) update.role = parsed.data.role;
+		if (parsed.data.isActive !== undefined) update.isActive = parsed.data.isActive;
+		await ref.update(update);
+
+		return res.status(200).json({
+			success: true,
+			data: { id: membershipId, ...(snap.data() as ClinicMembershipDoc), ...parsed.data },
+		});
+	},
+);
+
+adminRouter.delete(
+	'/:clinicId/members/:membershipId',
+	authMiddleware,
+	requireRole('platform_admin'),
+	async (req: Request, res: Response) => {
+		const { clinicId, membershipId } = req.params;
+		if (!clinicId || !membershipId) {
+			return res.status(400).json({ success: false, message: 'Missing params' });
+		}
+
+		const db = getFirestoreDb();
+		const ref = db.collection('clinic_memberships').doc(membershipId);
+		const snap = await ref.get();
+		if (!snap.exists || (snap.data() as ClinicMembershipDoc).clinicId !== clinicId) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		await ref.delete();
+		return res.status(200).json({ success: true, data: { id: membershipId } });
+	},
+);
+
 router.post(
 	'/',
 	authMiddleware,
@@ -153,147 +715,23 @@ router.post(
 			});
 		}
 
-		const db = getFirestoreDb();
-		const now = Timestamp.now();
-		const clinicRef = db.collection('clinics').doc();
-
-		await clinicRef.set({
-			name: parsed.data.name,
-			createdAt: now,
-			updatedAt: now,
-		});
-
-		const dniInt = parseInt(parsed.data.admin.dni, 10);
-		if (dniInt < 1000000 || dniInt > 99999999) {
-			return res.status(400).json({
-				success: false,
-				message: 'DNI must be between 1000000 and 99999999',
+		try {
+			const clinic = await createClinicWithAdmin(parsed.data, req.auth!.uid);
+			return res.status(201).json({
+				success: true,
+				message: 'Clinic created',
+				data: clinic,
 			});
+		} catch (error: any) {
+			if (error.message === 'DNI_RANGE') {
+				return res.status(400).json({
+					success: false,
+					message: 'DNI must be between 1000000 and 99999999',
+				});
+			}
+			throw error;
 		}
 
-		const userSnap = await db
-			.collection('users')
-			.where('dni', '==', dniInt)
-			.limit(1)
-			.get();
-
-		let uid: string;
-		const { auth } = getFirebaseAdmin();
-
-		if (!userSnap.empty) {
-			const userDoc = userSnap.docs[0];
-			if (!userDoc) throw new Error('Unexpected null doc');
-			uid = userDoc.id;
-
-			try {
-				await auth.getUser(uid);
-			} catch (error: any) {
-				if (error.code === 'auth/user-not-found') {
-					try {
-						const randomPassword = crypto.randomBytes(20).toString('hex');
-						await auth.createUser({
-							uid: uid,
-							email: parsed.data.admin.email,
-							displayName: parsed.data.admin.name,
-							password: randomPassword,
-						});
-						const inviteLink = await auth.generatePasswordResetLink(
-							parsed.data.admin.email,
-						);
-
-						await transporter.sendMail({
-							from: '"Nutri Platform" <no-reply@nutriplatform.com>',
-							to: parsed.data.admin.email,
-							subject: '¡Bienvenido a tu nueva clínica en Nutri Platform!',
-							html: `
-								<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-									<h2 style="color: #2F8F7B;">¡Hola, ${parsed.data.admin.name}!</h2>
-									<p>Tu clínica ha sido configurada exitosamente.</p>
-									<p>Haz clic en el botón para establecer tu contraseña y comenzar a gestionar tu espacio:</p>
-									<div style="text-align: center; margin: 30px 0;">
-										<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer Contraseña</a>
-									</div>
-								</div>
-							`,
-						});
-					} catch (createErr: any) {
-						console.error('No se pudo sanar al usuario:', createErr.message);
-					}
-				}
-			}
-
-			await userDoc.ref.update({
-				name: parsed.data.admin.name,
-				email: parsed.data.admin.email,
-				updatedAt: now,
-			});
-		} else {
-			try {
-				const randomPassword = crypto.randomBytes(20).toString('hex');
-				const userRecord = await auth.createUser({
-					email: parsed.data.admin.email,
-					displayName: parsed.data.admin.name,
-					password: randomPassword,
-				});
-				uid = userRecord.uid;
-
-				const inviteLink = await auth.generatePasswordResetLink(
-					parsed.data.admin.email,
-				);
-
-				await transporter.sendMail({
-					from: '"Nutri Platform" <no-reply@nutriplatform.com>',
-					to: parsed.data.admin.email,
-					subject: '¡Bienvenido a tu nueva clínica en Nutri Platform!',
-					html: `
-						<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-							<h2 style="color: #2F8F7B;">¡Hola, ${parsed.data.admin.name}!</h2>
-							<p>Tu clínica ha sido configurada exitosamente.</p>
-							<p>Haz clic en el botón para establecer tu contraseña y comenzar a gestionar tu espacio:</p>
-							<div style="text-align: center; margin: 30px 0;">
-								<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer Contraseña</a>
-							</div>
-						</div>
-					`,
-				});
-			} catch (error: any) {
-				if (error.code === 'auth/email-already-exists') {
-					const existingUser = await auth.getUserByEmail(
-						parsed.data.admin.email,
-					);
-					uid = existingUser.uid;
-				} else {
-					throw error;
-				}
-			}
-
-			await db.collection('users').doc(uid).set({
-				email: parsed.data.admin.email,
-				dni: dniInt,
-				name: parsed.data.admin.name,
-				createdAt: now,
-				updatedAt: now,
-			});
-		}
-
-		await db.collection('clinic_memberships').add({
-			clinicId: clinicRef.id,
-			uid,
-			role: 'clinic_admin',
-			isActive: true,
-			createdAt: now,
-			updatedAt: now,
-			createdByUid: req.auth?.uid ?? null,
-		});
-
-		return res.status(201).json({
-			success: true,
-			message: 'Clinic created',
-			data: {
-				clinicId: clinicRef.id,
-				adminUid: uid,
-			},
-		});
 	},
 );
 
@@ -342,9 +780,9 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 	for (const doc of membershipsSnap.docs) {
 		const data = doc.data() as ClinicMembershipDoc;
 		const clinicSnap = await db.collection('clinics').doc(data.clinicId).get();
-		const clinicName = clinicSnap.exists
-			? ((clinicSnap.data() as { name?: string })?.name ?? null)
-			: null;
+		const clinicData = clinicSnap.exists ? (clinicSnap.data() as ClinicDoc | undefined) : undefined;
+		if (!clinicSnap.exists || clinicData?.isActive === false) continue;
+		const clinicName = clinicData?.name ?? null;
 		clinics.push({
 			clinicId: data.clinicId,
 			role: data.role,
@@ -360,6 +798,51 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 			isPlatformAdmin: req.auth.isPlatformAdmin,
 			clinics,
 		},
+	});
+});
+
+router.get('/:clinicId', authMiddleware, async (req: Request, res: Response) => {
+	if (!req.auth) {
+		return res.status(401).json({ success: false, message: 'Unauthenticated' });
+	}
+
+	const clinicId = req.params.clinicId;
+	if (!clinicId) {
+		return res.status(400).json({ success: false, message: 'Missing clinicId' });
+	}
+
+	const db = getFirestoreDb();
+	const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+
+	if (!clinicSnap.exists) {
+		console.warn('[clinics:get:not_found]', {
+			clinicId,
+			uid: req.auth.uid,
+			isPlatformAdmin: req.auth.isPlatformAdmin,
+		});
+		return res.status(404).json({ success: false, message: 'Not found' });
+	}
+
+	const clinicData = clinicSnap.data() as ClinicDoc;
+
+	if (!req.auth.isPlatformAdmin) {
+		if (clinicData.isActive === false) {
+			return res.status(403).json({ success: false, message: 'Clinic inactive' });
+		}
+
+		if (req.auth.role === 'patient') {
+			return res.status(403).json({ success: false, message: 'Forbidden' });
+		}
+
+		const isMember = await hasActiveClinicMembership(req.auth.uid, clinicId);
+		if (!isMember) {
+			return res.status(403).json({ success: false, message: 'Forbidden' });
+		}
+	}
+
+	return res.status(200).json({
+		success: true,
+		data: serializeClinic(clinicSnap.id, clinicData),
 	});
 });
 
@@ -655,3 +1138,4 @@ router.get(
 );
 
 export const clinicsRouter = router;
+export const adminClinicsRouter = adminRouter;
