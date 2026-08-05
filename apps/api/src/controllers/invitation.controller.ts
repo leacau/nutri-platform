@@ -16,11 +16,32 @@ const transporter = nodemailer.createTransport({
 	},
 });
 
+async function safeSendMail(
+	options: Parameters<typeof transporter.sendMail>[0],
+) {
+	if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+		console.warn(
+			'[invite-email] EMAIL_USER/EMAIL_PASS missing; skipping email delivery',
+		);
+		return false;
+	}
+
+	try {
+		await transporter.sendMail(options);
+		return true;
+	} catch (error) {
+		console.warn('[invite-email] Email delivery failed; invitation continues', {
+			error: error instanceof Error ? error.message : error,
+		});
+		return false;
+	}
+}
+
 // Validamos los datos de entrada con Zod (manteniendo tu estándar)
 const inviteSchema = z.object({
 	email: z.string().email(),
 	fullName: z.string().min(2),
-	role: z.string().min(1),
+	role: z.enum(['clinic_admin', 'professional', 'staff']),
 	clinicId: z.string().optional(),
 });
 
@@ -38,7 +59,22 @@ export async function inviteUser(
 			});
 		}
 
-		const { email, fullName, role, clinicId } = parsed.data;
+		const { email, fullName, role } = parsed.data;
+		const clinicId = parsed.data.clinicId ?? req.auth?.clinicId ?? undefined;
+
+		if (req.auth?.role === 'staff' && role !== 'professional') {
+			return res.status(403).json({
+				success: false,
+				message: 'Staff can only invite professionals',
+			});
+		}
+
+		if (req.auth?.role === 'clinic_admin' && role === 'clinic_admin') {
+			return res.status(403).json({
+				success: false,
+				message: 'Only platform admins can invite clinic admins',
+			});
+		}
 
 		const { auth } = getFirebaseAdmin();
 		const db = getFirestoreDb();
@@ -82,7 +118,7 @@ export async function inviteUser(
 
 		// 6. ENVÍO DE EMAIL REAL
 		try {
-			await transporter.sendMail({
+			await safeSendMail({
 				from: '"Nutri Platform" <no-reply@nutriplatform.com>',
 				to: email,
 				subject: '¡Te han invitado a unirte a Nutri Platform!',

@@ -21,9 +21,10 @@ import type {
 	AppointmentStatus,
 } from '../types/appointments.js';
 
-import type { ClinicMembershipDoc } from '../types/clinics.js';
+import type { ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
 
 import { logEvent } from '../observability/eventLogger.js';
+import { pickHighestClinicRole } from '../security/clinicRolePriority.js';
 
 const router = Router();
 
@@ -62,6 +63,23 @@ function timestampToIso(ts: Timestamp | null): string | null {
 	return ts ? new Date(ts.toMillis()).toISOString() : null;
 }
 
+function timestampMillis(value: any): number {
+	if (!value) return 0;
+	if (typeof value.toMillis === 'function') return value.toMillis();
+	if (typeof value._seconds === 'number') return value._seconds * 1000;
+	if (typeof value.seconds === 'number') return value.seconds * 1000;
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortAppointmentsByCreatedAtDesc(
+	items: Array<{ id: string } & AppointmentDoc>,
+) {
+	return items.sort(
+		(a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt),
+	);
+}
+
 async function getMembership(
 	db: Firestore,
 
@@ -79,17 +97,18 @@ async function getMembership(
 
 		.where('isActive', '==', true)
 
-		.limit(1)
-
 		.get();
 
 	if (snap.empty) return null;
 
-	const doc = snap.docs[0];
+	const memberships = snap.docs.map((doc) => doc.data() as ClinicMembershipDoc);
+	const role = pickHighestClinicRole(memberships.map((membership) => membership.role));
+	const selected =
+		memberships.find((membership) => membership.role === role) ?? memberships[0];
 
-	if (!doc) return null;
+	if (!selected || !role) return null;
 
-	return doc.data() as ClinicMembershipDoc;
+	return { ...selected, role };
 }
 
 async function getPatientLink(
@@ -111,13 +130,28 @@ async function getPatientLink(
 
 		.get();
 
-	if (snap.empty) return null;
+	if (!snap.empty) {
+		const doc = snap.docs[0];
+		if (doc) return { patientId: doc.id };
+	}
 
-	const doc = snap.docs[0];
+	const appointmentSnap = await db
+		.collection('appointments')
+		.where('clinicId', '==', clinicId)
+		.where('patientUid', '==', uid)
+		.limit(1)
+		.get();
 
-	if (!doc) return null;
+	if (appointmentSnap.empty) return null;
 
-	return { patientId: doc.id };
+	const appointmentDoc = appointmentSnap.docs[0];
+	const patientId = appointmentDoc?.data()?.patientId;
+	if (!patientId) return null;
+
+	const patientDoc = await db.collection('patients').doc(patientId).get();
+	if (!patientDoc.exists || patientDoc.data()?.clinicId !== clinicId) return null;
+
+	return { patientId: patientDoc.id };
 }
 
 // FIX: Recibe el rol para relajar la regla de 24hs si es personal de la clínica
@@ -129,6 +163,8 @@ function canCancelWith24hRule(
 	nowMs: number,
 
 	role?: string | null,
+
+	minHoursBefore = 24,
 ): { ok: true } | { ok: false; reason: string; http: number } {
 	if (status === 'completed') {
 		return {
@@ -161,15 +197,15 @@ function canCancelWith24hRule(
 		};
 	}
 
-	const H24 = 24 * 60 * 60 * 1000;
+	const minimumMs = minHoursBefore * 60 * 60 * 1000;
 
 	const diffMs = scheduledFor.toMillis() - nowMs;
 
-	if (diffMs < H24) {
+	if (diffMs < minimumMs) {
 		return {
 			ok: false,
 
-			reason: 'Cancellation allowed only if >= 24h before scheduled time',
+			reason: `Cancellation allowed only if >= ${minHoursBefore}h before scheduled time`,
 
 			http: 403,
 		};
@@ -262,7 +298,7 @@ router.post(
 
 			patientId: parsed.data.patientId,
 
-			patientUid: patientSnap.data()?.userId || null,
+			patientUid: patientSnap.data()?.linkedUid || null,
 
 			professionalUid: parsed.data.professionalUid,
 
@@ -476,22 +512,15 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		}
 
 		const snap = await db
-
 			.collection('appointments')
-
 			.where('clinicId', '==', clinicId)
-
-			.orderBy('createdAt', 'desc')
-
-			.limit(50)
-
 			.get();
 
-		const items = snap.docs.map((d) => ({
+		const items = sortAppointmentsByCreatedAtDesc(snap.docs.map((d) => ({
 			id: d.id,
 
 			...(d.data() as AppointmentDoc),
-		}));
+		}))).slice(0, 50);
 
 		return res.status(200).json({ success: true, data: items });
 	}
@@ -513,25 +542,22 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 
 		req.auth = { ...auth, clinicId, role };
 
-		let query = db
-
+		const snap = await db
 			.collection('appointments')
-
 			.where('clinicId', '==', clinicId)
+			.get();
 
-			.orderBy('createdAt', 'desc');
-
-		if (role === 'professional') {
-			query = query.where('professionalUid', '==', auth.uid);
-		}
-
-		const snap = await query.limit(50).get();
-
-		const items = snap.docs.map((d) => ({
+		let items = snap.docs.map((d) => ({
 			id: d.id,
 
 			...(d.data() as AppointmentDoc),
 		}));
+
+		if (role === 'professional') {
+			items = items.filter((appointment) => appointment.professionalUid === auth.uid);
+		}
+
+		items = sortAppointmentsByCreatedAtDesc(items).slice(0, 50);
 
 		return res.status(200).json({ success: true, data: items });
 	}
@@ -540,24 +566,15 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 
 	if (patient) {
 		const snap = await db
-
 			.collection('appointments')
-
-			.where('clinicId', '==', clinicId) // FIX: clinicId en vez de clinicIdHeader para evitar bugs de TypeScript
-
-			.where('patientUid', '==', auth.uid)
-
-			.orderBy('createdAt', 'desc')
-
-			.limit(50)
-
+			.where('clinicId', '==', clinicId)
 			.get();
 
-		const items = snap.docs.map((d) => ({
+		const items = sortAppointmentsByCreatedAtDesc(snap.docs.map((d) => ({
 			id: d.id,
 
 			...(d.data() as AppointmentDoc),
-		}));
+		})).filter((appointment) => appointment.patientUid === auth.uid)).slice(0, 50);
 
 		return res.status(200).json({ success: true, data: items });
 	}
@@ -877,6 +894,7 @@ router.post(
 
 		let effectiveRole =
 			auth.role ?? (auth.isPlatformAdmin ? 'platform_admin' : null);
+		let patientMinHoursBefore = 24;
 
 		if (auth.isPlatformAdmin) {
 			// allowed
@@ -926,6 +944,18 @@ router.post(
 						'Patient can only cancel own appointments',
 					);
 				}
+
+				const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+				const clinic = clinicSnap.data() as ClinicDoc | undefined;
+				const selfService = clinic?.patientAppointmentSelfService ?? {};
+				if (selfService.canCancel === false) {
+					return denyAuthz(
+						req,
+						res,
+						'Clinic does not allow patients to cancel appointments',
+					);
+				}
+				patientMinHoursBefore = selfService.minHoursBefore ?? 24;
 			} else {
 				return denyAuthz(req, res, 'No membership or patient link to cancel');
 			}
@@ -953,6 +983,8 @@ router.post(
 			Date.now(),
 
 			effectiveRole,
+
+			patientMinHoursBefore,
 		);
 
 		if (!rule.ok) {

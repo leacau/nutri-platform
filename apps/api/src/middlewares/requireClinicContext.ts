@@ -1,8 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
+import type { DocumentSnapshot } from 'firebase-admin/firestore';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import { denyAuthz } from '../security/authz.js';
 import type { ClinicMembershipDoc } from '../types/clinics.js';
-import type { ClinicRole } from '../types/auth.js';
+import type { PatientDoc } from '../types/patients.js';
+import { pickHighestClinicRole } from '../security/clinicRolePriority.js';
 
 const HEADER = 'x-clinic-id';
 
@@ -19,6 +21,38 @@ async function assertClinicIsActive(clinicId: string, res: Response) {
 		return false;
 	}
 	return true;
+}
+
+async function resolvePatientDocumentForClinic(uid: string, clinicId: string) {
+	const db = getFirestoreDb();
+	const patientSnap = await db
+		.collection('patients')
+		.where('clinicId', '==', clinicId)
+		.where('linkedUid', '==', uid)
+		.limit(1)
+		.get();
+
+	let patientDoc: DocumentSnapshot | undefined = patientSnap.docs[0];
+	if (patientDoc) return patientDoc;
+
+	const appointmentSnap = await db
+		.collection('appointments')
+		.where('clinicId', '==', clinicId)
+		.where('patientUid', '==', uid)
+		.limit(1)
+		.get();
+	const patientId = appointmentSnap.docs[0]?.data()?.patientId;
+	if (!patientId) return undefined;
+
+	const appointmentPatientDoc = await db.collection('patients').doc(patientId).get();
+	if (
+		appointmentPatientDoc.exists &&
+		appointmentPatientDoc.data()?.clinicId === clinicId
+	) {
+		patientDoc = appointmentPatientDoc;
+	}
+
+	return patientDoc;
 }
 
 export async function requireClinicContext(
@@ -72,6 +106,25 @@ export async function requireClinicContext(
 		}
 
 		if (!(await assertClinicIsActive(resolvedClinicId, res))) return;
+		const patientDoc =
+			req.patientContext?.patientId
+				? await getFirestoreDb()
+						.collection('patients')
+						.doc(req.patientContext.patientId)
+						.get()
+				: await resolvePatientDocumentForClinic(req.auth.uid, resolvedClinicId);
+		const patient = patientDoc?.data() as PatientDoc | undefined;
+		if (!patientDoc || !patientDoc.exists || !patient) {
+			return denyAuthz(req, res, 'Failed to resolve patient context', 403);
+		}
+		if (patient.status !== 'active' || patient.portalAccessEnabled === false) {
+			return denyAuthz(req, res, 'Patient portal access is disabled', 403);
+		}
+
+		req.patientContext = {
+			patientId: patientDoc.id,
+			clinicId: resolvedClinicId,
+		};
 		req.auth = { ...req.auth, clinicId: resolvedClinicId, role: 'patient' };
 		return next();
 	}
@@ -92,10 +145,35 @@ export async function requireClinicContext(
 		.where('clinicId', '==', headerClinicId)
 		.where('uid', '==', req.auth.uid)
 		.where('isActive', '==', true)
-		.limit(1)
 		.get();
 
 	if (snap.empty) {
+		const patientDoc = await resolvePatientDocumentForClinic(
+			req.auth.uid,
+			headerClinicId,
+		);
+
+		if (patientDoc) {
+			const patient = patientDoc?.data() as PatientDoc | undefined;
+			if (!patientDoc || !patient) {
+				return denyAuthz(req, res, 'Failed to resolve patient context', 403);
+			}
+			if (patient.status !== 'active' || patient.portalAccessEnabled === false) {
+				return denyAuthz(req, res, 'Patient portal access is disabled', 403);
+			}
+
+			req.patientContext = {
+				patientId: patientDoc.id,
+				clinicId: headerClinicId,
+			};
+			req.auth = {
+				...req.auth,
+				clinicId: headerClinicId,
+				role: 'patient',
+			};
+			return next();
+		}
+
 		return denyAuthz(
 			req,
 			res,
@@ -104,13 +182,14 @@ export async function requireClinicContext(
 		);
 	}
 
-	const membershipDoc = snap.docs[0];
-	if (!membershipDoc) {
+	const memberships = snap.docs.map((doc) => doc.data() as ClinicMembershipDoc);
+	const role = pickHighestClinicRole(
+		memberships.map((membership) => membership.role),
+	);
+
+	if (!role) {
 		return denyAuthz(req, res, 'Failed to resolve clinic membership', 403);
 	}
-
-	const membership = membershipDoc.data() as ClinicMembershipDoc;
-	const role = membership.role as ClinicRole;
 
 	req.auth = {
 		...req.auth,

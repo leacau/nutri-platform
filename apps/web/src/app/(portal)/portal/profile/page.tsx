@@ -2,13 +2,24 @@
 
 import { useAuthedQuery } from "../../../../hooks/use-authed-query";
 import { apiClient } from "../../../../lib/api-client";
-import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../../../../components/ui/card";
 import { formatDate } from "../../../../lib/utils";
+import { useClinic } from "../../../../providers/clinic-provider";
 
 export default function PortalProfilePage() {
+  const { activeMembership } = useClinic();
+  const patientId = activeMembership?.patientId;
+
   const patientQuery = useAuthedQuery({
-    queryKey: ["portal-patient-profile"],
-    queryFn: (token, clinicId) => apiClient.patient("patient_1", clinicId, token),
+    queryKey: ["portal-patient-profile", patientId],
+    queryFn: (token, clinicId) =>
+      apiClient.patient(patientId!, clinicId, token),
+    enabled: Boolean(patientId),
   });
 
   const patient = patientQuery.data;
@@ -38,7 +49,9 @@ export default function PortalProfilePage() {
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Nacimiento</p>
-            <p className="font-semibold">{patient?.birthDate ? formatDate(patient.birthDate) : "—"}</p>
+            <p className="font-semibold">
+              {patient?.birthDate ? formatDate(patient.birthDate) : "—"}
+            </p>
           </div>
         </CardContent>
       </Card>

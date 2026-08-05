@@ -1,6 +1,12 @@
 'use client';
 
-import { Calendar, CheckCircle2, Clock3, PlusCircle } from 'lucide-react';
+import {
+	Calendar,
+	CheckCircle2,
+	Clock3,
+	PlusCircle,
+	UserPlus,
+} from 'lucide-react';
 import {
 	Card,
 	CardContent,
@@ -35,11 +41,16 @@ const parseSafeDate = (dateVal: any): Date | null => {
 	if (typeof dateVal === 'object' && '_seconds' in dateVal) {
 		return new Date(dateVal._seconds * 1000);
 	}
+	if (typeof dateVal === 'object' && 'seconds' in dateVal) {
+		return new Date(dateVal.seconds * 1000);
+	}
 
 	// Si es un string o número normal
 	const parsed = new Date(dateVal);
 	return isNaN(parsed.getTime()) ? null : parsed;
 };
+
+const accountUid = (account: UserAccount) => account.uid || account.id;
 
 export default function AppointmentsPage() {
 	const qc = useQueryClient();
@@ -47,6 +58,13 @@ export default function AppointmentsPage() {
 	const { activeClinicId, activeMembership } = useClinic();
 	const { idToken, user } = useAuth();
 	const [filterStatus, setFilterStatus] = useState('all');
+	const [isQuickPatientOpen, setIsQuickPatientOpen] = useState(false);
+	const [quickPatient, setQuickPatient] = useState({
+		name: '',
+		dni: '',
+		email: '',
+		phone: '',
+	});
 
 	const isMeProfessional = activeMembership?.role === 'professional';
 
@@ -121,6 +139,40 @@ export default function AppointmentsPage() {
 		},
 	});
 
+	const createPatientMutation = useMutation({
+		mutationFn: async () => {
+			if (!activeClinicId) throw new Error('Sin clinica activa');
+			if (!quickPatient.name.trim() || !quickPatient.dni.trim()) {
+				throw new Error('Faltan datos del paciente');
+			}
+
+			const professionalUid =
+				newAppointment.professionalUid ||
+				(isMeProfessional ? user?.uid || '' : '');
+			const assignedProfessionalUids = professionalUid
+				? [professionalUid]
+				: [];
+
+			return apiClient.createPatient(
+				activeClinicId,
+				{
+					name: quickPatient.name.trim(),
+					dni: quickPatient.dni.trim(),
+					email: quickPatient.email.trim(),
+					phone: quickPatient.phone.trim(),
+					assignedProfessionalUids,
+				},
+				idToken || undefined,
+			);
+		},
+		onSuccess: (patient) => {
+			qc.invalidateQueries({ queryKey: ['patients'] });
+			setNewAppointment((prev) => ({ ...prev, patientId: patient.id }));
+			setQuickPatient({ name: '', dni: '', email: '', phone: '' });
+			setIsQuickPatientOpen(false);
+		},
+	});
+
 	const updateMutation = useMutation({
 		mutationFn: async () => {
 			if (!newAppointment.id || !newAppointment.scheduledFor) {
@@ -192,6 +244,16 @@ export default function AppointmentsPage() {
 	}, [appointmentsQuery.data, filterStatus]);
 
 	const isSubmitting = scheduleMutation.isPending || updateMutation.isPending;
+	const professionals = professionalsQuery.data || [];
+	const professionalName = (uid?: string | null) => {
+		if (!uid) return 'N/A';
+		if (uid === user?.uid) return 'Yo';
+		return (
+			professionals.find(
+				(professional: UserAccount) => accountUid(professional) === uid,
+			)?.name || uid
+		);
+	};
 
 	return (
 		<div className='space-y-6'>
@@ -241,11 +303,7 @@ export default function AppointmentsPage() {
 										</p>
 										<p className='text-xs text-muted-foreground'>
 											Profesional:{' '}
-											{professionalsQuery.data?.find(
-												(p: UserAccount) => p.id === appt.professionalUid,
-											)?.name ||
-												appt.professionalUid ||
-												'N/A'}
+											{professionalName(appt.professionalUid)}
 										</p>
 										<Badge
 											variant={
@@ -374,7 +432,97 @@ export default function AppointmentsPage() {
 									</option>
 								))}
 							</Select>
+							{!newAppointment.id ? (
+								<Button
+									type='button'
+									variant='ghost'
+									size='sm'
+									className='px-0 text-primary'
+									onClick={() => setIsQuickPatientOpen((open) => !open)}
+								>
+									<UserPlus className='mr-1.5 h-4 w-4' />
+									{isQuickPatientOpen
+										? 'Ocultar alta rapida'
+										: 'Cargar paciente nuevo'}
+								</Button>
+							) : null}
 						</div>
+						{isQuickPatientOpen && !newAppointment.id ? (
+							<div className='space-y-3 rounded-lg border bg-muted/20 p-3'>
+								<div className='grid gap-3 sm:grid-cols-2'>
+									<div className='space-y-1 sm:col-span-2'>
+										<Label>Nombre</Label>
+										<Input
+											placeholder='Nombre y apellido'
+											value={quickPatient.name}
+											onChange={(e) =>
+												setQuickPatient((prev) => ({
+													...prev,
+													name: e.target.value,
+												}))
+											}
+										/>
+									</div>
+									<div className='space-y-1'>
+										<Label>DNI</Label>
+										<Input
+											placeholder='12345678'
+											value={quickPatient.dni}
+											onChange={(e) =>
+												setQuickPatient((prev) => ({
+													...prev,
+													dni: e.target.value,
+												}))
+											}
+										/>
+									</div>
+									<div className='space-y-1'>
+										<Label>Telefono</Label>
+										<Input
+											placeholder='+54 9 ...'
+											value={quickPatient.phone}
+											onChange={(e) =>
+												setQuickPatient((prev) => ({
+													...prev,
+													phone: e.target.value,
+												}))
+											}
+										/>
+									</div>
+									<div className='space-y-1 sm:col-span-2'>
+										<Label>Email</Label>
+										<Input
+											type='email'
+											placeholder='paciente@correo.com'
+											value={quickPatient.email}
+											onChange={(e) =>
+												setQuickPatient((prev) => ({
+													...prev,
+													email: e.target.value,
+												}))
+											}
+										/>
+									</div>
+								</div>
+								<Button
+									type='button'
+									variant='secondary'
+									className='w-full'
+									onClick={() => createPatientMutation.mutate()}
+									disabled={createPatientMutation.isPending}
+								>
+									<UserPlus className='mr-2 h-4 w-4' />
+									{createPatientMutation.isPending
+										? 'Creando paciente...'
+										: 'Crear y usar paciente'}
+								</Button>
+								{createPatientMutation.error ? (
+									<p className='text-sm text-destructive'>
+										No pudimos crear el paciente.
+									</p>
+								) : null}
+							</div>
+						) : null}
 						<div className='space-y-1'>
 							<Label>Profesional</Label>
 							<Select
@@ -392,7 +540,10 @@ export default function AppointmentsPage() {
 									<option value={user.uid}>Yo</option>
 								) : (
 									professionalsQuery.data?.map((professional: UserAccount) => (
-										<option key={professional.id} value={professional.id}>
+										<option
+											key={professional.id}
+											value={accountUid(professional)}
+										>
 											{professional.name}
 										</option>
 									))

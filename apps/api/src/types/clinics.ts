@@ -4,6 +4,19 @@ import type { ClinicRole } from './auth.js';
 export type ClinicDoc = {
 	name: string;
 	isActive?: boolean;
+	branding?: {
+		logoUrl?: string | null;
+		accentColor?: string | null;
+	};
+	reminderPreferences?: {
+		whatsappEnabled?: boolean;
+		emailEnabled?: boolean;
+	};
+	patientAppointmentSelfService?: {
+		canCancel?: boolean;
+		canReschedule?: boolean;
+		minHoursBefore?: number;
+	};
 	createdAt: Timestamp;
 	updatedAt: Timestamp;
 };

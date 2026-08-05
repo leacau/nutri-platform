@@ -8,6 +8,7 @@ import {
 	ClipboardList,
 	FileText,
 	LayoutDashboard,
+	Loader2,
 	LogOut,
 	Settings,
 	Shield,
@@ -21,7 +22,7 @@ import { ClinicSwitcher } from './clinic-switcher';
 import { DevToolsPanel } from './dev-tools-panel';
 import { LanguageSelector } from './language-selector';
 import Link from 'next/link';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { ThemeToggle } from './theme-toggle';
 import { cn } from '../lib/utils';
 import { useAuth } from '../providers/auth-provider';
@@ -46,6 +47,7 @@ const navItems: NavItem[] = [
 		label: 'Dashboard',
 		href: '/app/dashboard',
 		icon: <LayoutDashboard className='h-4 w-4' />,
+		roles: ['clinic_admin', 'staff', 'professional', 'platform_admin'],
 	},
 	{
 		label: 'Pacientes',
@@ -113,6 +115,21 @@ export function AppShell({ children }: { children: ReactNode }) {
 	const currentRole = activeMembership?.role;
 	const displayRole =
 		platformRole === 'platform_admin' ? 'Superusuario' : currentRole;
+
+	useEffect(() => {
+		if (currentRole === 'patient' && pathname?.startsWith('/app')) {
+			router.replace('/portal/dashboard');
+		}
+	}, [currentRole, pathname, router]);
+
+	if (currentRole === 'patient' && pathname?.startsWith('/app')) {
+		return (
+			<div className='flex min-h-screen flex-col items-center justify-center gap-2 text-muted-foreground'>
+				<Loader2 className='h-6 w-6 animate-spin' />
+				<p>Abriendo portal paciente...</p>
+			</div>
+		);
+	}
 
 	const filteredNav = navItems.filter((item) => {
 		if (!item.roles) return true;

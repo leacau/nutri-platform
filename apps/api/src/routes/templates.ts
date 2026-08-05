@@ -25,14 +25,19 @@ router.get(
 		const snap = await db
 			.collection('measurement_templates')
 			.where('clinicId', '==', clinicId)
-			.where('createdByUid', '==', auth.uid)
-			.orderBy('createdAt', 'desc')
 			.get();
 
-		const items = snap.docs.map((d) => ({
-			id: d.id,
-			...d.data(),
-		}));
+		const items = snap.docs
+			.map((d) => ({
+				id: d.id,
+				...(d.data() as MeasurementTemplateDoc),
+			}))
+			.filter((item) => item.createdByUid === auth.uid)
+			.sort((a, b) => {
+				const aMs = a.createdAt?.toMillis?.() ?? 0;
+				const bMs = b.createdAt?.toMillis?.() ?? 0;
+				return bMs - aMs;
+			});
 
 		return res.status(200).json({ success: true, data: items });
 	},

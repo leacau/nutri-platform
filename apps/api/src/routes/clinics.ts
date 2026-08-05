@@ -7,9 +7,10 @@ import { getFirebaseAdmin } from '../firebase/admin.js';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
+import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
-import type { ClinicRole } from '../types/auth.js';
+import type { ClinicRole, Role } from '../types/auth.js';
 
 const router = Router();
 const adminRouter = Router();
@@ -22,6 +23,27 @@ const transporter = nodemailer.createTransport({
 		pass: process.env.EMAIL_PASS || 'tu_contraseña_de_aplicacion',
 	},
 });
+
+async function safeSendMail(
+	options: Parameters<typeof transporter.sendMail>[0],
+) {
+	if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+		console.warn(
+			'[invite-email] EMAIL_USER/EMAIL_PASS missing; skipping email delivery',
+		);
+		return false;
+	}
+
+	try {
+		await transporter.sendMail(options);
+		return true;
+	} catch (error) {
+		console.warn('[invite-email] Email delivery failed; invitation continues', {
+			error: error instanceof Error ? error.message : error,
+		});
+		return false;
+	}
+}
 
 const inviteMemberSchema = z.object({
 	name: z.string().min(2),
@@ -48,6 +70,29 @@ const updateClinicSchema = z
 		message: 'At least one field is required',
 	});
 
+const clinicSettingsSchema = z.object({
+	name: z.string().min(2).optional(),
+	branding: z
+		.object({
+			logoUrl: z.string().url().optional().nullable(),
+			accentColor: z.string().min(4).max(32).optional().nullable(),
+		})
+		.optional(),
+	reminderPreferences: z
+		.object({
+			whatsappEnabled: z.boolean().optional(),
+			emailEnabled: z.boolean().optional(),
+		})
+		.optional(),
+	patientAppointmentSelfService: z
+		.object({
+			canCancel: z.boolean().optional(),
+			canReschedule: z.boolean().optional(),
+			minHoursBefore: z.number().int().min(0).max(720).optional(),
+		})
+		.optional(),
+});
+
 const adminMemberSchema = z.object({
 	uid: z.string().min(1),
 	role: z.enum(['clinic_admin', 'professional', 'staff']),
@@ -64,6 +109,19 @@ const updateAdminMemberSchema = z
 	});
 
 type CreateClinicInput = z.infer<typeof createClinicSchema>;
+
+function canManageClinicMemberRole(
+	actorRole: string | null | undefined,
+	targetRole: ClinicRole,
+	isPlatformAdmin: boolean | undefined,
+) {
+	if (isPlatformAdmin || actorRole === 'platform_admin') return true;
+	if (actorRole === 'clinic_admin') {
+		return targetRole === 'professional' || targetRole === 'staff';
+	}
+	if (actorRole === 'staff') return targetRole === 'professional';
+	return false;
+}
 
 function serializeTimestamp(value: unknown): string | null {
 	if (value instanceof Timestamp) return value.toDate().toISOString();
@@ -86,21 +144,30 @@ async function sendInviteEmail(email: string, name: string, subject: string) {
 	const { auth } = getFirebaseAdmin();
 	const inviteLink = await auth.generatePasswordResetLink(email);
 
-	await transporter.sendMail({
-		from: '"Nutri Platform" <no-reply@nutriplatform.com>',
-		to: email,
-		subject,
-		html: `
-			<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-				<h2 style="color: #2F8F7B;">Hola, ${name}</h2>
-				<p>Tu clinica ha sido configurada exitosamente.</p>
-				<p>Hace clic en el boton para establecer tu contrasena y comenzar a gestionar tu espacio:</p>
-				<div style="text-align: center; margin: 30px 0;">
-					<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer contrasena</a>
+	try {
+		await safeSendMail({
+			from: '"Nutri Platform" <no-reply@nutriplatform.com>',
+			to: email,
+			subject,
+			html: `
+				<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+					<h2 style="color: #2F8F7B;">Hola, ${name}</h2>
+					<p>Tu clinica ha sido configurada exitosamente.</p>
+					<p>Hace clic en el boton para establecer tu contrasena y comenzar a gestionar tu espacio:</p>
+					<div style="text-align: center; margin: 30px 0;">
+						<a href="${inviteLink}" style="background-color: #2F8F7B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Establecer contrasena</a>
+					</div>
 				</div>
-			</div>
-		`,
-	});
+			`,
+		});
+	} catch (error) {
+		console.warn('[invite-email] Email delivery failed; invite link still generated', {
+			email,
+			error: error instanceof Error ? error.message : error,
+		});
+	}
+
+	return inviteLink;
 }
 
 async function resolveOrCreateClinicAdmin(
@@ -740,55 +807,27 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 		return res.status(401).json({ success: false, message: 'Unauthenticated' });
 	}
 
-	const db = getFirestoreDb();
-
-	if (req.auth.isPlatformAdmin) {
-		const snap = await db
-			.collection('clinics')
-			.orderBy('createdAt', 'desc')
-			.limit(50)
-			.get();
-		const clinics = snap.docs.map((doc) => ({
-			clinicId: doc.id,
-			role: 'clinic_admin' as ClinicRole,
-			clinicName: doc.data().name ?? null,
-		}));
-
-		return res.status(200).json({
-			success: true,
-			data: {
-				uid: req.auth.uid,
-				email: req.auth.email,
-				isPlatformAdmin: true,
-				clinics,
-			},
-		});
-	}
-
-	const membershipsSnap = await db
-		.collection('clinic_memberships')
-		.where('uid', '==', req.auth.uid)
-		.where('isActive', '==', true)
-		.get();
+	const xClinicId = req.header('x-clinic-id') as string | undefined;
+	const analysis = await analyzeUserSession(
+		req.auth.uid,
+		xClinicId,
+		req.auth.isPlatformAdmin,
+	);
 
 	const clinics: Array<{
 		clinicId: string;
-		role: ClinicRole;
+		role: Role;
 		clinicName: string | null;
-	}> = [];
-
-	for (const doc of membershipsSnap.docs) {
-		const data = doc.data() as ClinicMembershipDoc;
-		const clinicSnap = await db.collection('clinics').doc(data.clinicId).get();
-		const clinicData = clinicSnap.exists ? (clinicSnap.data() as ClinicDoc | undefined) : undefined;
-		if (!clinicSnap.exists || clinicData?.isActive === false) continue;
-		const clinicName = clinicData?.name ?? null;
-		clinics.push({
-			clinicId: data.clinicId,
-			role: data.role,
-			clinicName,
-		});
-	}
+		patientId?: string;
+	}> = [
+		...analysis.staffClinics,
+		...analysis.patientClinics.map((clinic) => ({
+			clinicId: clinic.clinicId,
+			role: 'patient' as Role,
+			clinicName: clinic.clinicName,
+			patientId: clinic.patientId,
+		})),
+	];
 
 	return res.status(200).json({
 		success: true,
@@ -846,6 +885,131 @@ router.get('/:clinicId', authMiddleware, async (req: Request, res: Response) => 
 	});
 });
 
+router.get(
+	'/:clinicId/settings',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId || req.auth?.clinicId !== clinicId) {
+			return res.status(400).json({ success: false, message: 'Invalid clinicId' });
+		}
+
+		const clinicSnap = await ensureClinicExists(clinicId);
+		if (!clinicSnap) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const data = clinicSnap.data() as ClinicDoc;
+		return res.status(200).json({
+			success: true,
+			data: {
+				name: data.name,
+				branding: data.branding ?? null,
+				reminderPreferences: data.reminderPreferences ?? null,
+				patientAppointmentSelfService:
+					data.patientAppointmentSelfService ?? {
+						canCancel: true,
+						canReschedule: false,
+						minHoursBefore: 24,
+					},
+			},
+		});
+	},
+);
+
+router.patch(
+	'/:clinicId/settings',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId || req.auth?.clinicId !== clinicId) {
+			return res.status(400).json({ success: false, message: 'Invalid clinicId' });
+		}
+
+		const parsed = clinicSettingsSchema.safeParse(req.body ?? {});
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const clinicSnap = await ensureClinicExists(clinicId);
+		if (!clinicSnap) {
+			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+
+		const update: Partial<ClinicDoc> = { updatedAt: Timestamp.now() };
+		if (parsed.data.name !== undefined) update.name = parsed.data.name;
+		if (parsed.data.branding !== undefined) {
+			const branding: ClinicDoc['branding'] = {};
+			if (parsed.data.branding.logoUrl !== undefined) {
+				branding.logoUrl = parsed.data.branding.logoUrl;
+			}
+			if (parsed.data.branding.accentColor !== undefined) {
+				branding.accentColor = parsed.data.branding.accentColor;
+			}
+			update.branding = branding;
+		}
+		if (parsed.data.reminderPreferences !== undefined) {
+			const reminderPreferences: ClinicDoc['reminderPreferences'] = {};
+			if (parsed.data.reminderPreferences.whatsappEnabled !== undefined) {
+				reminderPreferences.whatsappEnabled =
+					parsed.data.reminderPreferences.whatsappEnabled;
+			}
+			if (parsed.data.reminderPreferences.emailEnabled !== undefined) {
+				reminderPreferences.emailEnabled =
+					parsed.data.reminderPreferences.emailEnabled;
+			}
+			update.reminderPreferences = reminderPreferences;
+		}
+		if (parsed.data.patientAppointmentSelfService !== undefined) {
+			const patientAppointmentSelfService: ClinicDoc['patientAppointmentSelfService'] =
+				{};
+			if (
+				parsed.data.patientAppointmentSelfService.canCancel !== undefined
+			) {
+				patientAppointmentSelfService.canCancel =
+					parsed.data.patientAppointmentSelfService.canCancel;
+			}
+			if (
+				parsed.data.patientAppointmentSelfService.canReschedule !==
+				undefined
+			) {
+				patientAppointmentSelfService.canReschedule =
+					parsed.data.patientAppointmentSelfService.canReschedule;
+			}
+			if (
+				parsed.data.patientAppointmentSelfService.minHoursBefore !==
+				undefined
+			) {
+				patientAppointmentSelfService.minHoursBefore =
+					parsed.data.patientAppointmentSelfService.minHoursBefore;
+			}
+			update.patientAppointmentSelfService = patientAppointmentSelfService;
+		}
+		await clinicSnap.ref.set(update, { merge: true });
+		const fresh = await clinicSnap.ref.get();
+		const data = fresh.data() as ClinicDoc;
+
+		return res.status(200).json({
+			success: true,
+			data: {
+				name: data.name,
+				branding: data.branding ?? null,
+				reminderPreferences: data.reminderPreferences ?? null,
+				patientAppointmentSelfService:
+					data.patientAppointmentSelfService ?? null,
+			},
+		});
+	},
+);
+
 const upsertMemberBody = z.object({
 	uid: z.string().min(1),
 	role: z.enum(['clinic_admin', 'professional', 'staff']),
@@ -870,6 +1034,19 @@ router.post(
 				success: false,
 				message: 'Invalid body',
 				errors: parsed.error.flatten(),
+			});
+		}
+
+		if (
+			!canManageClinicMemberRole(
+				req.auth?.role,
+				parsed.data.role,
+				req.auth?.isPlatformAdmin,
+			)
+		) {
+			return res.status(403).json({
+				success: false,
+				message: 'You cannot assign this role',
 			});
 		}
 
@@ -948,6 +1125,19 @@ router.post(
 			});
 		}
 
+		if (
+			!canManageClinicMemberRole(
+				req.auth?.role,
+				parsed.data.role,
+				req.auth?.isPlatformAdmin,
+			)
+		) {
+			return res.status(403).json({
+				success: false,
+				message: 'You cannot invite this role',
+			});
+		}
+
 		const db = getFirestoreDb();
 		const dniInt = parseInt(parsed.data.dni, 10);
 		if (dniInt < 1000000 || dniInt > 99999999) {
@@ -988,7 +1178,7 @@ router.post(
 							parsed.data.email,
 						);
 
-						await transporter.sendMail({
+						await safeSendMail({
 							from: '"Nutri Platform" <no-reply@nutriplatform.com>',
 							to: parsed.data.email,
 							subject: '¡Te han invitado a Nutri Platform!',
@@ -1028,7 +1218,7 @@ router.post(
 					parsed.data.email,
 				);
 
-				await transporter.sendMail({
+				await safeSendMail({
 					from: '"Nutri Platform" <no-reply@nutriplatform.com>',
 					to: parsed.data.email,
 					subject: '¡Te han invitado a Nutri Platform!',
@@ -1096,6 +1286,47 @@ router.post(
 				message: 'Usuario invitado/creado y asignado.',
 			});
 		}
+	},
+);
+
+router.get(
+	'/:clinicId/professionals',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'platform_admin', 'staff', 'professional', 'patient'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.params.clinicId;
+		if (!clinicId || req.auth?.clinicId !== clinicId) {
+			return res.status(400).json({ success: false, message: 'Invalid clinicId' });
+		}
+
+		const db = getFirestoreDb();
+		const snap = await db
+			.collection('clinic_memberships')
+			.where('clinicId', '==', clinicId)
+			.where('role', '==', 'professional')
+			.where('isActive', '==', true)
+			.get();
+
+		const professionals = await Promise.all(
+			snap.docs.map(async (d) => {
+				const m = d.data() as ClinicMembershipDoc;
+				const userSnap = await db.collection('users').doc(m.uid).get();
+				const userData = userSnap.exists ? userSnap.data() : {};
+
+				return {
+					id: d.id,
+					clinicId,
+					uid: m.uid,
+					role: m.role,
+					isActive: m.isActive !== false,
+					name: userData?.name ?? 'Profesional',
+					email: userData?.email ?? null,
+				};
+			}),
+		);
+
+		return res.status(200).json({ success: true, data: professionals });
 	},
 );
 

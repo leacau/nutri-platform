@@ -11,7 +11,7 @@ export type AppointmentStatus =
 export type AppointmentDoc = {
 	clinicId: string;
 	patientId: string;
-	patientUid: string;
+	patientUid: string | null;
 	professionalUid: string | null;
 	status: AppointmentStatus;
 	requestedAt: Timestamp;

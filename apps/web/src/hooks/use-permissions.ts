@@ -8,6 +8,10 @@ export type PermissionSet = {
 	canViewSettings: boolean;
 	canManageClinicUsers: boolean;
 	canManagePatients: boolean;
+	canManagePatientPortalAccess: boolean;
+	canViewMedicalRecords: boolean;
+	canEditMedicalRecords: boolean;
+	canShareMedicalRecords: boolean;
 	canAssignAnyPatient: boolean;
 	canSeeAllAppointments: boolean;
 	canManageTemplates: boolean;
@@ -19,6 +23,10 @@ const defaultPermissions: PermissionSet = {
 	canViewSettings: false,
 	canManageClinicUsers: false,
 	canManagePatients: false,
+	canManagePatientPortalAccess: false,
+	canViewMedicalRecords: false,
+	canEditMedicalRecords: false,
+	canShareMedicalRecords: false,
 	canAssignAnyPatient: false,
 	canSeeAllAppointments: false,
 	canManageTemplates: false,
@@ -30,6 +38,10 @@ const platformAdminPermissions: PermissionSet = {
 	canViewSettings: true,
 	canManageClinicUsers: true,
 	canManagePatients: true,
+	canManagePatientPortalAccess: true,
+	canViewMedicalRecords: false,
+	canEditMedicalRecords: false,
+	canShareMedicalRecords: false,
 	canAssignAnyPatient: true,
 	canSeeAllAppointments: true,
 	canManageTemplates: true,
@@ -42,6 +54,10 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
 		canViewSettings: true,
 		canManageClinicUsers: true,
 		canManagePatients: true,
+		canManagePatientPortalAccess: true,
+		canViewMedicalRecords: false,
+		canEditMedicalRecords: false,
+		canShareMedicalRecords: false,
 		canAssignAnyPatient: true,
 		canSeeAllAppointments: true,
 		canManageTemplates: true,
@@ -52,6 +68,10 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
 		canViewSettings: false,
 		canManageClinicUsers: true,
 		canManagePatients: true,
+		canManagePatientPortalAccess: true,
+		canViewMedicalRecords: false,
+		canEditMedicalRecords: false,
+		canShareMedicalRecords: false,
 		canAssignAnyPatient: true,
 		canSeeAllAppointments: true,
 		canManageTemplates: true,
@@ -62,6 +82,10 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
 		canViewSettings: false,
 		canManageClinicUsers: false,
 		canManagePatients: true,
+		canManagePatientPortalAccess: false,
+		canViewMedicalRecords: true,
+		canEditMedicalRecords: true,
+		canShareMedicalRecords: true,
 		canAssignAnyPatient: false,
 		canSeeAllAppointments: false,
 		canManageTemplates: true,
@@ -72,6 +96,10 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
 		canViewSettings: false,
 		canManageClinicUsers: false,
 		canManagePatients: false,
+		canManagePatientPortalAccess: false,
+		canViewMedicalRecords: false,
+		canEditMedicalRecords: false,
+		canShareMedicalRecords: false,
 		canAssignAnyPatient: false,
 		canSeeAllAppointments: false,
 		canManageTemplates: false,

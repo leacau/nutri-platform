@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import { inviteUser } from '../controllers/invitation.controller.js';
+import { requireClinicContext } from '../middlewares/requireClinicContext.js';
+import { requireRole } from '../middlewares/requireRole.js';
 
 const router = Router();
 
@@ -62,6 +64,12 @@ router.post('/self', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // 👇 NUEVA RUTA DE INVITACIÓN
-router.post('/invite', authMiddleware, inviteUser);
+router.post(
+	'/invite',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'staff', 'platform_admin'),
+	inviteUser,
+);
 
 export const usersRouter = router;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Palette, Save } from "lucide-react";
 import { useAuthedQuery } from "../../../../hooks/use-authed-query";
@@ -11,16 +11,38 @@ import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 import { Button } from "../../../../components/ui/button";
 import { useClinic } from "../../../../providers/clinic-provider";
+import { useAuth } from "../../../../providers/auth-provider";
 
 export default function ClinicSettingsPage() {
   const { activeClinicId } = useClinic();
+  const { idToken } = useAuth();
   const qc = useQueryClient();
   const settingsQuery = useAuthedQuery({
     queryKey: ["clinic-settings", activeClinicId],
     queryFn: (token, clinicId) => apiClient.clinicSettings(clinicId, token),
   });
 
-  const [form, setForm] = useState({ logoUrl: "", accentColor: "" });
+  const [form, setForm] = useState({
+    name: "",
+    logoUrl: "",
+    accentColor: "",
+    canCancel: true,
+    canReschedule: false,
+    minHoursBefore: 24,
+  });
+
+  useEffect(() => {
+    const settings = settingsQuery.data;
+    if (!settings) return;
+    setForm({
+      name: settings.name ?? "",
+      logoUrl: settings.branding?.logoUrl ?? "",
+      accentColor: settings.branding?.accentColor ?? "",
+      canCancel: settings.patientAppointmentSelfService?.canCancel ?? true,
+      canReschedule: settings.patientAppointmentSelfService?.canReschedule ?? false,
+      minHoursBefore: settings.patientAppointmentSelfService?.minHoursBefore ?? 24,
+    });
+  }, [settingsQuery.data]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -28,12 +50,18 @@ export default function ClinicSettingsPage() {
       return apiClient.saveClinicSettings(
         activeClinicId,
         {
+          name: form.name || undefined,
           branding: {
             logoUrl: form.logoUrl || undefined,
             accentColor: form.accentColor || undefined,
           },
+          patientAppointmentSelfService: {
+            canCancel: form.canCancel,
+            canReschedule: form.canReschedule,
+            minHoursBefore: Number(form.minHoursBefore) || 24,
+          },
         },
-        undefined,
+        idToken ?? undefined,
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clinic-settings", activeClinicId] }),
@@ -58,6 +86,14 @@ export default function ClinicSettingsPage() {
             </Button>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1 sm:col-span-2">
+              <Label>Nombre de la clinica</Label>
+              <Input
+                placeholder="Clinica AMSA"
+                value={form.name || settingsQuery.data?.name || ""}
+                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </div>
             <div className="space-y-1">
               <Label>Logo URL</Label>
               <Input
@@ -72,6 +108,34 @@ export default function ClinicSettingsPage() {
                 placeholder="#2F8F7B"
                 value={form.accentColor || settingsQuery.data?.branding?.accentColor || ""}
                 onChange={(e) => setForm((prev) => ({ ...prev, accentColor: e.target.value }))}
+              />
+            </div>
+            <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={form.canCancel}
+                onChange={(e) => setForm((prev) => ({ ...prev, canCancel: e.target.checked }))}
+              />
+              Pacientes pueden cancelar turnos
+            </label>
+            <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={form.canReschedule}
+                onChange={(e) => setForm((prev) => ({ ...prev, canReschedule: e.target.checked }))}
+              />
+              Pacientes pueden reprogramar turnos
+            </label>
+            <div className="space-y-1">
+              <Label>Horas minimas antes del turno</Label>
+              <Input
+                type="number"
+                min={0}
+                max={720}
+                value={form.minHoursBefore}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, minHoursBefore: Number(e.target.value) }))
+                }
               />
             </div>
           </CardContent>

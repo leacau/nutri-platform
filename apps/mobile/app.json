@@ -1,0 +1,17 @@
+{
+	"expo": {
+		"name": "AMSA Core Paciente",
+		"slug": "amsa-core-paciente",
+		"version": "0.1.0",
+		"orientation": "portrait",
+		"userInterfaceStyle": "light",
+		"ios": {
+			"supportsTablet": true
+		},
+		"android": {
+			"adaptiveIcon": {
+				"backgroundColor": "#0f2f4f"
+			}
+		}
+	}
+}

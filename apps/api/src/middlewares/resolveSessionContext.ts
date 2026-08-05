@@ -1,5 +1,3 @@
-// apps/api/src/middlewares/resolveSessionContext.ts
-
 import type {
 	DocumentSnapshot,
 	Firestore,
@@ -11,11 +9,11 @@ import type { ClinicMembershipDoc } from '../types/clinics.js';
 import type { PatientDoc } from '../types/patients.js';
 import type { Role } from '../types/auth.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
+import {
+	compareClinicRoles,
+	isClinicRole,
+} from '../security/clinicRolePriority.js';
 
-/**
- * Estructura de resultado del análisis de sesión.
- * Usada tanto por el endpoint /session como por el middleware.
- */
 export interface SessionAnalysisResult {
 	staffClinics: Array<{
 		clinicId: string;
@@ -34,14 +32,10 @@ export interface SessionAnalysisResult {
 	};
 }
 
-/**
- * Función centralizada que lee de Firestore y determina la situación del usuario.
- * No genera side-effects en req/res, solo devuelve datos.
- */
 export async function analyzeUserSession(
 	uid: string,
 	xClinicIdHeader: string | undefined,
-	isPlatformAdmin: boolean = false, // <-- NUEVO PARÁMETRO
+	isPlatformAdmin: boolean = false,
 ): Promise<SessionAnalysisResult> {
 	const db = getFirestoreDb();
 
@@ -51,10 +45,8 @@ export async function analyzeUserSession(
 		resolved: { role: null, clinicId: null, patientId: null },
 	};
 
-	// --- INICIO MODO DIOS (isPlatformAdmin) ---
 	if (isPlatformAdmin) {
 		if (xClinicIdHeader) {
-			// Si el frontend envía el header, le damos acceso total a esa clínica
 			const clinicDoc = await db
 				.collection('clinics')
 				.doc(xClinicIdHeader)
@@ -68,27 +60,23 @@ export async function analyzeUserSession(
 					clinicName: (clinicDoc.data() as any)?.name ?? 'Sin nombre',
 				});
 			}
-			return result; // Salimos temprano
-		} else {
-			// Si no hay header, pre-cargamos las clínicas para el selector (límite 50)
-			const snap = await db
-				.collection('clinics')
-				.orderBy('createdAt', 'desc')
-				.limit(50)
-				.get();
-			snap.forEach((doc) => {
-				result.staffClinics.push({
-					clinicId: doc.id,
-					role: 'clinic_admin',
-					clinicName: (doc.data() as any)?.name ?? 'Sin nombre',
-				});
-			});
-			return result; // Salimos temprano
+			return result;
 		}
-	}
-	// --- FIN MODO DIOS ---
 
-	// 1) Buscar Membresías (Prioridad Staff)
+		const snap = await db
+			.collection('clinics')
+			.orderBy('createdAt', 'desc')
+			.limit(50)
+			.get();
+		snap.forEach((doc) => {
+			result.staffClinics.push({
+				clinicId: doc.id,
+				role: 'clinic_admin',
+				clinicName: (doc.data() as any)?.name ?? 'Sin nombre',
+			});
+		});
+	}
+
 	const membershipsSnap = await db
 		.collection('clinic_memberships')
 		.where('uid', '==', uid)
@@ -97,27 +85,34 @@ export async function analyzeUserSession(
 
 	if (!membershipsSnap.empty) {
 		const clinicIdsToFetch = new Set<string>();
+		const staffClinicsById = new Map<string, Role>();
 
 		membershipsSnap.forEach((doc: QueryDocumentSnapshot) => {
 			const data = doc.data() as ClinicMembershipDoc;
+			if (!isClinicRole(data.role)) return;
+
 			clinicIdsToFetch.add(data.clinicId);
 
-			result.staffClinics.push({
-				clinicId: data.clinicId,
-				role: data.role,
-				clinicName: null,
-			});
+			const current = staffClinicsById.get(data.clinicId);
+			if (
+				!current ||
+				(isClinicRole(current) && compareClinicRoles(data.role, current) > 0)
+			) {
+				staffClinicsById.set(data.clinicId, data.role);
+			}
 		});
 
-		// Fetch nombres de clínicas
 		if (clinicIdsToFetch.size > 0) {
 			const namesMap = await fetchClinicNames(db, Array.from(clinicIdsToFetch));
-			result.staffClinics.forEach((item) => {
-				item.clinicName = namesMap.get(item.clinicId) ?? null;
-			});
+			for (const [clinicId, role] of staffClinicsById.entries()) {
+				result.staffClinics.push({
+					clinicId,
+					role,
+					clinicName: namesMap.get(clinicId) ?? null,
+				});
+			}
 		}
 
-		// Lógica STAFF:
 		if (xClinicIdHeader) {
 			const match = result.staffClinics.find(
 				(c) => c.clinicId === xClinicIdHeader,
@@ -128,77 +123,102 @@ export async function analyzeUserSession(
 			}
 		}
 
-		return result; // Staff tiene prioridad sobre Patient.
+		return result;
 	}
 
-	// 2) Buscar Pacientes (Si no es Staff)
-	const patientsSnap = await db
-		.collection('patients')
-		.where('linkedUid', '==', uid)
-		.get();
+	const patientClinicsMap = await resolvePatientClinics(db, uid);
+	if (patientClinicsMap.size > 0) {
+		const namesMap = await fetchClinicNames(
+			db,
+			Array.from(patientClinicsMap.keys()),
+		);
 
-	if (!patientsSnap.empty) {
-		const clinicIdsToFetch = new Set<string>();
-
-		// Dedup por clinicId: clinicId -> PatientDoc(+id)
-		const uniquePatientsMap = new Map<string, { id: string } & PatientDoc>();
-
-		patientsSnap.forEach((doc: QueryDocumentSnapshot) => {
-			const pData = doc.data() as PatientDoc;
-
-			if (pData.clinicId && !uniquePatientsMap.has(pData.clinicId)) {
-				uniquePatientsMap.set(pData.clinicId, { id: doc.id, ...pData });
-				clinicIdsToFetch.add(pData.clinicId);
-				return;
-			}
-
-			if (pData.clinicId) {
-				console.warn(
-					`[Session] Duplicate patient record for uid ${uid} in clinic ${
-						pData.clinicId
-					}. Using ${uniquePatientsMap.get(pData.clinicId)?.id}`,
-				);
-			}
-		});
-
-		// Fetch nombres de clínicas
-		const namesMap = await fetchClinicNames(db, Array.from(clinicIdsToFetch));
-
-		// Armar patientClinics
-		for (const [clinicId, pData] of uniquePatientsMap.entries()) {
+		for (const [clinicId, patient] of patientClinicsMap.entries()) {
+			if (patient.portalAccessEnabled === false) continue;
 			result.patientClinics.push({
 				clinicId,
 				clinicName: namesMap.get(clinicId) ?? null,
-				patientId: pData.id,
+				patientId: patient.id,
 			});
 		}
 
-		// Lógica PATIENT:
-		result.resolved.role = 'patient';
+		const selectedPatientClinic = xClinicIdHeader
+			? result.patientClinics.find((p) => p.clinicId === xClinicIdHeader)
+			: null;
 
-		if (result.patientClinics.length === 1) {
-			// Caso único: auto-resolución
+		if (!result.resolved.role && selectedPatientClinic) {
+			result.resolved.role = 'patient';
+			result.resolved.clinicId = selectedPatientClinic.clinicId;
+			result.resolved.patientId = selectedPatientClinic.patientId;
+		} else if (
+			!result.resolved.role &&
+			result.staffClinics.length === 0 &&
+			result.patientClinics.length === 1
+		) {
 			const p = result.patientClinics[0]!;
+			result.resolved.role = 'patient';
 			result.resolved.clinicId = p.clinicId;
 			result.resolved.patientId = p.patientId;
-		} else if (xClinicIdHeader) {
-			// Caso múltiple: depende del header
-			const match = result.patientClinics.find(
-				(p) => p.clinicId === xClinicIdHeader,
-			);
-			if (match) {
-				result.resolved.clinicId = match.clinicId;
-				result.resolved.patientId = match.patientId;
-			}
 		}
 	}
 
 	return result;
 }
 
-/**
- * Helper para traer nombres de clínicas en lote
- */
+async function resolvePatientClinics(
+	db: Firestore,
+	uid: string,
+): Promise<Map<string, { id: string } & PatientDoc>> {
+	const map = new Map<string, { id: string } & PatientDoc>();
+
+	const patientsSnap = await db
+		.collection('patients')
+		.where('linkedUid', '==', uid)
+		.get();
+
+	patientsSnap.forEach((doc: QueryDocumentSnapshot) => {
+		const patient = doc.data() as PatientDoc;
+		if (!patient.clinicId || patient.status !== 'active') return;
+		if (!map.has(patient.clinicId)) {
+			map.set(patient.clinicId, { id: doc.id, ...patient });
+			return;
+		}
+
+		console.warn(
+			`[Session] Duplicate patient record for uid ${uid} in clinic ${
+				patient.clinicId
+			}. Using ${map.get(patient.clinicId)?.id}`,
+		);
+	});
+
+	const appointmentsSnap = await db
+		.collection('appointments')
+		.where('patientUid', '==', uid)
+		.limit(100)
+		.get();
+
+	for (const appointmentDoc of appointmentsSnap.docs) {
+		const appointment = appointmentDoc.data() as {
+			clinicId?: string;
+			patientId?: string;
+		};
+		if (!appointment.clinicId || !appointment.patientId) continue;
+		if (map.has(appointment.clinicId)) continue;
+
+		const patientDoc = await db.collection('patients').doc(appointment.patientId).get();
+		if (!patientDoc.exists) continue;
+
+		const patient = patientDoc.data() as PatientDoc;
+		if (patient.clinicId !== appointment.clinicId || patient.status !== 'active') {
+			continue;
+		}
+
+		map.set(appointment.clinicId, { id: patientDoc.id, ...patient });
+	}
+
+	return map;
+}
+
 async function fetchClinicNames(
 	db: Firestore,
 	ids: string[],
@@ -218,10 +238,6 @@ async function fetchClinicNames(
 	return map;
 }
 
-/**
- * Middleware para rutas protegidas (metrics, etc).
- * Asegura que req.auth y req.patientContext estén seteados correctamente.
- */
 export async function resolveSessionContext(
 	req: Request,
 	res: Response,
@@ -233,24 +249,18 @@ export async function resolveSessionContext(
 
 	try {
 		const xClinicId = req.header('x-clinic-id') as string | undefined;
-
-		// PASAMOS EL isPlatformAdmin AL ANALIZADOR
 		const analysis = await analyzeUserSession(
 			req.auth.uid,
 			xClinicId,
 			req.auth.isPlatformAdmin,
 		);
 
-		// 1) Aplicar Role
 		if (analysis.resolved.role) {
 			req.auth.role = analysis.resolved.role;
 		}
 
-		// 2) Aplicar Contexto (Clinic / Patient)
 		if (analysis.resolved.clinicId) {
 			req.auth.clinicId = analysis.resolved.clinicId;
-
-			// Si se resolvió como paciente y tenemos patientId, seteamos el contexto especial
 			if (analysis.resolved.role === 'patient' && analysis.resolved.patientId) {
 				req.patientContext = {
 					clinicId: analysis.resolved.clinicId,
@@ -259,7 +269,6 @@ export async function resolveSessionContext(
 			}
 		}
 
-		// 3) Validaciones para Pacientes con múltiples clínicas (sin resolución)
 		if (analysis.patientClinics.length > 1 && !analysis.resolved.clinicId) {
 			return res.status(403).json({
 				success: false,

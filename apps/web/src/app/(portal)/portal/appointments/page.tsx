@@ -21,17 +21,38 @@ import { useAuth } from '../../../../providers/auth-provider';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
 import { useClinic } from '../../../../providers/clinic-provider';
 
+const parseSafeDate = (dateVal: any): Date | null => {
+	if (!dateVal) return null;
+	if (dateVal instanceof Date) return dateVal;
+	if (typeof dateVal.toDate === 'function') return dateVal.toDate();
+	if (typeof dateVal === 'object' && '_seconds' in dateVal) {
+		return new Date(dateVal._seconds * 1000);
+	}
+	if (typeof dateVal === 'object' && 'seconds' in dateVal) {
+		return new Date(dateVal.seconds * 1000);
+	}
+	const parsed = new Date(dateVal);
+	return isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const formatSafeDate = (dateVal: any, fallback = 'Esperando fecha') => {
+	const date = parseSafeDate(dateVal);
+	return date ? formatDate(date.toISOString()) : fallback;
+};
+
 export default function PortalAppointmentsPage() {
 	const qc = useQueryClient();
+	const { activeClinicId, activeMembership } = useClinic();
+	const patientId = activeMembership?.patientId;
 	const appointmentsQuery = useAuthedQuery({
 		queryKey: ['portal-appointments'],
 		queryFn: (token, clinicId) => apiClient.appointments(clinicId, token),
 	});
-	const { activeClinicId } = useClinic();
 	const patientsQuery = useAuthedQuery({
-		queryKey: ['portal-patient'],
+		queryKey: ['portal-patient', patientId],
 		queryFn: (token, clinicId) =>
-			apiClient.patient('patient_1', clinicId, token),
+			apiClient.patient(patientId!, clinicId, token),
+		enabled: Boolean(patientId),
 	});
 	const professionalsQuery = useAuthedQuery({
 		queryKey: ['portal-professionals'],
@@ -43,17 +64,23 @@ export default function PortalAppointmentsPage() {
 		preferredDate: '',
 	});
 
-	const patientId = patientsQuery.data?.id;
+	const resolvedPatientId = patientsQuery.data?.id ?? patientId;
 	const { idToken } = useAuth();
 
 	const myAppointments = useMemo(() => {
 		const all = appointmentsQuery.data || [];
-		return all.filter((appt) => appt.patientId === patientId);
-	}, [appointmentsQuery.data, patientId]);
+		return all
+			.filter((appt) => appt.patientId === resolvedPatientId)
+			.sort(
+				(a, b) =>
+					(parseSafeDate(b.scheduledFor || b.requestedAt)?.getTime() || 0) -
+					(parseSafeDate(a.scheduledFor || a.requestedAt)?.getTime() || 0),
+			);
+	}, [appointmentsQuery.data, resolvedPatientId]);
 
 	const requestMutation = useMutation({
 		mutationFn: async () => {
-			if (!patientId) throw new Error('Sin paciente vinculado');
+			if (!resolvedPatientId) throw new Error('Sin paciente vinculado');
 			return apiClient.requestAppointment(
 				{
 					professionalUid: request.professionalUid || undefined,
@@ -108,7 +135,10 @@ export default function PortalAppointmentsPage() {
 						>
 							<option value=''>Cualquiera</option>
 							{professionalsQuery.data?.map((professional: any) => (
-								<option key={professional.id} value={professional.id}>
+								<option
+									key={professional.id}
+									value={professional.uid || professional.id}
+								>
 									{professional.name}
 								</option>
 							))}
@@ -162,9 +192,7 @@ export default function PortalAppointmentsPage() {
 							</div>
 							<div className='text-right'>
 								<p className='text-sm font-semibold'>
-									{appt.scheduledFor
-										? formatDate(appt.scheduledFor)
-										: 'Esperando fecha'}
+									{formatSafeDate(appt.scheduledFor || appt.requestedAt)}
 								</p>
 								<div className='mt-2 flex justify-end gap-2'>
 									{appt.status !== 'cancelled' ? (
