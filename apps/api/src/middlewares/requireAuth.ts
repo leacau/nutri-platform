@@ -4,13 +4,9 @@ import type { NextFunction, Request, Response } from 'express';
 import { getFirebaseAdmin } from '../firebase/admin.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 
-// 👇 Ajustá este import si tu archivo exporta con otro nombre.
-// Lo común en tu repo (por el comentario) es getFirestoreDb().
-
 function parseBearer(headerValue: string | undefined): string | null {
 	if (!headerValue) return null;
 
-	// Soporta múltiples espacios: "Bearer   token"
 	const parts = headerValue.trim().split(/\s+/);
 	if (parts.length !== 2) return null;
 
@@ -21,23 +17,12 @@ function parseBearer(headerValue: string | undefined): string | null {
 	return token;
 }
 
-function isQaLoginEnabled(): boolean {
-	return (
-		process.env.ENABLE_QA_LOGIN === 'true' ||
-		process.env.NODE_ENV !== 'production'
-	);
-}
-
 async function isPlatformAdminFromFirestore(uid: string): Promise<boolean> {
-	// ✅ Multi-database friendly: usamos el helper del proyecto, NO admin.firestore()
 	const db = getFirestoreDb();
 
-	// Fuente de verdad principal: platformAdmins/{uid}
 	const adminDoc = await db.collection('platformAdmins').doc(uid).get();
 	if (adminDoc.exists) {
 		const data = adminDoc.data() as any;
-		// Si tu script guarda "enabled: true", esto lo toma.
-		// Si guarda otra cosa (ej "granted: true"), también lo cubrimos.
 		if (
 			data?.enabled === true ||
 			data?.granted === true ||
@@ -47,7 +32,6 @@ async function isPlatformAdminFromFirestore(uid: string): Promise<boolean> {
 		}
 	}
 
-	// Fallback opcional: users/{uid}.isPlatformAdmin
 	const userDoc = await db.collection('users').doc(uid).get();
 	if (userDoc.exists) {
 		const data = userDoc.data() as any;
@@ -57,36 +41,15 @@ async function isPlatformAdminFromFirestore(uid: string): Promise<boolean> {
 	return false;
 }
 
-async function authFromUid(uid: string, email: string | null) {
-	const isPlatformAdmin = await isPlatformAdminFromFirestore(uid);
-	const user: AuthenticatedUser = {
-		uid,
-		email,
-		claims: {},
-	};
-
-	const authContext: AuthContext = {
-		uid,
-		email,
-		isPlatformAdmin,
-		role: null,
-		clinicId: null,
-	};
-
-	return { user, authContext };
-}
-
 export async function requireAuth(
 	req: Request,
 	res: Response,
 	next: NextFunction,
 ) {
-	// ✅ Preflight: no autenticamos OPTIONS (CORS)
 	if (req.method === 'OPTIONS') {
 		return res.status(204).send();
 	}
 
-	// Si ya fue autenticado por un middleware previo
 	if ((req as any).auth && (req as any).user) return next();
 
 	try {
@@ -98,42 +61,15 @@ export async function requireAuth(
 			});
 		}
 
-		if (isQaLoginEnabled() && token.startsWith('qa:')) {
-			const uid = token.slice('qa:'.length).trim();
-			if (!uid) {
-				return res.status(401).json({
-					success: false,
-					message: 'Invalid QA token',
-				});
-			}
-
-			const db = getFirestoreDb();
-			const userDoc = await db.collection('users').doc(uid).get();
-			const data = userDoc.exists ? (userDoc.data() as any) : {};
-			const { user, authContext } = await authFromUid(
-				uid,
-				data?.email ?? `${uid}@qa.local`,
-			);
-
-			(req as any).user = user;
-			(req as any).auth = authContext;
-			return next();
-		}
-
 		const { auth } = getFirebaseAdmin();
 		const decoded = await auth.verifyIdToken(token);
-
 		const { uid, email, ...claims } = decoded as any;
 
-		// Fast-path por claims (si vuelven a funcionar)
 		const isPlatformAdminFromClaims =
 			decoded.platformAdmin === true ||
 			decoded.platform_admin === true ||
 			decoded.platform_admin === 'true';
-
-		// Source of truth: Firestore
 		const isPlatformAdminFromDb = await isPlatformAdminFromFirestore(uid);
-
 		const isPlatformAdmin = isPlatformAdminFromClaims || isPlatformAdminFromDb;
 
 		const user: AuthenticatedUser = {
@@ -154,14 +90,10 @@ export async function requireAuth(
 		(req as any).auth = authContext;
 
 		return next();
-	} catch (err: any) {
-		// En lugar de devolver un mensaje genérico, mandamos el error real
-		// Esto es solo temporal para depurar, no lo dejes en producción
+	} catch {
 		return res.status(401).json({
 			success: false,
-			message: 'Firebase Token Error',
-			errorDetails: err.message,
-			tokenQueLlego: req.header('Authorization')?.substring(0, 15) + '...',
+			message: 'Unauthorized',
 		});
 	}
 }

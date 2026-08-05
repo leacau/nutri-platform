@@ -5,6 +5,10 @@ import { denyAuthz } from '../security/authz.js';
 import type { ClinicMembershipDoc } from '../types/clinics.js';
 import type { PatientDoc } from '../types/patients.js';
 import { pickHighestClinicRole } from '../security/clinicRolePriority.js';
+import {
+	defaultCapabilitiesForRole,
+	mergeMembershipCapabilities,
+} from '../security/clinicCapabilities.js';
 
 const HEADER = 'x-clinic-id';
 
@@ -75,7 +79,12 @@ export async function requireClinicContext(
 			});
 		}
 		if (!(await assertClinicIsActive(headerClinicId, res))) return;
-		req.auth = { ...req.auth, clinicId: headerClinicId, role: 'platform_admin' };
+		req.auth = {
+			...req.auth,
+			clinicId: headerClinicId,
+			role: 'platform_admin',
+			clinicCapabilities: defaultCapabilitiesForRole('clinic_admin'),
+		};
 		return next();
 	}
 
@@ -125,7 +134,12 @@ export async function requireClinicContext(
 			patientId: patientDoc.id,
 			clinicId: resolvedClinicId,
 		};
-		req.auth = { ...req.auth, clinicId: resolvedClinicId, role: 'patient' };
+		req.auth = {
+			...req.auth,
+			clinicId: resolvedClinicId,
+			role: 'patient',
+			clinicCapabilities: [],
+		};
 		return next();
 	}
 
@@ -170,6 +184,7 @@ export async function requireClinicContext(
 				...req.auth,
 				clinicId: headerClinicId,
 				role: 'patient',
+				clinicCapabilities: [],
 			};
 			return next();
 		}
@@ -195,6 +210,7 @@ export async function requireClinicContext(
 		...req.auth,
 		clinicId: headerClinicId,
 		role,
+		clinicCapabilities: mergeMembershipCapabilities(memberships),
 	};
 
 	return next();

@@ -3,6 +3,7 @@
 import {
   Activity,
   Apple,
+  Ban,
   Calculator,
   Eye,
   EyeOff,
@@ -12,7 +13,6 @@ import {
   Pencil,
   Pill,
   Printer,
-  Trash2,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -122,16 +122,30 @@ function RecordCard({
     documentTitle: `Registro_${type}_${formatDate(date)}`,
   });
 
+  const logExport = () => {
+    if (!activeClinicId) return;
+    void apiClient.logClinicalRecordExport(
+      id,
+      activeClinicId,
+      idToken ?? undefined,
+    );
+  };
+
   const deleteMutation = useMutation({
     mutationFn: () =>
-      apiClient.deleteClinicalRecord(id, activeClinicId!, idToken ?? undefined),
+      apiClient.blockClinicalRecord(
+        id,
+        activeClinicId!,
+        "Bloqueo preventivo solicitado desde la línea de tiempo clínica.",
+        idToken ?? undefined,
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["clinical-records", patientId] });
       setIsDeleteDialogOpen(false);
     },
     onError: () => {
       alert(
-        "No se pudo eliminar el registro. Revisá que tengas los permisos necesarios.",
+        "No se pudo bloquear el registro. Revis? que tengas los permisos necesarios.",
       );
       setIsDeleteDialogOpen(false);
     },
@@ -231,6 +245,28 @@ function RecordCard({
               <p className="text-xs text-muted-foreground mt-0.5">
                 {formatDate(date)} · Firmado por UID: {professionalUid}
               </p>
+              <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
+                {record.status === "error_rectified" ? (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">
+                    Rectificado
+                  </span>
+                ) : null}
+                {record.status === "blocked" ? (
+                  <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">
+                    Bajo revisi?n
+                  </span>
+                ) : null}
+                {record.correctionOfRecordId ? (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 font-semibold text-blue-700">
+                    Rectifica {record.correctionOfRecordId.slice(0, 8)}
+                  </span>
+                ) : null}
+                {record.hash ? (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-slate-600">
+                    hash {record.hash.slice(0, 10)}
+                  </span>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -267,7 +303,10 @@ function RecordCard({
                 variant="outline"
                 size="sm"
                 className="bg-white hover:bg-slate-50"
-                onClick={() => handlePrint()}
+                onClick={() => {
+                  logExport();
+                  handlePrint();
+                }}
               >
                 <Printer className="mr-2 h-4 w-4" /> Imprimir
               </Button>
@@ -289,14 +328,14 @@ function RecordCard({
                     onClick={() => setIsEditDialogOpen(true)}
                     className="cursor-pointer"
                   >
-                    <Pencil className="mr-2 h-4 w-4" /> Editar registro
+                    <Pencil className="mr-2 h-4 w-4" /> Rectificar registro
                   </DropdownMenuItem>
 
                   <DropdownMenuItem
                     className="text-red-600 cursor-pointer"
                     onClick={() => setIsDeleteDialogOpen(true)}
                   >
-                    <Trash2 className="mr-2 h-4 w-4" /> Eliminar registro
+                    <Ban className="mr-2 h-4 w-4" /> Bloquear / revisión
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -468,6 +507,7 @@ function RecordCard({
                 <PdfPreview
                   title={data.pdf.fileName || "Plan de alimentación"}
                   url={data.pdf.fileUrl}
+                  onOpen={logExport}
                 />
               ) : null}
             </div>
@@ -618,10 +658,10 @@ function RecordCard({
       >
         <AlertDialogContent className="bg-white p-6 rounded-xl shadow-2xl border border-slate-200">
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Estás completamente seguro?</AlertDialogTitle>
+            <AlertDialogTitle>Bloquear asiento cl?nico</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Esto eliminará permanentemente
-              este registro clínico de la base de datos de la clínica.
+              Esta acci?n no borra el asiento. Lo marca como bajo revisi?n y
+              conserva el contenido original para auditor?a.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -633,7 +673,7 @@ function RecordCard({
               }}
               className="bg-red-600 hover:bg-red-700"
             >
-              Sí, eliminar registro
+              S?, bloquear registro
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -647,7 +687,15 @@ function RecordCard({
   );
 }
 
-function PdfPreview({ title, url }: { title: string; url: string }) {
+function PdfPreview({
+  title,
+  url,
+  onOpen,
+}: {
+  title: string;
+  url: string;
+  onOpen?: () => void;
+}) {
   const viewerUrl = `${url}${url.includes("?") ? "&" : "?"}response-content-disposition=inline`;
 
   return (
@@ -658,7 +706,12 @@ function PdfPreview({ title, url }: { title: string; url: string }) {
           <p className="text-sm font-semibold text-slate-700">{title}</p>
         </div>
         <Button asChild variant="outline" size="sm" className="bg-white">
-          <a href={url} target="_blank" rel="noopener noreferrer">
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onOpen}
+          >
             Abrir
           </a>
         </Button>

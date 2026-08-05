@@ -1,8 +1,10 @@
 import type { Timestamp } from 'firebase-admin/firestore';
-import type { ClinicRole } from './auth.js';
+import type { ClinicCapability, ClinicRole } from './auth.js';
 
 export type ClinicDoc = {
 	name: string;
+	tenantType?: 'clinic' | 'individual_practice';
+	ownerProfessionalUid?: string | null;
 	isActive?: boolean;
 	branding?: {
 		logoUrl?: string | null;
@@ -25,6 +27,7 @@ export type ClinicMembershipDoc = {
 	clinicId: string;
 	uid: string;
 	role: ClinicRole;
+	capabilities?: ClinicCapability[];
 	isActive: boolean;
 	createdAt: Timestamp;
 	updatedAt: Timestamp;

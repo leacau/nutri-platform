@@ -141,7 +141,7 @@ export default function AppointmentsPage() {
 
 	const createPatientMutation = useMutation({
 		mutationFn: async () => {
-			if (!activeClinicId) throw new Error('Sin clinica activa');
+			if (!activeClinicId) throw new Error('Sin espacio activo');
 			if (!quickPatient.name.trim() || !quickPatient.dni.trim()) {
 				throw new Error('Faltan datos del paciente');
 			}

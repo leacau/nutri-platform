@@ -12,6 +12,7 @@ import {
 	LogOut,
 	Settings,
 	Shield,
+	ShieldCheck,
 	UserCircle,
 	Users,
 } from 'lucide-react';
@@ -92,6 +93,12 @@ const navItems: NavItem[] = [
 		roles: ['clinic_admin', 'platform_admin'],
 	},
 	{
+		label: 'Compliance',
+		href: '/app/compliance',
+		icon: <ShieldCheck className='h-4 w-4' />,
+		roles: ['clinic_admin', 'platform_admin'],
+	},
+	{
 		label: 'Configuración',
 		href: '/app/clinic-settings',
 		icon: <Settings className='h-4 w-4' />,
@@ -148,7 +155,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 					<div>
 						<p className='text-sm font-semibold text-primary'>AMSA Core</p>
 						<p className='text-xs text-muted-foreground'>
-							{activeMembership?.clinicName ?? 'Sin clínica'}
+							{activeMembership?.clinicName ?? 'Sin espacio'}
 						</p>
 					</div>
 				</div>
@@ -182,7 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 						className='w-full'
 						onClick={() => router.push('/select-clinic')}
 					>
-						Cambiar clínica
+						Cambiar espacio
 					</Button>
 					<Button variant='ghost' className='w-full' onClick={logout}>
 						<LogOut className='mr-2 h-4 w-4' />

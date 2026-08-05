@@ -4,8 +4,10 @@ import { appointmentsRouter } from './appointments.js';
 import { adminClinicsRouter, clinicsRouter } from './clinics.js';
 import { metricsRouter } from './metrics.js';
 import { usersRouter } from './users.js';
-import { logEvent } from '../observability/eventLogger.js';
+import { logEvent, writeAuditLog } from '../observability/eventLogger.js';
 import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
+import { auditRouter } from './audit.js';
+import { complianceRouter } from './compliance.js';
 
 export const apiRouter = Router();
 import { authMiddleware } from '../middlewares/authMiddleware.js';
@@ -38,6 +40,18 @@ apiRouter.get(
 			logEvent('session', {
 				req,
 				clinicId: analysis.resolved.clinicId,
+				data: {
+					staffClinicsCount: analysis.staffClinics.length,
+					patientClinicsCount: analysis.patientClinics.length,
+					resolvedRole: analysis.resolved.role,
+				},
+			});
+			await writeAuditLog({
+				req,
+				clinicId: analysis.resolved.clinicId,
+				patientId: analysis.resolved.patientId,
+				actionType: 'SESSION_READ',
+				detail: 'Lectura de sesión y contexto activo',
 				data: {
 					staffClinicsCount: analysis.staffClinics.length,
 					patientClinicsCount: analysis.patientClinics.length,
@@ -82,3 +96,9 @@ apiRouter.use('/users', usersRouter);
 
 // Metrics
 apiRouter.use('/metrics', metricsRouter);
+
+// Audit
+apiRouter.use('/audit', auditRouter);
+
+// Compliance
+apiRouter.use('/compliance', complianceRouter);

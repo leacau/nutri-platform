@@ -24,6 +24,9 @@ const schema = z.object({
 		.min(7, 'El DNI debe tener min 7 dígitos')
 		.max(8, 'El DNI debe tener max 8 dígitos')
 		.regex(/^\d+$/, 'Solo números'),
+	legalAccepted: z.boolean().refine((value) => value === true, {
+		message: 'Debes aceptar los terminos y la politica de privacidad.',
+	}),
 });
 
 type RegisterForm = z.infer<typeof schema>;
@@ -53,6 +56,7 @@ export default function RegisterPage() {
 				},
 				token
 			);
+			await apiClient.acceptLegalConsents(token);
 			router.push('/select-clinic');
 		} catch (err) {
 			console.error(err);
@@ -114,6 +118,24 @@ export default function RegisterPage() {
 						required
 					/>
 				</div>
+				<label className='flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm leading-5'>
+					<input
+						type='checkbox'
+						className='mt-1 h-4 w-4 rounded border-border'
+						{...register('legalAccepted')}
+					/>
+					<span>
+						Acepto los{' '}
+						<Link href='/terms' className='text-primary hover:underline'>
+							terminos de uso
+						</Link>
+						, la{' '}
+						<Link href='/privacy' className='text-primary hover:underline'>
+							politica de privacidad y tratamiento de datos de salud
+						</Link>
+						, incluyendo el uso de infraestructura cloud informada.
+					</span>
+				</label>
 				{error ? <p className='text-sm text-destructive'>{error}</p> : null}
 				<Button type='submit' className='w-full' disabled={isSubmitting}>
 					<UserPlus className='mr-2 h-4 w-4' />

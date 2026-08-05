@@ -1,6 +1,6 @@
 'use client';
 
-import { ClinicMembershipRole } from '../lib/types';
+import { ClinicCapability, ClinicMembershipRole } from '../lib/types';
 import { useClinic } from '../providers/clinic-provider';
 import { useMemo } from 'react';
 
@@ -108,6 +108,32 @@ const permsByRole: Record<ClinicMembershipRole, PermissionSet> = {
 	},
 };
 
+const permissionByCapability: Record<ClinicCapability, keyof PermissionSet> = {
+	manage_clinic_settings: 'canViewSettings',
+	manage_clinic_users: 'canManageClinicUsers',
+	manage_patients: 'canManagePatients',
+	manage_patient_portal_access: 'canManagePatientPortalAccess',
+	view_medical_records: 'canViewMedicalRecords',
+	edit_medical_records: 'canEditMedicalRecords',
+	share_medical_records: 'canShareMedicalRecords',
+	assign_any_patient: 'canAssignAnyPatient',
+	view_all_appointments: 'canSeeAllAppointments',
+	manage_templates: 'canManageTemplates',
+	view_audit: 'canViewAudit',
+	schedule_for_others: 'canScheduleForOthers',
+};
+
+function permissionsFromCapabilities(
+	capabilities: ClinicCapability[],
+): PermissionSet {
+	const permissions = { ...defaultPermissions };
+	capabilities.forEach((capability) => {
+		const key = permissionByCapability[capability];
+		if (key) permissions[key] = true;
+	});
+	return permissions;
+}
+
 export function usePermissions(): PermissionSet {
 	const { activeMembership, platformRole } = useClinic();
 
@@ -118,6 +144,10 @@ export function usePermissions(): PermissionSet {
 		// Si todavía no hay clínica activa, no hay permisos
 		const role = activeMembership?.role;
 		if (!role) return defaultPermissions;
+
+		if (activeMembership?.capabilities?.length) {
+			return permissionsFromCapabilities(activeMembership.capabilities);
+		}
 
 		return permsByRole[role] ?? defaultPermissions;
 	}, [activeMembership, platformRole]);

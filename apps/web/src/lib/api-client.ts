@@ -1,14 +1,18 @@
 import {
   Appointment,
   AuditEvent,
+  BackupEvent,
   Clinic,
   ClinicSettings,
+  ComplianceChecklist,
+  CompliancePolicy,
+  DataSubjectRequest,
+  DataSubjectRequestType,
   MeResponse,
   MeasurementTemplate,
   Membership,
   MessageTemplate,
   Patient,
-  QaUsersResponse,
   UserAccount,
 } from "./types";
 
@@ -19,6 +23,13 @@ export type ClinicalRecord = {
   patientId: string;
   professionalUid: string;
   visibleInPatientPortal?: boolean;
+  status?: "active" | "error_rectified" | "blocked";
+  correctionOfRecordId?: string;
+  correctionReason?: string;
+  rectifiedByRecordId?: string;
+  blockReason?: string;
+  previousHash?: string | null;
+  hash?: string | null;
   type:
     | "note"
     | "measurement"
@@ -147,8 +158,6 @@ const mockDb: any = {
 };
 
 export const apiClient = {
-  qaUsers: () => request<QaUsersResponse>("/dev/qa-users"),
-
   upsertUserProfile: (
     data: { name: string; email?: string; dni?: string },
     token?: string,
@@ -157,6 +166,18 @@ export const apiClient = {
       method: "POST",
       token,
       body: data,
+    }),
+
+  acceptLegalConsents: (token?: string) =>
+    request<{ acceptedAt: string }>("/users/me/legal-consents", {
+      method: "POST",
+      token,
+      body: {
+        termsVersion: "AR-2026-08",
+        privacyPolicyVersion: "AR-2026-08",
+        healthDataProcessingAccepted: true,
+        internationalTransferAccepted: true,
+      },
     }),
 
   me: (token?: string) =>
@@ -172,6 +193,9 @@ export const apiClient = {
             clinicId: c.clinicId,
             role: c.role,
             clinicName: c.clinicName || c.clinicId,
+            tenantType: c.tenantType || "clinic",
+            ownerProfessionalUid: c.ownerProfessionalUid || null,
+            capabilities: c.capabilities || [],
           })),
         );
       }
@@ -183,6 +207,9 @@ export const apiClient = {
             role: "patient",
             patientId: c.patientId,
             clinicName: c.clinicName || "Clínica",
+            tenantType: c.tenantType || "clinic",
+            ownerProfessionalUid: c.ownerProfessionalUid || null,
+            capabilities: c.capabilities || [],
           })),
         );
       }
@@ -204,6 +231,8 @@ export const apiClient = {
       return list.map((c: any) => ({
         id: c.clinicId,
         name: c.clinicName || c.clinicId,
+        tenantType: c.tenantType || "clinic",
+        ownerProfessionalUid: c.ownerProfessionalUid || null,
         role: c.role,
         patientId: c.patientId,
         branding: null,
@@ -228,7 +257,13 @@ export const apiClient = {
     }),
 
   deleteClinic: (clinicId: string, token?: string) =>
-    request<{ id: string; deleted: Record<string, number> }>(
+    request<{
+      id: string;
+      archived?: boolean;
+      isActive?: boolean;
+      legalHold?: boolean;
+      message?: string;
+    }>(
       `/admin/clinics/${clinicId}`,
       {
         method: "DELETE",
@@ -507,6 +542,94 @@ export const apiClient = {
       mockFallback: () => [],
     }),
 
+  complianceChecklist: (clinicId: string, token?: string) =>
+    request<ComplianceChecklist>("/compliance/checklist", {
+      token,
+      clinicId,
+    }),
+
+  compliancePolicy: (clinicId: string, token?: string) =>
+    request<CompliancePolicy>("/compliance/policies", {
+      token,
+      clinicId,
+    }),
+
+  saveCompliancePolicy: (
+    clinicId: string,
+    policy: Partial<CompliancePolicy>,
+    token?: string,
+  ) =>
+    request<CompliancePolicy>("/compliance/policies", {
+      method: "PATCH",
+      token,
+      clinicId,
+      body: policy,
+    }),
+
+  dataSubjectRequests: (clinicId: string, token?: string) =>
+    request<DataSubjectRequest[]>("/compliance/data-subject-requests", {
+      token,
+      clinicId,
+      mockFallback: () => [],
+    }),
+
+  createDataSubjectRequest: (
+    clinicId: string,
+    data: {
+      type: DataSubjectRequestType;
+      patientId?: string;
+      subjectEmail?: string;
+      description: string;
+    },
+    token?: string,
+  ) =>
+    request<DataSubjectRequest>("/compliance/data-subject-requests", {
+      method: "POST",
+      token,
+      clinicId,
+      body: data,
+    }),
+
+  updateDataSubjectRequest: (
+    clinicId: string,
+    requestId: string,
+    data: { status?: DataSubjectRequest["status"]; resolution?: string },
+    token?: string,
+  ) =>
+    request<DataSubjectRequest>(
+      `/compliance/data-subject-requests/${requestId}`,
+      {
+        method: "PATCH",
+        token,
+        clinicId,
+        body: data,
+      },
+    ),
+
+  backupEvents: (clinicId: string, token?: string) =>
+    request<BackupEvent[]>("/compliance/backup-events", {
+      token,
+      clinicId,
+      mockFallback: () => [],
+    }),
+
+  createBackupEvent: (
+    clinicId: string,
+    data: {
+      provider: string;
+      location?: string;
+      status: BackupEvent["status"];
+      detail: string;
+    },
+    token?: string,
+  ) =>
+    request<BackupEvent>("/compliance/backup-events", {
+      method: "POST",
+      token,
+      clinicId,
+      body: data,
+    }),
+
   professionals: (clinicId: string, token?: string) =>
     request<UserAccount[]>(`/clinics/${clinicId}/professionals`, {
       token,
@@ -555,6 +678,13 @@ export const apiClient = {
       },
     ),
 
+  createIndividualPractice: (data: { name: string }, token?: string) =>
+    request<Clinic>("/clinics/individual-practices", {
+      method: "POST",
+      token,
+      body: data,
+    }),
+
   // NUEVO: Funciones para Registros Clínicos
   getClinicalRecords: (patientId: string, clinicId: string, token?: string) =>
     request<ClinicalRecord[]>(`/clinical-records/patient/${patientId}`, {
@@ -598,9 +728,54 @@ export const apiClient = {
       clinicId,
     }),
 
+  blockClinicalRecord: (
+    recordId: string,
+    clinicId: string,
+    reason?: string,
+    token?: string,
+  ) =>
+    request<{ id: string; status: string }>(`/clinical-records/${recordId}`, {
+      method: "DELETE",
+      token,
+      clinicId,
+      body: reason ? { reason } : undefined,
+    }),
+
+  rectifyClinicalRecord: (
+    recordId: string,
+    data: {
+      date: string;
+      data: any;
+      reason: string;
+      visibleInPatientPortal?: boolean;
+    },
+    clinicId: string,
+    token?: string,
+  ) =>
+    request<ClinicalRecord>(`/clinical-records/${recordId}/rectifications`, {
+      method: "POST",
+      token,
+      clinicId,
+      body: data,
+    }),
+
+  logClinicalRecordExport: (
+    recordId: string,
+    clinicId: string,
+    token?: string,
+  ) =>
+    request<{ id: string; logged: boolean }>(
+      `/clinical-records/${recordId}/export-events`,
+      {
+        method: "POST",
+        token,
+        clinicId,
+      },
+    ),
+
   updateClinicalRecord: (
     recordId: string,
-    data: { date?: string; data?: any; visibleInPatientPortal?: boolean },
+    data: { visibleInPatientPortal?: boolean; sharedWithProfessionalUids?: string[] },
     clinicId: string,
     token?: string,
   ) =>

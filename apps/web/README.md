@@ -1,60 +1,53 @@
-# AMSA Core Web (Next.js + App Router)
+# AMSA Core Web
 
-Frontend principal del producto AMSA Core. Incluye:
-- Autenticación con Firebase (email/password + Google) y soporte para emulador.
-- Contexto multi-clínica con switcher persistente y RBAC derivado del membership.
-- UI premium con Tailwind + shadcn/ui, Inter y layout Sidebar + Topbar.
-- TanStack Query para data fetching con `apiClient` centralizado (envía `Authorization` + `X-Clinic-Id`). Incluye mocks de fallback (`NEXT_PUBLIC_USE_MOCKS=true`).
-- Portal paciente con turnos, perfil y cancelaciones respetando regla de 24h (validación de backend pendiente).
-- Dev Tools visibles solo en `NEXT_PUBLIC_ENV=dev` (token, rol efectivo, /users/me, /health).
+Frontend principal del producto AMSA Core con Next.js App Router.
 
-## Configuración de entorno
+Incluye:
+- Autenticacion con Firebase Auth por email/password y Google.
+- Contexto multi-clinica y consultorios individuales.
+- Selector persistente de espacio activo.
+- RBAC derivado del membership y capacidades.
+- Portal paciente separado del panel profesional/clinica.
+- TanStack Query para data fetching mediante `apiClient`.
 
-Crear `apps/web/.env.local` (ver `.env.example`):
+## Configuracion de entorno
 
-```
+Crear `apps/web/.env.local`:
+
+```env
 NEXT_PUBLIC_API_BASE_URL=/api
-NEXT_PUBLIC_ENABLE_QA_LOGIN=true
 BACKEND_PROXY_TARGET=http://localhost:8081
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-nutri-platform
-NEXT_PUBLIC_FIREBASE_API_KEY=demo-key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-nutri-platform.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-nutri-platform.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=1234567890
-NEXT_PUBLIC_FIREBASE_APP_ID=1:1234567890:web:demo
-NEXT_PUBLIC_USE_EMULATORS=true
-NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=amsa-core-stg
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=amsa-core-stg.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=amsa-core-stg.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+NEXT_PUBLIC_FIREBASE_APP_ID=...
 NEXT_PUBLIC_ENV=dev
 ```
 
-`NEXT_PUBLIC_API_BASE_URL=/api` usa el rewrite definido en `next.config.ts` hacia `BACKEND_PROXY_TARGET` (por defecto `http://localhost:8081`).
+`NEXT_PUBLIC_API_BASE_URL=/api` usa el rewrite definido en `next.config.ts`
+hacia `BACKEND_PROXY_TARGET`.
 
-`NEXT_PUBLIC_ENABLE_QA_LOGIN=true` muestra el selector QA por rol en `/login`. La API tambien debe tener `ENABLE_QA_LOGIN=true` para aceptar tokens `qa:<uid>`. Usarlo solo en dev/staging.
+Para probar el front local contra Cloud Run:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://amsa-core-api-418425481470.southamerica-east1.run.app/api
+```
 
 ## Scripts
 
 ```bash
-npm run dev:web   # arranca Next.js en modo dev (http://localhost:3000)
+npm run dev:web
 npm run lint --workspace apps/web
-```
-
-Para levantar todo el stack local (emuladores + API + front) desde la raíz:
-
-```bash
-npm run dev
+npm run build --workspace apps/web
 ```
 
 ## Estructura
 
-- `src/app/(public)`: login, register, forgot password.
-- `src/app/select-clinic`: selección explícita de clínica (siempre obligatoria post-login).
-- `src/app/(protected)/app/*`: módulos internos (dashboard, pacientes, turnos, nutris, staff, settings, plantillas, auditoría).
-- `src/app/(portal)/portal/*`: portal paciente (dashboard, perfil, turnos).
-- `src/providers/*`: AuthProvider (Firebase), ClinicProvider (memberships + clinicId), I18nProvider, ThemeProvider, QueryProvider.
-- `src/lib/api-client.ts`: capa centralizada para llamadas HTTP con mocks de respaldo y headers `Authorization` + `X-Clinic-Id`.
-
-## Notas de permisos
-
-- Guardas obligatorias: `AuthGuard` (login), `ClinicGuard` (clinicId activo), `RoleGuard` (403 con UX).
-- `usePermissions` deriva capacidades según rol en la clínica activa o `platform_admin`.
-- El portal paciente se protege con `RoleGuard` y muestra solo datos propios.
+- `src/app/(public)`: login, registro, recuperacion y legales.
+- `src/app/select-clinic`: seleccion de espacio activo.
+- `src/app/(protected)/app/*`: modulos internos.
+- `src/app/(portal)/portal/*`: portal paciente.
+- `src/providers/*`: Auth, Clinic, I18n, Theme y Query providers.
+- `src/lib/api-client.ts`: capa HTTP centralizada.

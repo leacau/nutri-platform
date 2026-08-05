@@ -7,18 +7,25 @@ import type { NextFunction, Request, Response } from 'express';
 
 import type { ClinicMembershipDoc } from '../types/clinics.js';
 import type { PatientDoc } from '../types/patients.js';
-import type { Role } from '../types/auth.js';
+import type { ClinicCapability, Role } from '../types/auth.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import {
 	compareClinicRoles,
 	isClinicRole,
 } from '../security/clinicRolePriority.js';
+import {
+	defaultCapabilitiesForRole,
+	mergeMembershipCapabilities,
+} from '../security/clinicCapabilities.js';
 
 export interface SessionAnalysisResult {
 	staffClinics: Array<{
 		clinicId: string;
 		role: Role;
 		clinicName: string | null;
+		tenantType?: 'clinic' | 'individual_practice';
+		ownerProfessionalUid?: string | null;
+		capabilities?: ClinicCapability[];
 	}>;
 	patientClinics: Array<{
 		clinicId: string;
@@ -58,6 +65,10 @@ export async function analyzeUserSession(
 					clinicId: xClinicIdHeader,
 					role: 'clinic_admin',
 					clinicName: (clinicDoc.data() as any)?.name ?? 'Sin nombre',
+					tenantType: (clinicDoc.data() as any)?.tenantType ?? 'clinic',
+					ownerProfessionalUid:
+						(clinicDoc.data() as any)?.ownerProfessionalUid ?? null,
+					capabilities: defaultCapabilitiesForRole('clinic_admin'),
 				});
 			}
 			return result;
@@ -69,10 +80,14 @@ export async function analyzeUserSession(
 			.limit(50)
 			.get();
 		snap.forEach((doc) => {
+			const data = doc.data() as any;
 			result.staffClinics.push({
 				clinicId: doc.id,
 				role: 'clinic_admin',
-				clinicName: (doc.data() as any)?.name ?? 'Sin nombre',
+				clinicName: data?.name ?? 'Sin nombre',
+				tenantType: data?.tenantType ?? 'clinic',
+				ownerProfessionalUid: data?.ownerProfessionalUid ?? null,
+				capabilities: defaultCapabilitiesForRole('clinic_admin'),
 			});
 		});
 	}
@@ -86,12 +101,16 @@ export async function analyzeUserSession(
 	if (!membershipsSnap.empty) {
 		const clinicIdsToFetch = new Set<string>();
 		const staffClinicsById = new Map<string, Role>();
+		const membershipsByClinic = new Map<string, ClinicMembershipDoc[]>();
 
 		membershipsSnap.forEach((doc: QueryDocumentSnapshot) => {
 			const data = doc.data() as ClinicMembershipDoc;
 			if (!isClinicRole(data.role)) return;
 
 			clinicIdsToFetch.add(data.clinicId);
+			const clinicMemberships = membershipsByClinic.get(data.clinicId) ?? [];
+			clinicMemberships.push(data);
+			membershipsByClinic.set(data.clinicId, clinicMemberships);
 
 			const current = staffClinicsById.get(data.clinicId);
 			if (
@@ -103,12 +122,21 @@ export async function analyzeUserSession(
 		});
 
 		if (clinicIdsToFetch.size > 0) {
-			const namesMap = await fetchClinicNames(db, Array.from(clinicIdsToFetch));
+			const clinicsMap = await fetchClinicSummaries(
+				db,
+				Array.from(clinicIdsToFetch),
+			);
 			for (const [clinicId, role] of staffClinicsById.entries()) {
+				const clinic = clinicsMap.get(clinicId);
 				result.staffClinics.push({
 					clinicId,
 					role,
-					clinicName: namesMap.get(clinicId) ?? null,
+					clinicName: clinic?.name ?? null,
+					tenantType: clinic?.tenantType ?? 'clinic',
+					ownerProfessionalUid: clinic?.ownerProfessionalUid ?? null,
+					capabilities: mergeMembershipCapabilities(
+						membershipsByClinic.get(clinicId) ?? [],
+					),
 				});
 			}
 		}
@@ -128,7 +156,7 @@ export async function analyzeUserSession(
 
 	const patientClinicsMap = await resolvePatientClinics(db, uid);
 	if (patientClinicsMap.size > 0) {
-		const namesMap = await fetchClinicNames(
+			const namesMap = await fetchClinicNames(
 			db,
 			Array.from(patientClinicsMap.keys()),
 		);
@@ -238,6 +266,51 @@ async function fetchClinicNames(
 	return map;
 }
 
+async function fetchClinicSummaries(
+	db: Firestore,
+	ids: string[],
+): Promise<
+	Map<
+		string,
+		{
+			name: string;
+			tenantType: 'clinic' | 'individual_practice';
+			ownerProfessionalUid: string | null;
+		}
+	>
+> {
+	const map = new Map<
+		string,
+		{
+			name: string;
+			tenantType: 'clinic' | 'individual_practice';
+			ownerProfessionalUid: string | null;
+		}
+	>();
+	if (ids.length === 0) return map;
+
+	const refs = ids.map((id) => db.collection('clinics').doc(id));
+	const snaps = await db.getAll(...refs);
+
+	snaps.forEach((snap: DocumentSnapshot) => {
+		if (!snap.exists) return;
+		const d = snap.data() as
+			| {
+					name?: string;
+					tenantType?: 'clinic' | 'individual_practice';
+					ownerProfessionalUid?: string | null;
+			  }
+			| undefined;
+		map.set(snap.id, {
+			name: d?.name ?? 'Sin nombre',
+			tenantType: d?.tenantType ?? 'clinic',
+			ownerProfessionalUid: d?.ownerProfessionalUid ?? null,
+		});
+	});
+
+	return map;
+}
+
 export async function resolveSessionContext(
 	req: Request,
 	res: Response,
@@ -261,6 +334,12 @@ export async function resolveSessionContext(
 
 		if (analysis.resolved.clinicId) {
 			req.auth.clinicId = analysis.resolved.clinicId;
+			const match = analysis.staffClinics.find(
+				(clinic) => clinic.clinicId === analysis.resolved.clinicId,
+			);
+			if (match?.capabilities) {
+				req.auth.clinicCapabilities = match.capabilities;
+			}
 			if (analysis.resolved.role === 'patient' && analysis.resolved.patientId) {
 				req.patientContext = {
 					clinicId: analysis.resolved.clinicId,

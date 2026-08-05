@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronsUpDown, Hospital } from 'lucide-react';
+import { Building2, ChevronsUpDown, Hospital, Stethoscope } from 'lucide-react';
 
 import { Button } from './ui/button';
 import { Select } from './ui/select';
@@ -12,6 +12,7 @@ export function ClinicSwitcher() {
 	const router = useRouter();
 
 	const isPlatformAdmin = me?.platformRole === 'platform_admin';
+	const activeClinic = clinics?.find((clinic) => clinic.id === activeClinicId);
 
 	const handleChange = (id: string) => {
 		setActiveClinic(id);
@@ -21,11 +22,17 @@ export function ClinicSwitcher() {
 	return (
 		<div className='flex items-center gap-3'>
 			<div className='flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-				<Hospital className='h-5 w-5' />
+				{activeClinic?.tenantType === 'individual_practice' ? (
+					<Stethoscope className='h-5 w-5' />
+				) : activeClinic ? (
+					<Hospital className='h-5 w-5' />
+				) : (
+					<Building2 className='h-5 w-5' />
+				)}
 			</div>
 			<div>
 				<p className='text-xs uppercase text-muted-foreground'>
-					Clínica activa
+					Espacio activo
 				</p>
 				<div className='flex items-center gap-2'>
 					<Select
@@ -34,7 +41,7 @@ export function ClinicSwitcher() {
 						className='min-w-[200px]'
 					>
 						<option value='' disabled>
-							Seleccionar clínica
+							Seleccionar espacio
 						</option>
 						{clinics?.map((clinic) => {
 							const role = isPlatformAdmin

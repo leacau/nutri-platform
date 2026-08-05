@@ -7,6 +7,11 @@ import { requireClinicContext } from "../middlewares/requireClinicContext.js";
 import { requireRole } from "../middlewares/requireRole.js";
 import { denyAuthz } from "../security/authz.js";
 import { getFirestoreDb } from "../firebase/firestore.js";
+import { writeAuditLog } from "../observability/eventLogger.js";
+import {
+  effectiveClinicalRole,
+  isIndividualPracticeOwner,
+} from "../security/individualPractice.js";
 
 export const clinicalRecordsRouter = Router();
 
@@ -29,6 +34,8 @@ const getEncryptionKey = () => {
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
+const CLINICAL_RECORD_UNDER_REVIEW_NOTICE =
+  "Registro bajo revisión y verificación de exactitud";
 
 function encryptData(data: any): string {
   const text = JSON.stringify(data);
@@ -85,6 +92,62 @@ function dateMillis(value: any): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
+    .join(",")}}`;
+}
+
+function timestampMillis(value: unknown): number {
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value && typeof (value as any).toMillis === "function")
+    return (value as any).toMillis();
+  if (value && typeof (value as any)._seconds === "number")
+    return (value as any)._seconds * 1000;
+  return Date.now();
+}
+
+function computeClinicalRecordHash(input: {
+  recordId: string;
+  createdAt: Timestamp;
+  professionalUid: string;
+  encryptedData: string;
+  previousHash: string | null;
+}) {
+  return crypto
+    .createHash("sha256")
+    .update(
+      stableStringify({
+        recordId: input.recordId,
+        createdAt: input.createdAt.toMillis(),
+        professionalUid: input.professionalUid,
+        encryptedData: input.encryptedData,
+        previousHash: input.previousHash,
+      }),
+    )
+    .digest("hex");
+}
+
+async function latestPatientClinicalHash(
+  clinicId: string,
+  patientId: string,
+): Promise<string | null> {
+  const db = getFirestoreDb();
+  const snap = await db
+    .collection("clinical_records")
+    .where("clinicId", "==", clinicId)
+    .where("patientId", "==", patientId)
+    .get();
+  const latest = snap.docs
+    .map((doc) => doc.data())
+    .sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt))[0];
+  return latest?.hash ?? null;
+}
+
 // Validación estricta para garantizar la estructura de los datos
 const createRecordSchema = z.object({
   patientId: z.string().min(1),
@@ -102,11 +165,21 @@ const createRecordSchema = z.object({
   visibleInPatientPortal: z.boolean().optional(),
 });
 
-const patchRecordSchema = z.object({
-  date: z.string().min(10).optional(),
-  data: z.record(z.any()).optional(),
+const patchRecordMetadataSchema = z.object({
   sharedWithProfessionalUids: z.array(z.string().min(1)).optional(),
   visibleInPatientPortal: z.boolean().optional(),
+});
+
+const rectifyRecordSchema = z.object({
+  date: z.string().min(10),
+  data: z.record(z.any()),
+  reason: z.string().min(8),
+  visibleInPatientPortal: z.boolean().optional(),
+  sharedWithProfessionalUids: z.array(z.string().min(1)).optional(),
+});
+
+const blockRecordSchema = z.object({
+  reason: z.string().min(8).optional(),
 });
 
 // GET: Obtener todos los registros de un paciente en una clínica
@@ -125,6 +198,8 @@ clinicalRecordsRouter.get(
     }
 
     const db = getFirestoreDb();
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
 
     const patientSnap = await db.collection("patients").doc(patientId).get();
     if (!patientSnap.exists) {
@@ -140,20 +215,23 @@ clinicalRecordsRouter.get(
     // 🔒 REGLA DE HIERRO: Solo traemos los registros donde professionalUid == tu UID.
     // No importa si sos clinic_admin o superuser, la consulta en Firebase filtra por tu ID.
     const patient = { id: patientSnap.id, ...(patientSnap.data() as any) };
-    if (auth.role === "patient") {
+    if (effectiveRole === "patient") {
       if (req.patientContext?.patientId !== patientId) {
         return denyAuthz(req, res, "Patient can only read own records");
       }
       if (patient.medicalRecordAccessEnabled !== true) {
         return denyAuthz(req, res, "Medical record access is disabled");
       }
-    } else if (auth.role !== "professional") {
+    } else if (effectiveRole !== "professional") {
       return denyAuthz(
         req,
         res,
         "Only professionals can access medical records",
       );
-    } else if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid)) {
+    } else if (
+      !(patient.assignedProfessionalUids ?? []).includes(auth.uid) &&
+      !isOwner
+    ) {
       return denyAuthz(
         req,
         res,
@@ -170,11 +248,15 @@ clinicalRecordsRouter.get(
       .map((doc) => {
         const rawData = doc.data();
         const { encryptedData, data: legacyData, ...publicData } = rawData;
+        const isBlockedForViewer =
+          rawData.status === "blocked" && rawData.professionalUid !== auth.uid;
         return {
           id: doc.id,
           ...publicData,
           // 🔓 Desciframos la data en memoria justo antes de mandarla al frontend
-          data: decryptData(encryptedData || legacyData),
+          data: isBlockedForViewer
+            ? { notice: CLINICAL_RECORD_UNDER_REVIEW_NOTICE }
+            : decryptData(encryptedData || legacyData),
           createdAt:
             rawData.createdAt instanceof Timestamp
               ? rawData.createdAt.toDate().toISOString()
@@ -185,12 +267,24 @@ clinicalRecordsRouter.get(
       .sort((a: any, b: any) => dateMillis(b.date) - dateMillis(a.date));
 
     const visibleRecords = records.filter((record: any) => {
-      if (auth.role === "patient")
+      if (effectiveRole === "patient")
         return record.visibleInPatientPortal === true;
       return (
         record.professionalUid === auth.uid ||
         (record.sharedWithProfessionalUids ?? []).includes(auth.uid)
       );
+    });
+
+    await writeAuditLog({
+      req,
+      clinicId,
+      patientId,
+      actionType: "CLINICAL_RECORD_READ",
+      detail: `Lectura de historia clínica del paciente ${patientId}`,
+      data: {
+        returnedRecords: visibleRecords.length,
+        viewerRole: auth.role,
+      },
     });
 
     return res.status(200).json({ success: true, data: visibleRecords });
@@ -201,11 +295,13 @@ clinicalRecordsRouter.get(
 clinicalRecordsRouter.post(
   "/",
   requireClinicContext,
-  requireRole("professional"),
+  requireRole("professional", "clinic_admin"),
   async (req: Request, res: Response) => {
     const auth = req.auth!;
     const clinicId = auth.clinicId!;
-    if (auth.role !== "professional") {
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
+    if (effectiveRole !== "professional") {
       return denyAuthz(
         req,
         res,
@@ -234,7 +330,7 @@ clinicalRecordsRouter.post(
     }
 
     const patient = patientSnap.data() as any;
-    if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid)) {
+    if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid) && !isOwner) {
       return denyAuthz(
         req,
         res,
@@ -244,8 +340,16 @@ clinicalRecordsRouter.post(
 
     const now = Timestamp.now();
 
-    // 🔒 Encriptamos el contenido sensible antes de armar el registro
     const encryptedPayload = encryptData(data);
+    const ref = db.collection("clinical_records").doc();
+    const previousHash = await latestPatientClinicalHash(clinicId, patientId);
+    const hash = computeClinicalRecordHash({
+      recordId: ref.id,
+      createdAt: now,
+      professionalUid: auth.uid,
+      encryptedData: encryptedPayload,
+      previousHash,
+    });
 
     const record = {
       clinicId,
@@ -253,14 +357,31 @@ clinicalRecordsRouter.post(
       professionalUid: auth.uid,
       sharedWithProfessionalUids: sharedWithProfessionalUids ?? [],
       visibleInPatientPortal: parsed.data.visibleInPatientPortal ?? false,
+      status: "active",
       type,
       date,
-      encryptedData: encryptedPayload, // Guardamos la basura criptográfica
+      encryptedData: encryptedPayload,
+      previousHash,
+      hash,
       createdAt: now,
       updatedAt: now,
     };
 
-    const ref = await db.collection("clinical_records").add(record);
+    await ref.set(record);
+
+    await writeAuditLog({
+      req,
+      clinicId,
+      patientId,
+      actionType: "CLINICAL_RECORD_CREATED",
+      detail: `Creaci?n de asiento cl?nico ${ref.id}`,
+      data: {
+        recordId: ref.id,
+        type,
+        hash,
+        previousHash,
+      },
+    });
 
     return res.status(201).json({
       success: true,
@@ -275,6 +396,9 @@ clinicalRecordsRouter.post(
         date,
         data,
         visibleInPatientPortal: parsed.data.visibleInPatientPortal ?? false,
+        status: "active",
+        previousHash,
+        hash,
         createdAt: now.toDate().toISOString(),
       },
     });
@@ -285,11 +409,13 @@ clinicalRecordsRouter.post(
 clinicalRecordsRouter.patch(
   "/:recordId",
   requireClinicContext,
-  requireRole("professional"),
+  requireRole("professional", "clinic_admin"),
   async (req: Request, res: Response) => {
     const auth = req.auth!;
     const clinicId = auth.clinicId!;
-    if (auth.role !== "professional") {
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
+    if (effectiveRole !== "professional") {
       return denyAuthz(
         req,
         res,
@@ -329,7 +455,15 @@ clinicalRecordsRouter.patch(
       );
     }
 
-    const parsed = patchRecordSchema.safeParse(req.body);
+    if ("data" in req.body || "date" in req.body) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Los asientos clínicos son inalterables. Usá /rectifications para corregir el contenido.",
+      });
+    }
+
+    const parsed = patchRecordMetadataSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
@@ -338,13 +472,9 @@ clinicalRecordsRouter.patch(
       });
     }
 
-    const { data, date, sharedWithProfessionalUids, visibleInPatientPortal } =
-      parsed.data;
+    const { sharedWithProfessionalUids, visibleInPatientPortal } = parsed.data;
     const updates: any = { updatedAt: Timestamp.now() };
 
-    // Si mandan data nueva, la encriptamos antes de pisar la base de datos
-    if (data !== undefined) updates.encryptedData = encryptData(data);
-    if (date !== undefined) updates.date = date;
     if (sharedWithProfessionalUids !== undefined) {
       updates.sharedWithProfessionalUids = sharedWithProfessionalUids;
     }
@@ -354,10 +484,204 @@ clinicalRecordsRouter.patch(
 
     await recordRef.update(updates);
 
+    await writeAuditLog({
+      req,
+      clinicId,
+      patientId: recordData.patientId ?? null,
+      actionType: "CLINICAL_RECORD_METADATA_UPDATED",
+      detail: `Actualización de metadatos del asiento clínico ${recordId}`,
+      data: {
+        recordId,
+        updatedFields: Object.keys(updates).filter((key) => key !== "updatedAt"),
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: "Record updated successfully",
       data: { id: recordId, ...updates },
+    });
+  },
+);
+clinicalRecordsRouter.post(
+  "/:recordId/rectifications",
+  requireClinicContext,
+  requireRole("professional", "clinic_admin"),
+  async (req: Request, res: Response) => {
+    const auth = req.auth!;
+    const clinicId = auth.clinicId!;
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
+    if (effectiveRole !== "professional") {
+      return denyAuthz(
+        req,
+        res,
+        "Only professionals can rectify medical records",
+      );
+    }
+    const { recordId } = req.params;
+
+    if (!recordId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing record ID" });
+    }
+
+    const parsed = rectifyRecordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid body",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const db = getFirestoreDb();
+    const originalRef = db.collection("clinical_records").doc(recordId);
+    const originalSnap = await originalRef.get();
+
+    if (!originalSnap.exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Record not found" });
+    }
+
+    const original = originalSnap.data()!;
+    if (original.clinicId !== clinicId) {
+      return denyAuthz(req, res, "Cross-clinic rectification attempt denied");
+    }
+    if (original.professionalUid !== auth.uid) {
+      return denyAuthz(
+        req,
+        res,
+        "S?lo el profesional firmante puede rectificar este asiento.",
+      );
+    }
+
+    const now = Timestamp.now();
+    const encryptedPayload = encryptData(parsed.data.data);
+    const ref = db.collection("clinical_records").doc();
+    const previousHash = await latestPatientClinicalHash(
+      clinicId,
+      original.patientId,
+    );
+    const hash = computeClinicalRecordHash({
+      recordId: ref.id,
+      createdAt: now,
+      professionalUid: auth.uid,
+      encryptedData: encryptedPayload,
+      previousHash,
+    });
+
+    const rectifiedRecord = {
+      clinicId,
+      patientId: original.patientId,
+      professionalUid: auth.uid,
+      sharedWithProfessionalUids:
+        parsed.data.sharedWithProfessionalUids ??
+        original.sharedWithProfessionalUids ??
+        [],
+      visibleInPatientPortal:
+        parsed.data.visibleInPatientPortal ??
+        original.visibleInPatientPortal ??
+        false,
+      status: "active",
+      type: original.type,
+      date: parsed.data.date,
+      encryptedData: encryptedPayload,
+      correctionOfRecordId: recordId,
+      correctionReason: parsed.data.reason,
+      previousHash,
+      hash,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.runTransaction(async (tx) => {
+      tx.set(ref, rectifiedRecord);
+      tx.update(originalRef, {
+        status: "error_rectified",
+        rectifiedByRecordId: ref.id,
+        rectifiedAt: now,
+        rectifiedByUid: auth.uid,
+        rectificationReason: parsed.data.reason,
+        updatedAt: now,
+      });
+    });
+
+    await writeAuditLog({
+      req,
+      clinicId,
+      patientId: original.patientId,
+      actionType: "CLINICAL_RECORD_RECTIFIED",
+      detail: "Rectificaci?n aditiva del asiento cl?nico " + recordId,
+      data: {
+        originalRecordId: recordId,
+        rectifiedByRecordId: ref.id,
+        reason: parsed.data.reason,
+        hash,
+        previousHash,
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Record rectified with additive entry",
+      data: {
+        id: ref.id,
+        ...rectifiedRecord,
+        data: parsed.data.data,
+        createdAt: now.toDate().toISOString(),
+        updatedAt: now.toDate().toISOString(),
+      },
+    });
+  },
+);
+
+
+clinicalRecordsRouter.post(
+  "/:recordId/export-events",
+  requireClinicContext,
+  requireRole("professional", "clinic_admin"),
+  async (req: Request, res: Response) => {
+    const auth = req.auth!;
+    const clinicId = auth.clinicId!;
+    const { recordId } = req.params;
+    if (!recordId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing record ID" });
+    }
+    const db = getFirestoreDb();
+    const recordSnap = await db.collection("clinical_records").doc(recordId).get();
+
+    if (!recordSnap.exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Record not found" });
+    }
+
+    const recordData = recordSnap.data()!;
+    if (recordData.clinicId !== clinicId) {
+      return denyAuthz(req, res, "Cross-clinic export attempt denied");
+    }
+
+    await writeAuditLog({
+      req,
+      clinicId,
+      patientId: recordData.patientId ?? null,
+      actionType: "CLINICAL_RECORD_EXPORTED",
+      detail: "Exportaci?n o impresi?n del asiento cl?nico " + recordId,
+      data: {
+        recordId,
+        type: recordData.type,
+        actorRole: auth.role,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: { id: recordId, logged: true },
     });
   },
 );
@@ -366,11 +690,13 @@ clinicalRecordsRouter.patch(
 clinicalRecordsRouter.delete(
   "/:recordId",
   requireClinicContext,
-  requireRole("professional"),
+  requireRole("professional", "clinic_admin"),
   async (req: Request, res: Response) => {
     const auth = req.auth!;
     const clinicId = auth.clinicId!;
-    if (auth.role !== "professional") {
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
+    if (effectiveRole !== "professional") {
       return denyAuthz(
         req,
         res,
@@ -410,12 +736,44 @@ clinicalRecordsRouter.delete(
       );
     }
 
-    await recordRef.delete();
+    const parsed = blockRecordSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid body",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const now = Timestamp.now();
+    const blockReason =
+      parsed.data.reason ??
+      "Bloqueo preventivo solicitado desde interfaz profesional.";
+
+    await recordRef.update({
+      status: "blocked",
+      blockedAt: now,
+      blockedByUid: auth.uid,
+      blockReason,
+      updatedAt: now,
+    });
+
+    await writeAuditLog({
+      req,
+      clinicId,
+      patientId: recordData.patientId ?? null,
+      actionType: "CLINICAL_RECORD_BLOCKED",
+      detail: `Bloqueo lógico del asiento clínico ${recordId}`,
+      data: {
+        recordId,
+        reason: blockReason,
+      },
+    });
 
     return res.status(200).json({
       success: true,
-      message: "Record deleted successfully",
-      data: { id: recordId },
+      message: "Record blocked logically",
+      data: { id: recordId, status: "blocked" },
     });
   },
 );

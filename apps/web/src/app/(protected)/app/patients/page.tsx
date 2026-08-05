@@ -67,7 +67,7 @@ export default function PatientsPage() {
 
   const mutation = useMutation({
     mutationFn: async (data: PatientForm) => {
-      if (!activeClinicId) throw new Error("Sin clínica activa");
+      if (!activeClinicId) throw new Error("Sin espacio activo");
       const assignedProfessionalUids = data.assignedProfessionalId
         ? [data.assignedProfessionalId]
         : [];
@@ -97,7 +97,7 @@ export default function PatientsPage() {
       portalAccessEnabled?: boolean;
       medicalRecordAccessEnabled?: boolean;
     }) => {
-      if (!activeClinicId) throw new Error("Sin clÃ­nica activa");
+      if (!activeClinicId) throw new Error("Sin espacio activo");
       return apiClient.updatePatient(
         data.patientId,
         activeClinicId,

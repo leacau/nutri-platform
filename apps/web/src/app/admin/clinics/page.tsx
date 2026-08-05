@@ -436,17 +436,17 @@ function AdminClinicsContent() {
 								</div>
 
 								<div className='rounded-md border border-destructive/30 p-3'>
-									<Label>Eliminar definitivamente</Label>
-									<p className='mb-3 text-xs text-muted-foreground'>Escribi ELIMINAR para borrar la clinica y sus datos tenant-scoped.</p>
+									<Label>Archivar clinica</Label>
+									<p className='mb-3 text-xs text-muted-foreground'>Escribi ARCHIVAR para desactivar la clinica. La historia clinica y auditoria se conservan por retencion legal.</p>
 									<div className='flex gap-2'>
-										<Input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} placeholder='ELIMINAR' />
+										<Input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} placeholder='ARCHIVAR' />
 										<Button
 											variant='destructive'
-											disabled={deleteConfirm !== 'ELIMINAR' || deleteClinicMutation.isPending}
+											disabled={deleteConfirm !== 'ARCHIVAR' || deleteClinicMutation.isPending}
 											onClick={() => deleteClinicMutation.mutate(selectedClinic.id)}
 										>
 											<Trash2 className='mr-2 h-4 w-4' />
-											Eliminar
+											Archivar
 										</Button>
 									</div>
 								</div>

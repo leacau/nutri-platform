@@ -2,7 +2,7 @@
 	"name": "@nutri/mobile",
 	"private": true,
 	"version": "0.1.0",
-	"main": "expo/AppEntry",
+	"main": "index.js",
 	"scripts": {
 		"start": "expo start",
 		"android": "expo start --android",

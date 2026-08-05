@@ -84,6 +84,7 @@ function RecordForm({
   const [visibleInPatientPortal, setVisibleInPatientPortal] = useState(
     recordToEdit?.visibleInPatientPortal === true,
   );
+  const [rectificationReason, setRectificationReason] = useState("");
 
   const [noteContent, setNoteContent] = useState(
     recordToEdit?.type === "note" ? recordToEdit.data.content : "",
@@ -336,11 +337,15 @@ function RecordForm({
       }
 
       if (isEditing) {
-        return apiClient.updateClinicalRecord(
+        if (rectificationReason.trim().length < 8) {
+          throw new Error("Indic? un motivo de rectificaci?n m?s detallado.");
+        }
+        return apiClient.rectifyClinicalRecord(
           recordToEdit!.id,
           {
             date: new Date(date).toISOString(),
             data: dataPayload,
+            reason: rectificationReason.trim(),
             visibleInPatientPortal,
           },
           activeClinicId!,
@@ -399,7 +404,11 @@ function RecordForm({
     },
     onError: (e) => {
       console.error(e);
-      alert(isEditing ? "Error al editar." : "Error al guardar el registro.");
+      alert(
+        isEditing
+          ? "Error al guardar la rectificación."
+          : "Error al guardar el registro.",
+      );
     },
   });
 
@@ -408,8 +417,8 @@ function RecordForm({
       <DialogHeader>
         <DialogTitle>
           {isEditing
-            ? "Editar Registro Clínico"
-            : "Agregar a la Historia Clínica"}
+            ? "Rectificar Registro Cl?nico"
+            : "Agregar a la Historia Cl?nica"}
         </DialogTitle>
       </DialogHeader>
 
@@ -442,6 +451,13 @@ function RecordForm({
         </div>
 
         <hr className="my-2" />
+
+        {isEditing ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            La historia cl?nica es inalterable. Esta acci?n crea un nuevo
+            asiento de rectificaci?n y conserva el original con trazabilidad.
+          </div>
+        ) : null}
 
         <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-sm">
           <input
@@ -714,6 +730,18 @@ function RecordForm({
             </div>
           </div>
         )}
+
+        {isEditing ? (
+          <div className="space-y-2">
+            <Label>Motivo de la rectificación</Label>
+            <Textarea
+              className="min-h-[90px]"
+              value={rectificationReason}
+              onChange={(e) => setRectificationReason(e.target.value)}
+              placeholder="Ej: Se rectifica por error material detectado en el asiento anterior..."
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="flex justify-end gap-2 border-t pt-4">
@@ -732,7 +760,7 @@ function RecordForm({
           {mutation.isPending
             ? "Subiendo y Guardando..."
             : isEditing
-              ? "Guardar Cambios"
+              ? "Guardar rectificación"
               : "Guardar en Historia"}
         </Button>
       </div>

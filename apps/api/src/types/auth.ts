@@ -1,5 +1,19 @@
 export type ClinicRole = 'clinic_admin' | 'professional' | 'staff';
 
+export type ClinicCapability =
+	| 'manage_clinic_settings'
+	| 'manage_clinic_users'
+	| 'manage_patients'
+	| 'manage_patient_portal_access'
+	| 'view_medical_records'
+	| 'edit_medical_records'
+	| 'share_medical_records'
+	| 'assign_any_patient'
+	| 'view_all_appointments'
+	| 'manage_templates'
+	| 'view_audit'
+	| 'schedule_for_others';
+
 // Agregamos rol del portal
 export type PortalRole = 'patient';
 
@@ -13,6 +27,7 @@ export type AuthContext = {
 
 	role: Role | null;
 	clinicId: string | null;
+	clinicCapabilities?: ClinicCapability[];
 };
 
 export type PatientContext = {

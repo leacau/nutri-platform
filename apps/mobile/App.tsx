@@ -38,7 +38,7 @@ function cardTitleForRecord(record: ClinicalRecord) {
 
 export default function App() {
 	const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
-	const [token, setToken] = useState('qa:qa_cloud_c5_patient_01');
+	const [token, setToken] = useState('');
 	const [tab, setTab] = useState<Tab>('home');
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);

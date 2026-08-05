@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
@@ -11,6 +11,7 @@ import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
 import type { ClinicRole, Role } from '../types/auth.js';
+import { writeAuditLog } from '../observability/eventLogger.js';
 
 const router = Router();
 const adminRouter = Router();
@@ -59,6 +60,10 @@ const createClinicSchema = z.object({
 		email: z.string().email(),
 		dni: z.string().min(7).max(8),
 	}),
+});
+
+const createIndividualPracticeSchema = z.object({
+	name: z.string().min(2),
 });
 
 const updateClinicSchema = z
@@ -134,6 +139,8 @@ function serializeClinic(id: string, data: Partial<ClinicDoc>) {
 	return {
 		id,
 		name: data.name ?? '',
+		tenantType: data.tenantType ?? 'clinic',
+		ownerProfessionalUid: data.ownerProfessionalUid ?? null,
 		createdAt: serializeTimestamp(data.createdAt),
 		updatedAt: serializeTimestamp(data.updatedAt),
 		isActive: data.isActive !== false,
@@ -419,6 +426,8 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 			return {
 				id: d.id,
 				name: data?.name ?? null,
+				tenantType: data?.tenantType ?? 'clinic',
+				ownerProfessionalUid: data?.ownerProfessionalUid ?? null,
 				createdAt: data?.createdAt ?? null,
 				updatedAt: data?.updatedAt ?? null,
 				role: membership?.role ?? null,
@@ -427,6 +436,90 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 
 	return res.status(200).json({ success: true, data: clinics });
 });
+
+router.post(
+	'/individual-practices',
+	authMiddleware,
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const parsed = createIndividualPracticeSchema.safeParse(req.body ?? {});
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const db = getFirestoreDb();
+		const existing = await db
+			.collection('clinics')
+			.where('tenantType', '==', 'individual_practice')
+			.where('ownerProfessionalUid', '==', auth.uid)
+			.where('isActive', '==', true)
+			.limit(1)
+			.get();
+
+		if (!existing.empty) {
+			const doc = existing.docs[0]!;
+			return res.status(200).json({
+				success: true,
+				data: serializeClinic(doc.id, doc.data() as ClinicDoc),
+			});
+		}
+
+		const now = Timestamp.now();
+		const clinicRef = db.collection('clinics').doc();
+		const adminMembershipRef = db.collection('clinic_memberships').doc();
+		const professionalMembershipRef = db.collection('clinic_memberships').doc();
+		const clinicDoc: ClinicDoc = {
+			name: parsed.data.name,
+			tenantType: 'individual_practice',
+			ownerProfessionalUid: auth.uid,
+			isActive: true,
+			createdAt: now,
+			updatedAt: now,
+		};
+		const adminMembershipDoc: ClinicMembershipDoc = {
+			clinicId: clinicRef.id,
+			uid: auth.uid,
+			role: 'clinic_admin',
+			isActive: true,
+			createdAt: now,
+			updatedAt: now,
+			createdByUid: auth.uid,
+		};
+		const professionalMembershipDoc: ClinicMembershipDoc = {
+			...adminMembershipDoc,
+			role: 'professional',
+		};
+
+		const batch = db.batch();
+		batch.set(clinicRef, clinicDoc);
+		batch.set(adminMembershipRef, adminMembershipDoc);
+		batch.set(professionalMembershipRef, professionalMembershipDoc);
+		batch.set(
+			db.collection('users').doc(auth.uid),
+			{
+				email: auth.email ?? null,
+				individualPracticeIds: FieldValue.arrayUnion(clinicRef.id),
+				updatedAt: now,
+			},
+			{ merge: true },
+		);
+		await batch.commit();
+
+		console.info('[clinics:individual_practice_created]', {
+			clinicId: clinicRef.id,
+			uid: auth.uid,
+		});
+
+		return res.status(201).json({
+			success: true,
+			data: serializeClinic(clinicRef.id, clinicDoc),
+		});
+	},
+);
 
 router.get(
 	'/lookup-user',
@@ -581,14 +674,38 @@ adminRouter.delete(
 			return res.status(404).json({ success: false, message: 'Not found' });
 		}
 
-		const deleted = await hardDeleteClinicData(clinicId);
-		console.warn('[admin:clinics:hard_delete]', {
+		const now = Timestamp.now();
+		await clinicSnap.ref.update({
+			isActive: false,
+			archivedAt: now,
+			archivedByUid: req.auth?.uid ?? null,
+			legalHold: true,
+			updatedAt: now,
+		});
+		await writeAuditLog({
+			req,
+			clinicId,
+			actionType: 'CLINIC_ARCHIVED',
+			detail:
+				'Clinica archivada/desactivada. No se realizo borrado fisico por retencion legal de historia clinica.',
+			data: { previousIsActive: clinicSnap.data()?.isActive !== false },
+		});
+		console.warn('[admin:clinics:archive]', {
 			clinicId,
 			uid: req.auth?.uid,
-			deleted,
 		});
 
-		return res.status(200).json({ success: true, data: { id: clinicId, deleted } });
+		return res.status(200).json({
+			success: true,
+			data: {
+				id: clinicId,
+				archived: true,
+				isActive: false,
+				legalHold: true,
+				message:
+					'Clinic archived. Clinical records and audit evidence were retained.',
+			},
+		});
 	},
 );
 
@@ -819,6 +936,8 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 		role: Role;
 		clinicName: string | null;
 		patientId?: string;
+		tenantType?: 'clinic' | 'individual_practice';
+		ownerProfessionalUid?: string | null;
 	}> = [
 		...analysis.staffClinics,
 		...analysis.patientClinics.map((clinic) => ({

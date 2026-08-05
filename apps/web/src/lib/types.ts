@@ -3,11 +3,28 @@ export type PlatformRole = "platform_admin" | null;
 export type ClinicMembershipRole =
   "clinic_admin" | "staff" | "professional" | "patient";
 
+export type ClinicCapability =
+  | "manage_clinic_settings"
+  | "manage_clinic_users"
+  | "manage_patients"
+  | "manage_patient_portal_access"
+  | "view_medical_records"
+  | "edit_medical_records"
+  | "share_medical_records"
+  | "assign_any_patient"
+  | "view_all_appointments"
+  | "manage_templates"
+  | "view_audit"
+  | "schedule_for_others";
+
 export type Membership = {
   clinicId: string;
   clinicName: string;
   role: ClinicMembershipRole;
   patientId?: string;
+  tenantType?: "clinic" | "individual_practice";
+  ownerProfessionalUid?: string | null;
+  capabilities?: ClinicCapability[];
 };
 
 export type MeResponse = {
@@ -25,6 +42,8 @@ export type ClinicBranding = {
 export type Clinic = {
   id: string;
   name: string;
+  tenantType?: "clinic" | "individual_practice";
+  ownerProfessionalUid?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   isActive?: boolean;
@@ -39,27 +58,6 @@ export type UserAccount = {
   status?: "active" | "inactive" | "invited";
   uid?: string;
   isActive?: boolean;
-};
-
-export type QaUserRole =
-  "platform_admin" | "clinic_admin" | "staff" | "professional" | "patient";
-
-export type QaUser = {
-  uid: string;
-  email: string | null;
-  name: string;
-  roles: QaUserRole[];
-  clinics: Array<{
-    clinicId: string;
-    clinicName: string | null;
-    role: QaUserRole;
-    isActive: boolean;
-  }>;
-};
-
-export type QaUsersResponse = {
-  roles: Record<QaUserRole | "unassigned", QaUser[]>;
-  all: QaUser[];
 };
 
 export type Patient = {
@@ -136,6 +134,73 @@ export type AuditEvent = {
   type: string;
   createdAt: string;
   detail: string;
+};
+
+export type CompliancePolicy = {
+  mfaRequiredForAdmins: boolean;
+  mfaRequiredForProfessionals: boolean;
+  sessionTimeoutMinutes: number;
+  clinicalRecordRetentionYears: number;
+  backupFrequency: "daily" | "weekly";
+  backupRetentionDays: number;
+  internationalTransferProvider: string;
+  internationalTransferSafeguards: string;
+  digitalSignatureMode:
+    | "pending_provider"
+    | "electronic_signature"
+    | "certified_digital_signature";
+  privacyPolicyVersion: string;
+  termsVersion: string;
+  incidentResponseContact: string;
+  dataProtectionContact: string;
+  updatedAt?: string | null;
+  updatedByUid?: string | null;
+};
+
+export type ComplianceCheck = {
+  id: string;
+  label: string;
+  status: "configured" | "pending" | "external_required";
+  detail: string;
+};
+
+export type ComplianceChecklist = {
+  policy: CompliancePolicy;
+  checks: ComplianceCheck[];
+};
+
+export type DataSubjectRequestType =
+  | "access"
+  | "rectification"
+  | "update"
+  | "confidentiality"
+  | "deletion"
+  | "export";
+
+export type DataSubjectRequest = {
+  id: string;
+  clinicId: string;
+  type: DataSubjectRequestType;
+  status: "received" | "in_review" | "fulfilled" | "rejected";
+  patientId?: string | null;
+  subjectUid?: string | null;
+  subjectEmail?: string | null;
+  description: string;
+  resolution?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  dueAt?: string | null;
+};
+
+export type BackupEvent = {
+  id: string;
+  clinicId: string;
+  provider: string;
+  location?: string | null;
+  status: "success" | "failed" | "verified";
+  detail: string;
+  createdAt?: string | null;
+  createdByUid?: string | null;
 };
 
 export type ClinicSettings = {

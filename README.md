@@ -1,101 +1,83 @@
-# Nutri Platform (modo demo)
+# Nutri Platform
 
-Frontend y backend para AMSA Core. Incluye el nuevo front en Next.js (App
-Router) con Firebase Auth, multi-clínica y shadcn/ui.
+Frontend y backend para AMSA Core. Incluye Next.js App Router, Firebase Auth,
+multi-clinica, consultorios individuales, RBAC por membership y auditoria.
 
 ## Requisitos
 
 - Node.js 20+
 - npm 10+
-- Firebase CLI (`npm i -g firebase-tools`) para los emuladores.
+- Firebase CLI (`npm i -g firebase-tools`) si vas a usar emuladores locales.
+- Java 11+ para Firebase Emulators.
 
-## Instalación
+## Instalacion
 
 ```bash
 npm install
 ```
 
-### Variables de entorno
+## Variables de entorno
 
-Backend (`.env` en la raíz):
+Backend (`.env` en la raiz):
 
-```
+```env
 FIREBASE_PROJECT_ID=amsa-core-stg
-FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8088
-DEV_ADMIN_SECRET=local-dev-secret
+FIRESTORE_DATABASE_ID=amsa-core-stg
 PORT=8081
-ENABLE_QA_LOGIN=true              # solo dev/staging: permite Authorization: Bearer qa:<uid>
+NODE_ENV=development
+CLINICAL_ENCRYPTION_KEY=change-me
+ALLOWED_ORIGINS=http://localhost:3000
 ```
 
 Frontend AMSA Core (`apps/web/.env.local`, hay plantilla en `.env.example`):
 
-```
-NEXT_PUBLIC_API_BASE_URL=/api       # proxy local hacia backend
-NEXT_PUBLIC_ENABLE_QA_LOGIN=true    # solo dev/staging: muestra acceso QA por rol
+```env
+NEXT_PUBLIC_API_BASE_URL=/api
 BACKEND_PROXY_TARGET=http://localhost:8081
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=amsa-core-stg
-NEXT_PUBLIC_FIREBASE_API_KEY=demo-key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-nutri-platform.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-nutri-platform.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=1234567890
-NEXT_PUBLIC_FIREBASE_APP_ID=1:1234567890:web:demo
-NEXT_PUBLIC_USE_EMULATORS=true
-NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=amsa-core-stg.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=amsa-core-stg.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+NEXT_PUBLIC_FIREBASE_APP_ID=...
 NEXT_PUBLIC_ENV=dev
 ```
 
-QA Console (`apps/qa-console/.env.local`):
+Para usar el front local contra la API de Cloud Run:
 
+```env
+NEXT_PUBLIC_API_BASE_URL=https://amsa-core-api-418425481470.southamerica-east1.run.app/api
 ```
-VITE_API_BASE_URL=http://localhost:8081
+
+## Desarrollo local
+
+Backend API:
+
+```bash
+npm run dev:api
 ```
 
-## Emuladores + seed
+Frontend AMSA Core:
 
-1. Levantá los emuladores de Auth y Firestore (mantener en una terminal):
+```bash
+npm run dev:web
+```
 
-   ```bash
-   npm run emulators
-   ```
+Emuladores locales sin datos precargados:
 
-2. Cargá el seed para dejar datos listos en el emulador:
+```bash
+npm run emulators
+```
 
-   ```bash
-   npm run seed:emu
-   ```
-
-   El seed crea usuarios con claims, un paciente vinculado y dos turnos de
-   ejemplo en la clínica `clinic_demo_1`:
-
-   - Paciente: `patient@test.com` / `Passw0rd!` (rol `patient`, clinicId
-     `clinic_demo_1`)
-   - Nutricionista: `nutri@test.com` / `Passw0rd!` (rol `nutri`, clinicId
-     `clinic_demo_1`)
-   - Admin de clínica: `clinic-admin@test.com` / `Passw0rd!` (rol
-     `clinic_admin`, clinicId `clinic_demo_1`)
-   - Platform admin: `platform-admin@test.com` / `Passw0rd!` (rol
-     `platform_admin`, sin clinicId)
-
-   Firestore queda con:
-
-   - `patients/patient_demo_1`: vinculado al usuario de paciente y asignado al
-     nutri demo.
-   - `appointments/appt_demo_scheduled`: turno programado para mañana con el
-     nutri demo.
-   - `appointments/appt_demo_requested`: turno solicitado para la semana
-     siguiente, listo para programar/reprogramar.
-
-Reejecutá el seed cada vez que quieras resetear los datos del emulador.
-
-## Ejecutar backend y frontends
-
-- Backend API (usa `.env`): `npm run dev:api`
-- Frontend AMSA Core (Next.js App Router): `npm run dev:web`
-- QA console (modo debug): `npm run dev:qa`
-
-Para todo junto (emuladores + API + AMSA Core):
+Todo junto:
 
 ```bash
 npm run dev
 ```
+
+## Puesta en modo real
+
+La plataforma no debe usar tokens `qa:<uid>` ni endpoints `/api/dev`.
+Los usuarios reales se crean o invitan mediante Firebase Auth y las pantallas
+administrativas correspondientes. El superadmin se identifica desde Firestore en
+`platformAdmins/{uid}` con `enabled: true`.

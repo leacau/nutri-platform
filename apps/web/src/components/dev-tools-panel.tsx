@@ -55,7 +55,7 @@ export function DevToolsPanel() {
             <p className="truncate font-mono text-xs">{idToken?.slice(0, 32) ?? "—"}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Clínica activa</p>
+            <p className="text-muted-foreground">Espacio activo</p>
             <p className="font-medium">{activeClinicId ?? "—"}</p>
           </div>
           <div>

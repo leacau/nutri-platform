@@ -6,6 +6,7 @@ import { getFirestoreDb } from '../firebase/firestore.js';
 import { inviteUser } from '../controllers/invitation.controller.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
+import { writeAuditLog } from '../observability/eventLogger.js';
 
 const router = Router();
 
@@ -13,6 +14,13 @@ const upsertUserSchema = z.object({
 	name: z.string().min(2),
 	email: z.string().email().optional(),
 	dni: z.string().min(7).max(8).regex(/^\d+$/).optional(),
+});
+
+const legalConsentSchema = z.object({
+	privacyPolicyVersion: z.string().min(1),
+	termsVersion: z.string().min(1),
+	healthDataProcessingAccepted: z.literal(true),
+	internationalTransferAccepted: z.literal(true),
 });
 
 router.post('/self', authMiddleware, async (req: Request, res: Response) => {
@@ -62,6 +70,62 @@ router.post('/self', authMiddleware, async (req: Request, res: Response) => {
 		data: { uid: req.auth.uid },
 	});
 });
+
+router.post(
+	'/me/legal-consents',
+	authMiddleware,
+	async (req: Request, res: Response) => {
+		if (!req.auth) {
+			return res
+				.status(401)
+				.json({ success: false, message: 'Unauthenticated' });
+		}
+
+		const parsed = legalConsentSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid consent body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const db = getFirestoreDb();
+		const now = Timestamp.now();
+		const ref = db
+			.collection('users')
+			.doc(req.auth.uid)
+			.collection('legal_consents')
+			.doc(`${parsed.data.termsVersion}_${parsed.data.privacyPolicyVersion}`);
+
+		await ref.set(
+			{
+				...parsed.data,
+				acceptedAt: now,
+				actorUid: req.auth.uid,
+				ipOrigin: req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? req.ip,
+				userAgent: req.header('user-agent') ?? null,
+			},
+			{ merge: true },
+		);
+
+		await writeAuditLog({
+			req,
+			clinicId: req.auth.clinicId,
+			actionType: 'PATIENT_CONSENT_UPDATED',
+			detail: 'Aceptación de términos, privacidad y tratamiento de datos sensibles',
+			data: {
+				termsVersion: parsed.data.termsVersion,
+				privacyPolicyVersion: parsed.data.privacyPolicyVersion,
+			},
+		});
+
+		return res.status(200).json({
+			success: true,
+			data: { acceptedAt: now.toDate().toISOString() },
+		});
+	},
+);
 
 // 👇 NUEVA RUTA DE INVITACIÓN
 router.post(

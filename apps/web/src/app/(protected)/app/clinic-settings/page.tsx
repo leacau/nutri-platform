@@ -46,7 +46,7 @@ export default function ClinicSettingsPage() {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!activeClinicId) throw new Error("Sin clínica");
+      if (!activeClinicId) throw new Error("Sin espacio");
       return apiClient.saveClinicSettings(
         activeClinicId,
         {

@@ -25,7 +25,7 @@ export default function TemplatesPage() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      if (!activeClinicId) throw new Error("Sin clínica");
+      if (!activeClinicId) throw new Error("Sin espacio");
       await new Promise((res) => setTimeout(res, 400));
       templatesQuery.data?.push({
         id: crypto.randomUUID(),

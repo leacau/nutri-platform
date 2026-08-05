@@ -13,6 +13,10 @@ import { getDocInClinic } from "../security/getDocInClinic.js";
 import { logEvent } from "../observability/eventLogger.js";
 import type { Role } from "../types/auth.js";
 import { pickHighestClinicRole } from "../security/clinicRolePriority.js";
+import {
+  effectiveClinicalRole,
+  isIndividualPracticeOwner,
+} from "../security/individualPractice.js";
 
 export const patientsRouter = Router();
 
@@ -251,7 +255,7 @@ patientsRouter.get(
 patientsRouter.get(
   "/:id/professional-note",
   requireClinicContext,
-  requireRole("professional"),
+  requireRole("professional", "clinic_admin"),
   async (req: Request, res: Response) => {
     const auth = req.auth!;
     const patientId = req.params.id;
@@ -263,6 +267,11 @@ patientsRouter.get(
     }
 
     const db = getFirestoreDb();
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
+    if (effectiveRole !== "professional") {
+      return denyAuthz(req, res, "Only professionals can read private notes");
+    }
     const patient = await getDocInClinic<PatientDoc>(
       db,
       "patients",
@@ -276,7 +285,7 @@ patientsRouter.get(
         .json({ success: false, message: "Patient not found" });
     }
 
-    if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid)) {
+    if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid) && !isOwner) {
       return denyAuthz(
         req,
         res,
@@ -298,7 +307,7 @@ patientsRouter.get(
 patientsRouter.patch(
   "/:id/professional-note",
   requireClinicContext,
-  requireRole("professional"),
+  requireRole("professional", "clinic_admin"),
   async (req: Request, res: Response) => {
     const auth = req.auth!;
     const patientId = req.params.id;
@@ -319,6 +328,11 @@ patientsRouter.patch(
     }
 
     const db = getFirestoreDb();
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
+    if (effectiveRole !== "professional") {
+      return denyAuthz(req, res, "Only professionals can update private notes");
+    }
     const patient = await getDocInClinic<PatientDoc>(
       db,
       "patients",
@@ -332,7 +346,7 @@ patientsRouter.patch(
         .json({ success: false, message: "Patient not found" });
     }
 
-    if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid)) {
+    if (!(patient.assignedProfessionalUids ?? []).includes(auth.uid) && !isOwner) {
       return denyAuthz(
         req,
         res,
@@ -389,6 +403,8 @@ patientsRouter.get(
     }
 
     const patient = { id: snap.id, ...(snap.data() as PatientDoc) };
+    const isOwner = await isIndividualPracticeOwner(patient.clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
 
     let isAllowed = false;
 
@@ -401,7 +417,7 @@ patientsRouter.get(
     ) {
       isAllowed = true;
     } else if (
-      auth.role === "professional" &&
+      effectiveRole === "professional" &&
       (patient.assignedProfessionalUids ?? []).includes(auth.uid)
     ) {
       isAllowed = true;
@@ -436,7 +452,7 @@ patientsRouter.get(
       patient,
     ) as any;
 
-    if (auth.role === "professional") {
+    if (effectiveRole === "professional") {
       data.privateProfessionalNote =
         patient.privateProfessionalNotes?.[auth.uid]?.content ?? "";
     }
@@ -473,6 +489,8 @@ patientsRouter.post(
     }
 
     const db = getFirestoreDb();
+    const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+    const effectiveRole = effectiveClinicalRole(auth.role, isOwner);
     const dniVal = parseInt(parsed.data.dni, 10);
     if (isNaN(dniVal) || dniVal < 1000000 || dniVal > 99999999) {
       return res.status(400).json({
@@ -509,7 +527,7 @@ patientsRouter.post(
       };
 
       const existingProfessionals = existingData.assignedProfessionalUids ?? [];
-      if (auth.role === "professional") {
+      if (effectiveRole === "professional") {
         updateData.assignedProfessionalUids = Array.from(
           new Set([...existingProfessionals, auth.uid]),
         );
@@ -554,7 +572,7 @@ patientsRouter.post(
     );
 
     const assignedProfessionalUids =
-      auth.role === "professional"
+      effectiveRole === "professional"
         ? [auth.uid]
         : (parsed.data.assignedProfessionalUids ?? []);
 
