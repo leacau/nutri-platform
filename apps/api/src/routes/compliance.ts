@@ -3,10 +3,12 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 
 import { getFirestoreDb } from '../firebase/firestore.js';
+import { normalizeBilling } from '../billing/plans.js';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
 import { writeAuditLog } from '../observability/eventLogger.js';
+import type { ClinicDoc } from '../types/clinics.js';
 
 export const complianceRouter = Router();
 
@@ -163,7 +165,24 @@ complianceRouter.patch(
 		}
 
 		const clinicId = req.auth!.clinicId!;
-		const ref = getFirestoreDb()
+		const db = getFirestoreDb();
+		if (
+			parsed.data.digitalSignatureMode &&
+			parsed.data.digitalSignatureMode !== 'pending_provider' &&
+			!req.auth?.isPlatformAdmin
+		) {
+			const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+			const clinic = clinicSnap.data() as ClinicDoc | undefined;
+			const billing = normalizeBilling(clinic?.billing, 'starter_1_5');
+			if (billing.enabledModules.digitalSignature !== true) {
+				return res.status(402).json({
+					success: false,
+					message: 'Digital signature module is not enabled',
+				});
+			}
+		}
+
+		const ref = db
 			.collection('clinic_compliance_policies')
 			.doc(clinicId);
 		const now = Timestamp.now();
@@ -239,7 +258,7 @@ complianceRouter.get(
 					Number(policy.clinicalRecordRetentionYears) >= 10
 						? 'configured'
 						: 'pending',
-				detail: `${policy.clinicalRecordRetentionYears} anios configurados.`,
+				detail: `${policy.clinicalRecordRetentionYears} años configurados.`,
 			},
 			{
 				id: 'backup',

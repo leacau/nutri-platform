@@ -3,6 +3,7 @@ import {
   AuditEvent,
   BackupEvent,
   Clinic,
+  ClinicBilling,
   ClinicSettings,
   ComplianceChecklist,
   CompliancePolicy,
@@ -195,6 +196,7 @@ export const apiClient = {
             clinicName: c.clinicName || c.clinicId,
             tenantType: c.tenantType || "clinic",
             ownerProfessionalUid: c.ownerProfessionalUid || null,
+            billing: c.billing,
             capabilities: c.capabilities || [],
           })),
         );
@@ -209,6 +211,7 @@ export const apiClient = {
             clinicName: c.clinicName || "Clínica",
             tenantType: c.tenantType || "clinic",
             ownerProfessionalUid: c.ownerProfessionalUid || null,
+            billing: c.billing,
             capabilities: c.capabilities || [],
           })),
         );
@@ -233,9 +236,10 @@ export const apiClient = {
         name: c.clinicName || c.clinicId,
         tenantType: c.tenantType || "clinic",
         ownerProfessionalUid: c.ownerProfessionalUid || null,
+        billing: c.billing,
         role: c.role,
         patientId: c.patientId,
-        branding: null,
+        branding: c.branding ?? null,
       })) as Clinic[];
     }),
 
@@ -247,7 +251,16 @@ export const apiClient = {
 
   updateClinic: (
     clinicId: string,
-    data: { name?: string; isActive?: boolean },
+    data: {
+      name?: string;
+      isActive?: boolean;
+      billing?: {
+        plan?: ClinicBilling["plan"];
+        status?: ClinicBilling["status"];
+        enabledModules?: Partial<ClinicBilling["enabledModules"]>;
+        limits?: Partial<ClinicBilling["limits"]>;
+      };
+    },
     token?: string,
   ) =>
     request<Clinic>(`/admin/clinics/${clinicId}`, {
@@ -490,6 +503,18 @@ export const apiClient = {
       mockFallback: () => [],
     }),
 
+  createMessageTemplate: (
+    clinicId: string,
+    data: Pick<MessageTemplate, "name" | "channel" | "body">,
+    token?: string,
+  ) =>
+    request<MessageTemplate>("/templates", {
+      method: "POST",
+      token,
+      clinicId,
+      body: data,
+    }),
+
   // PLANTILLAS (TEMPLATES)
   getTemplates: (clinicId: string, token?: string) =>
     request<MeasurementTemplate[]>("/measurement-templates", {
@@ -666,7 +691,11 @@ export const apiClient = {
     }),
 
   createClinic: (
-    data: { name: string; admin: { name: string; email: string; dni: string } },
+    data: {
+      name: string;
+      billing?: { plan?: Exclude<ClinicBilling["plan"], "individual"> };
+      admin: { name: string; email: string; dni: string };
+    },
     token?: string,
   ) =>
     request<Clinic & { clinicId?: string; adminUid: string }>(

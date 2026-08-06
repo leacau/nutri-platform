@@ -23,11 +23,13 @@ import { Label } from "../../../../../components/ui/label";
 import { NewRecordDialog } from "./components/new-record-dialog";
 import { RecordTimeline } from "./components/record-timeline";
 import { Textarea } from "../../../../../components/ui/textarea";
+import { UserAccount } from "../../../../../lib/types";
 import { apiClient } from "../../../../../lib/api-client";
 import { formatDate } from "../../../../../lib/utils";
 import { useAuth } from "../../../../../providers/auth-provider";
 import { useAuthedQuery } from "../../../../../hooks/use-authed-query";
 import { useClinic } from "../../../../../providers/clinic-provider";
+import { useI18n } from "../../../../../providers/i18n-provider";
 import { usePermissions } from "../../../../../hooks/use-permissions";
 import { useParams } from "next/navigation";
 
@@ -53,12 +55,7 @@ const isSameDay = (apptDateVal: any, todayStr: string) => {
   return `${year}-${month}-${day}` === todayStr;
 };
 
-const formatSex = (sexo?: string | null) => {
-  if (sexo === "female") return "Femenino";
-  if (sexo === "male") return "Masculino";
-  if (sexo === "other") return "Otro";
-  return "—";
-};
+const accountUid = (account: UserAccount) => account.uid || account.id;
 
 function ProfessionalPrivateNoteDialog({
   patientId,
@@ -69,6 +66,7 @@ function ProfessionalPrivateNoteDialog({
 }) {
   const { idToken } = useAuth();
   const { activeClinicId } = useClinic();
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState(initialContent);
@@ -91,7 +89,7 @@ function ProfessionalPrivateNoteDialog({
       setOpen(false);
     },
     onError: () => {
-      alert("No pudimos guardar la aclaración privada.");
+      alert(t("patients.privateNoteSaveError"));
     },
   });
 
@@ -107,36 +105,36 @@ function ProfessionalPrivateNoteDialog({
               ? "text-amber-500 hover:bg-amber-50 hover:text-amber-600"
               : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
           }
-          title="Aclaración privada del profesional"
+          title={t("patients.privateNoteButtonTitle")}
         >
           <AlertTriangle className="h-5 w-5" />
         </Button>
       </DialogTrigger>
       <DialogContent className="bg-white p-6 sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>Aclaración privada</DialogTitle>
+          <DialogTitle>{t("patients.privateNoteTitle")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          <Label>Texto privado para tu atención</Label>
+          <Label>{t("patients.privateNoteLabel")}</Label>
           <Textarea
             className="min-h-[180px]"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Ej: tener en cuenta adherencia, preferencias, contexto familiar..."
+            placeholder={t("patients.privateNotePlaceholder")}
           />
           <p className="text-xs text-muted-foreground">
-            Esta nota sólo queda asociada a tu usuario profesional.
+            {t("patients.privateNoteHelp")}
           </p>
         </div>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setOpen(false)}>
-            Cancelar
+            {t("action.cancel")}
           </Button>
           <Button
             onClick={() => mutation.mutate()}
             disabled={mutation.isPending}
           >
-            {mutation.isPending ? "Guardando..." : "Guardar aclaración"}
+            {mutation.isPending ? t("common.processing") : t("patients.privateNoteSave")}
           </Button>
         </div>
       </DialogContent>
@@ -148,6 +146,7 @@ export default function PatientDetailPage() {
   const params = useParams<{ id: string }>();
   const { idToken, user } = useAuth();
   const { activeClinicId, activeMembership } = useClinic();
+  const { t } = useI18n();
   const perms = usePermissions();
   const qc = useQueryClient();
 
@@ -183,6 +182,10 @@ export default function PatientDetailPage() {
       apiClient.getClinicalRecords(params.id, clinicId, token),
     enabled: perms.canViewMedicalRecords,
   });
+  const professionalsQuery = useAuthedQuery({
+    queryKey: ["professionals", activeClinicId],
+    queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
+  });
 
   // Mutación para completar el turno directamente desde la ficha
   const completeMutation = useMutation({
@@ -216,18 +219,36 @@ export default function PatientDetailPage() {
     : null;
 
   const records = perms.canViewMedicalRecords ? recordsQuery.data || [] : [];
+  const professionalNameByUid = (uid?: string | null) => {
+    if (!uid) return t("common.noProfessional");
+    return (
+      professionalsQuery.data?.find(
+        (professional: UserAccount) => accountUid(professional) === uid,
+      )?.name ?? t("common.workspaceProfessionalUnavailable")
+    );
+  };
+  const assignedProfessionalNames = (patient?.assignedProfessionalUids ?? [])
+    .map(professionalNameByUid)
+    .join(", ");
 
   if (patientQuery.isLoading || !isMounted) {
-    return <p className="text-sm text-muted-foreground">Cargando ficha...</p>;
+    return <p className="text-sm text-muted-foreground">{t("patients.loadingRecord")}</p>;
   }
 
   if (!patient) {
     return (
       <p className="text-sm text-destructive">
-        No encontramos este paciente en la clínica activa.
+        {t("patients.notFoundActiveWorkspace")}
       </p>
     );
   }
+
+  const formatSex = (sexo?: string | null) => {
+    if (sexo === "female") return t("sex.female");
+    if (sexo === "male") return t("sex.male");
+    if (sexo === "other") return t("sex.other");
+    return "—";
+  };
 
   return (
     <div className="space-y-6">
@@ -256,23 +277,22 @@ export default function PatientDetailPage() {
               >
                 <CheckCircle2 className="mr-2 h-4 w-4" />
                 {completeMutation.isPending
-                  ? "Finalizando..."
-                  : "Finalizar Turno Actual"}
+                  ? t("patients.finishingAppointment")
+                  : t("patients.finishCurrentAppointment")}
               </Button>
             )}
           </div>
           <div className="flex items-center gap-3 mt-2">
             <p className="text-sm text-slate-500 font-medium">
-              {patient.email || "Sin email registrado"}
+              {patient.email || t("patients.noEmailRegistered")}
             </p>
             <span className="text-slate-300">•</span>
             <Badge
               variant="secondary"
               className="text-xs font-normal bg-slate-100 text-slate-600"
             >
-              Asignado a:{" "}
-              {patient.assignedProfessionalUids?.join(", ") ??
-                "Clínica General"}
+              {t("patients.assigned")}:{" "}
+              {assignedProfessionalNames || t("patients.generalClinic")}
             </Badge>
           </div>
         </div>
@@ -284,7 +304,7 @@ export default function PatientDetailPage() {
         <div className="space-y-6">
           <Card className="shadow-sm border-slate-200">
             <CardHeader className="bg-slate-50/50 border-b border-slate-100 pb-4">
-              <CardTitle className="text-lg">Datos personales</CardTitle>
+              <CardTitle className="text-lg">{t("patients.personalData")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 pt-4">
               <div>
@@ -297,7 +317,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-                  Teléfono
+                  {t("common.phone")}
                 </p>
                 <p className="font-medium text-slate-900">
                   {patient.phone || "—"}
@@ -305,7 +325,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-                  Sexo
+                  {t("patients.sex")}
                 </p>
                 <p className="font-medium capitalize text-slate-900">
                   {formatSex(patient.sexo)}
@@ -313,7 +333,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-                  Fecha de nacimiento
+                  {t("patients.birthDate")}
                 </p>
                 <p className="font-medium text-slate-900">
                   {patient.birthDate ? formatDate(patient.birthDate) : "—"}
@@ -322,7 +342,7 @@ export default function PatientDetailPage() {
               {patient.notes && (
                 <div className="pt-2 border-t border-slate-100">
                   <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-                    Notas de admisión
+                    {t("patients.admissionNotes")}
                   </p>
                   <p className="text-sm mt-1 whitespace-pre-line text-slate-700 bg-amber-50 p-3 rounded-lg border border-amber-100">
                     {patient.notes}
@@ -335,7 +355,7 @@ export default function PatientDetailPage() {
           {/* Tarjeta de Turnos Históricos */}
           <Card className="shadow-sm border-slate-200">
             <CardHeader className="bg-slate-50/50 border-b border-slate-100 pb-4">
-              <CardTitle className="text-lg">Historial de Turnos</CardTitle>
+              <CardTitle className="text-lg">{t("patients.appointmentHistory")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 pt-4 max-h-[300px] overflow-y-auto pr-2">
               {appointments.map((appt) => {
@@ -356,10 +376,10 @@ export default function PatientDetailPage() {
                         }
                         className="mb-1"
                       >
-                        {appt.status}
+                        {t(`status.${appt.status}`)}
                       </Badge>
                       <p className="text-xs text-muted-foreground">
-                        Prof: {appt.professionalUid}
+                        {t("professionals.title")}: {professionalNameByUid(appt.professionalUid)}
                       </p>
                     </div>
                     <div className="text-right">
@@ -372,7 +392,7 @@ export default function PatientDetailPage() {
               })}
               {!appointments.length ? (
                 <p className="text-sm text-center text-muted-foreground py-4">
-                  El paciente no tiene turnos registrados.
+                  {t("patients.noAppointments")}
                 </p>
               ) : null}
             </CardContent>
@@ -384,10 +404,10 @@ export default function PatientDetailPage() {
           <div className="flex items-center justify-between bg-white p-4 rounded-xl border shadow-sm border-slate-200">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">
-                Evolución Clínica
+                {t("patients.clinicalEvolution")}
               </h2>
               <p className="text-sm text-slate-500">
-                {records.length} registros en total
+                {t("patients.totalRecords", { count: records.length })}
               </p>
             </div>
 
@@ -400,7 +420,7 @@ export default function PatientDetailPage() {
           {/* Contenedor del Timeline */}
           {recordsQuery.isLoading ? (
             <p className="text-sm text-muted-foreground py-4">
-              Cargando historial...
+              {t("patients.loadingHistory")}
             </p>
           ) : records.length === 0 ? (
             <Card className="border-dashed border-2 bg-slate-50/50 shadow-none border-slate-200">
@@ -409,16 +429,19 @@ export default function PatientDetailPage() {
                   <FileText className="h-8 w-8 text-slate-300" />
                 </div>
                 <p className="text-lg font-medium text-slate-700">
-                  Sin registros clínicos
+                  {t("patients.noClinicalRecords")}
                 </p>
                 <p className="text-sm text-slate-500 max-w-[400px] mt-2">
-                  Todavía no hay notas, mediciones ni estudios para este
-                  paciente. Presioná "Nuevo Registro" para comenzar la atención.
+                  {t("patients.noClinicalRecordsDetail")}
                 </p>
               </CardContent>
             </Card>
           ) : (
-            <RecordTimeline records={records} patient={patient} />
+            <RecordTimeline
+              records={records}
+              patient={patient}
+              professionalNameByUid={professionalNameByUid}
+            />
           )}
         </div>
       </div>

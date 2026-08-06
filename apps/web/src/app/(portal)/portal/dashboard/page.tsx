@@ -11,10 +11,12 @@ import {
 	CardTitle,
 } from '../../../../components/ui/card';
 import { RecordTimeline } from '../../../(protected)/app/patients/[id]/components/record-timeline';
+import { UserAccount } from '../../../../lib/types';
 import { apiClient } from '../../../../lib/api-client';
 import { formatDate } from '../../../../lib/utils';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
 import { useClinic } from '../../../../providers/clinic-provider';
+import { useI18n } from '../../../../providers/i18n-provider';
 
 const parseSafeDate = (dateVal: any): Date | null => {
 	if (!dateVal) return null;
@@ -30,13 +32,16 @@ const parseSafeDate = (dateVal: any): Date | null => {
 	return isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const formatSafeDate = (dateVal: any, fallback = 'Sin fecha') => {
+const formatSafeDate = (dateVal: any, fallback: string) => {
 	const date = parseSafeDate(dateVal);
 	return date ? formatDate(date.toISOString()) : fallback;
 };
 
+const accountUid = (account: UserAccount) => account.uid || account.id;
+
 export default function PortalDashboardPage() {
 	const { activeMembership } = useClinic();
+	const { t } = useI18n();
 	const patientId = activeMembership?.patientId;
 
 	const patientQuery = useAuthedQuery({
@@ -57,6 +62,11 @@ export default function PortalDashboardPage() {
 			apiClient.getClinicalRecords(patientId!, clinicId, token),
 		enabled: Boolean(patientId),
 		retry: false,
+	});
+	const professionalsQuery = useAuthedQuery({
+		queryKey: ['portal-professionals'],
+		queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
+		enabled: Boolean(patientId),
 	});
 
 	const patient = patientQuery.data;
@@ -84,6 +94,17 @@ export default function PortalDashboardPage() {
 	const records = recordsQuery.data || [];
 	const recordsBlocked =
 		recordsQuery.isError || patient?.medicalRecordAccessEnabled === false;
+	const professionalNameByUid = (uid?: string | null) => {
+		if (!uid) return t('common.noProfessional');
+		return (
+			professionalsQuery.data?.find(
+				(professional: UserAccount) => accountUid(professional) === uid,
+			)?.name ?? t('common.workspaceProfessional')
+		);
+	};
+	const assignedProfessionalNames = (patient?.assignedProfessionalUids ?? [])
+		.map(professionalNameByUid)
+		.join(', ');
 
 	return (
 		<div className='space-y-6'>
@@ -92,24 +113,26 @@ export default function PortalDashboardPage() {
 					<CardHeader className='flex items-center justify-between'>
 						<CardTitle className='flex items-center gap-2 text-lg'>
 							<HeartPulse className='h-4 w-4' />
-							Próximo turno
+							{t('portal.nextAppointment')}
 						</CardTitle>
-						<Badge variant='secondary'>Paciente</Badge>
+						<Badge variant='secondary'>{t('role.patient')}</Badge>
 					</CardHeader>
 					<CardContent>
 						{nextAppointment ? (
 							<div className='space-y-2'>
-								<p className='text-sm text-muted-foreground'>Fecha</p>
+								<p className='text-sm text-muted-foreground'>{t('common.date')}</p>
 								<p className='text-xl font-semibold'>
-									{formatSafeDate(nextAppointment.scheduledFor)}
+									{formatSafeDate(nextAppointment.scheduledFor, t('common.noDate'))}
 								</p>
 								<p className='text-sm text-muted-foreground'>
-									Profesional asignado: {nextAppointment.professionalUid}
+									{t('portal.assignedProfessional', {
+										name: professionalNameByUid(nextAppointment.professionalUid),
+									})}
 								</p>
 							</div>
 						) : (
 							<p className='text-sm text-muted-foreground'>
-								No tenés turnos programados.
+								{t('portal.noScheduledAppointments')}
 							</p>
 						)}
 					</CardContent>
@@ -119,15 +142,14 @@ export default function PortalDashboardPage() {
 					<CardHeader className='flex items-center justify-between'>
 						<CardTitle className='flex items-center gap-2 text-lg'>
 							<NotebookText className='h-4 w-4' />
-							Tu perfil
+							{t('portal.yourProfile')}
 						</CardTitle>
 					</CardHeader>
 					<CardContent className='space-y-2'>
-						<p className='text-sm'>Nombre: {patient?.name ?? '—'}</p>
+						<p className='text-sm'>{t('common.name')}: {patient?.name ?? '—'}</p>
 						<p className='text-sm'>Email: {patient?.email ?? '—'}</p>
 						<p className='text-sm'>
-							Profesionales:{' '}
-							{patient?.assignedProfessionalUids?.join(', ') ?? '—'}
+							{t('nav.nutritionists')}: {assignedProfessionalNames || '—'}
 						</p>
 					</CardContent>
 				</Card>
@@ -137,7 +159,7 @@ export default function PortalDashboardPage() {
 				<CardHeader>
 					<CardTitle className='flex items-center gap-2 text-lg'>
 						<CalendarClock className='h-4 w-4' />
-						Historial de turnos
+						{t('portal.appointmentHistory')}
 					</CardTitle>
 				</CardHeader>
 				<CardContent className='space-y-3'>
@@ -148,20 +170,20 @@ export default function PortalDashboardPage() {
 						>
 							<div>
 								<Badge variant={appt.status === 'cancelled' ? 'outline' : 'secondary'}>
-									{appt.status}
+									{t(`status.${appt.status}`)}
 								</Badge>
 								<p className='mt-1 text-xs text-muted-foreground'>
-									Profesional: {appt.professionalUid || 'A definir'}
+									{t('role.professional')}: {professionalNameByUid(appt.professionalUid)}
 								</p>
 							</div>
 							<p className='text-sm font-semibold'>
-								{formatSafeDate(appt.scheduledFor || appt.requestedAt)}
+								{formatSafeDate(appt.scheduledFor || appt.requestedAt, t('common.noDate'))}
 							</p>
 						</div>
 					))}
 					{!myAppointments.length ? (
 						<p className='text-sm text-muted-foreground'>
-							Todavía no tenés turnos registrados.
+							{t('portal.noAppointmentHistory')}
 						</p>
 					) : null}
 				</CardContent>
@@ -171,20 +193,24 @@ export default function PortalDashboardPage() {
 				<CardHeader>
 					<CardTitle className='flex items-center gap-2 text-lg'>
 						<NotebookText className='h-4 w-4' />
-						Historia clínica
+						{t('portal.medicalHistory')}
 					</CardTitle>
 				</CardHeader>
 				<CardContent>
 					{recordsBlocked ? (
 						<p className='text-sm text-muted-foreground'>
-							La clínica todavía no habilitó la visualización de tu historia
-							clínica.
+							{t('portal.historyNotEnabled')}
 						</p>
 					) : records.length ? (
-						<RecordTimeline records={records} patient={patient} readOnly />
+						<RecordTimeline
+							records={records}
+							patient={patient}
+							readOnly
+							professionalNameByUid={professionalNameByUid}
+						/>
 					) : (
 						<p className='text-sm text-muted-foreground'>
-							Todavía no hay registros visibles.
+							{t('portal.noVisibleRecords')}
 						</p>
 					)}
 				</CardContent>

@@ -5,7 +5,7 @@ import type {
 } from 'firebase-admin/firestore';
 import type { NextFunction, Request, Response } from 'express';
 
-import type { ClinicMembershipDoc } from '../types/clinics.js';
+import type { ClinicBilling, ClinicMembershipDoc } from '../types/clinics.js';
 import type { PatientDoc } from '../types/patients.js';
 import type { ClinicCapability, Role } from '../types/auth.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
@@ -17,6 +17,7 @@ import {
 	defaultCapabilitiesForRole,
 	mergeMembershipCapabilities,
 } from '../security/clinicCapabilities.js';
+import { normalizeBilling } from '../billing/plans.js';
 
 export interface SessionAnalysisResult {
 	staffClinics: Array<{
@@ -25,12 +26,16 @@ export interface SessionAnalysisResult {
 		clinicName: string | null;
 		tenantType?: 'clinic' | 'individual_practice';
 		ownerProfessionalUid?: string | null;
+		billing?: ClinicBilling;
 		capabilities?: ClinicCapability[];
 	}>;
 	patientClinics: Array<{
 		clinicId: string;
 		clinicName: string | null;
 		patientId: string;
+		tenantType?: 'clinic' | 'individual_practice';
+		ownerProfessionalUid?: string | null;
+		billing?: ClinicBilling;
 	}>;
 	resolved: {
 		role: Role | null;
@@ -68,6 +73,12 @@ export async function analyzeUserSession(
 					tenantType: (clinicDoc.data() as any)?.tenantType ?? 'clinic',
 					ownerProfessionalUid:
 						(clinicDoc.data() as any)?.ownerProfessionalUid ?? null,
+					billing: normalizeBilling(
+						(clinicDoc.data() as any)?.billing,
+						(clinicDoc.data() as any)?.tenantType === 'individual_practice'
+							? 'individual'
+							: 'starter_1_5',
+					),
 					capabilities: defaultCapabilitiesForRole('clinic_admin'),
 				});
 			}
@@ -87,6 +98,12 @@ export async function analyzeUserSession(
 				clinicName: data?.name ?? 'Sin nombre',
 				tenantType: data?.tenantType ?? 'clinic',
 				ownerProfessionalUid: data?.ownerProfessionalUid ?? null,
+				billing: normalizeBilling(
+					data?.billing,
+					data?.tenantType === 'individual_practice'
+						? 'individual'
+						: 'starter_1_5',
+				),
 				capabilities: defaultCapabilitiesForRole('clinic_admin'),
 			});
 		});
@@ -134,6 +151,9 @@ export async function analyzeUserSession(
 					clinicName: clinic?.name ?? null,
 					tenantType: clinic?.tenantType ?? 'clinic',
 					ownerProfessionalUid: clinic?.ownerProfessionalUid ?? null,
+					billing:
+						clinic?.billing ??
+						normalizeBilling(undefined, 'starter_1_5'),
 					capabilities: mergeMembershipCapabilities(
 						membershipsByClinic.get(clinicId) ?? [],
 					),
@@ -156,7 +176,7 @@ export async function analyzeUserSession(
 
 	const patientClinicsMap = await resolvePatientClinics(db, uid);
 	if (patientClinicsMap.size > 0) {
-			const namesMap = await fetchClinicNames(
+			const clinicsMap = await fetchClinicSummaries(
 			db,
 			Array.from(patientClinicsMap.keys()),
 		);
@@ -165,8 +185,14 @@ export async function analyzeUserSession(
 			if (patient.portalAccessEnabled === false) continue;
 			result.patientClinics.push({
 				clinicId,
-				clinicName: namesMap.get(clinicId) ?? null,
+				clinicName: clinicsMap.get(clinicId)?.name ?? null,
 				patientId: patient.id,
+				tenantType: clinicsMap.get(clinicId)?.tenantType ?? 'clinic',
+				ownerProfessionalUid:
+					clinicsMap.get(clinicId)?.ownerProfessionalUid ?? null,
+				billing:
+					clinicsMap.get(clinicId)?.billing ??
+					normalizeBilling(undefined, 'starter_1_5'),
 			});
 		}
 
@@ -247,25 +273,6 @@ async function resolvePatientClinics(
 	return map;
 }
 
-async function fetchClinicNames(
-	db: Firestore,
-	ids: string[],
-): Promise<Map<string, string>> {
-	const map = new Map<string, string>();
-	if (ids.length === 0) return map;
-
-	const refs = ids.map((id) => db.collection('clinics').doc(id));
-	const snaps = await db.getAll(...refs);
-
-	snaps.forEach((snap: DocumentSnapshot) => {
-		if (!snap.exists) return;
-		const d = snap.data() as { name?: string } | undefined;
-		map.set(snap.id, d?.name ?? 'Sin nombre');
-	});
-
-	return map;
-}
-
 async function fetchClinicSummaries(
 	db: Firestore,
 	ids: string[],
@@ -276,6 +283,7 @@ async function fetchClinicSummaries(
 			name: string;
 			tenantType: 'clinic' | 'individual_practice';
 			ownerProfessionalUid: string | null;
+			billing: ClinicBilling;
 		}
 	>
 > {
@@ -285,6 +293,7 @@ async function fetchClinicSummaries(
 			name: string;
 			tenantType: 'clinic' | 'individual_practice';
 			ownerProfessionalUid: string | null;
+			billing: ClinicBilling;
 		}
 	>();
 	if (ids.length === 0) return map;
@@ -299,12 +308,17 @@ async function fetchClinicSummaries(
 					name?: string;
 					tenantType?: 'clinic' | 'individual_practice';
 					ownerProfessionalUid?: string | null;
+					billing?: Partial<ClinicBilling>;
 			  }
 			| undefined;
 		map.set(snap.id, {
 			name: d?.name ?? 'Sin nombre',
 			tenantType: d?.tenantType ?? 'clinic',
 			ownerProfessionalUid: d?.ownerProfessionalUid ?? null,
+			billing: normalizeBilling(
+				d?.billing,
+				d?.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+			),
 		});
 	});
 

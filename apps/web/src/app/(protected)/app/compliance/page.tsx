@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   DatabaseBackup,
   FileWarning,
+  Lock,
   Save,
   ShieldCheck,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import type {
 import { formatDate } from "../../../../lib/utils";
 import { useAuth } from "../../../../providers/auth-provider";
 import { useClinic } from "../../../../providers/clinic-provider";
+import { useI18n } from "../../../../providers/i18n-provider";
 
 type PolicyForm = Pick<
   CompliancePolicy,
@@ -61,9 +63,14 @@ function statusVariant(status: string) {
 }
 
 export default function CompliancePage() {
-  const { activeClinicId } = useClinic();
+  const { activeClinicId, activeClinic, platformRole } = useClinic();
   const { idToken } = useAuth();
+  const { t } = useI18n();
   const qc = useQueryClient();
+  const digitalSignatureEnabled =
+    platformRole === "platform_admin" ||
+    activeClinic?.billing?.enabledModules?.digitalSignature === true;
+  const requestLabel = (type: DataSubjectRequestType) => t(`compliance.request.${type}`);
 
   const checklistQuery = useAuthedQuery({
     queryKey: ["compliance-checklist"],
@@ -200,8 +207,8 @@ export default function CompliancePage() {
     <RoleGuard allowed={["clinic_admin"]} allowPlatformAdmin>
       <div className="space-y-6">
         <div>
-          <p className="text-sm text-muted-foreground">Privacidad, seguridad y trazabilidad</p>
-          <h1 className="text-2xl font-semibold text-primary">Compliance legal</h1>
+          <p className="text-sm text-muted-foreground">{t("compliance.subtitle")}</p>
+          <h1 className="text-2xl font-semibold text-primary">{t("compliance.title")}</h1>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
@@ -224,7 +231,7 @@ export default function CompliancePage() {
           {!checklistQuery.data?.checks.length ? (
             <Card className="lg:col-span-3">
               <CardContent className="py-6 text-sm text-muted-foreground">
-                Cargando checklist de compliance...
+                {t("compliance.loadingChecklist")}
               </CardContent>
             </Card>
           ) : null}
@@ -234,11 +241,11 @@ export default function CompliancePage() {
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <ClipboardCheck className="h-4 w-4" />
-              Politicas de seguridad y privacidad
+              {t("compliance.securityPolicies")}
             </CardTitle>
             <Button size="sm" onClick={() => policyMutation.mutate()} disabled={policyMutation.isPending}>
               <Save className="mr-2 h-4 w-4" />
-              Guardar
+              {t("action.save")}
             </Button>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
@@ -250,7 +257,7 @@ export default function CompliancePage() {
                   setPolicy((prev) => ({ ...prev, mfaRequiredForAdmins: event.target.checked }))
                 }
               />
-              Requerir MFA para superadmin/admin clinica
+              {t("compliance.requireMfaAdmins")}
             </label>
             <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
               <input
@@ -263,10 +270,10 @@ export default function CompliancePage() {
                   }))
                 }
               />
-              Requerir MFA para profesionales
+              {t("compliance.requireMfaProfessionals")}
             </label>
             <div className="space-y-1">
-              <Label>Timeout de sesion (minutos)</Label>
+              <Label>{t("compliance.sessionTimeout")}</Label>
               <Input
                 type="number"
                 min={5}
@@ -281,7 +288,7 @@ export default function CompliancePage() {
               />
             </div>
             <div className="space-y-1">
-              <Label>Retencion historia clinica (anios)</Label>
+              <Label>{t("compliance.clinicalRetention")}</Label>
               <Input
                 type="number"
                 min={10}
@@ -296,7 +303,7 @@ export default function CompliancePage() {
               />
             </div>
             <div className="space-y-1">
-              <Label>Frecuencia de backup</Label>
+              <Label>{t("compliance.backupFrequency")}</Label>
               <Select
                 value={policy.backupFrequency}
                 onChange={(event) =>
@@ -306,12 +313,12 @@ export default function CompliancePage() {
                   }))
                 }
               >
-                <option value="daily">Diario</option>
-                <option value="weekly">Semanal</option>
+                <option value="daily">{t("compliance.daily")}</option>
+                <option value="weekly">{t("compliance.weekly")}</option>
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Retencion de backups (dias)</Label>
+              <Label>{t("compliance.backupRetention")}</Label>
               <Input
                 type="number"
                 min={7}
@@ -325,24 +332,36 @@ export default function CompliancePage() {
                 }
               />
             </div>
+            {digitalSignatureEnabled ? (
+              <div className="space-y-1">
+                <Label>{t("compliance.signatureMode")}</Label>
+                <Select
+                  value={policy.digitalSignatureMode}
+                  onChange={(event) =>
+                    setPolicy((prev) => ({
+                      ...prev,
+                      digitalSignatureMode: event.target.value as PolicyForm["digitalSignatureMode"],
+                    }))
+                  }
+                >
+                  <option value="pending_provider">{t("compliance.pendingProvider")}</option>
+                  <option value="electronic_signature">{t("compliance.electronicSignature")}</option>
+                  <option value="certified_digital_signature">{t("compliance.certifiedSignature")}</option>
+                </Select>
+              </div>
+            ) : (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Lock className="h-4 w-4" />
+                  {t("compliance.signatureLocked")}
+                </div>
+                <p className="mt-1">
+                  {t("compliance.signatureLockedDetail")}
+                </p>
+              </div>
+            )}
             <div className="space-y-1">
-              <Label>Modo de firma</Label>
-              <Select
-                value={policy.digitalSignatureMode}
-                onChange={(event) =>
-                  setPolicy((prev) => ({
-                    ...prev,
-                    digitalSignatureMode: event.target.value as PolicyForm["digitalSignatureMode"],
-                  }))
-                }
-              >
-                <option value="pending_provider">Pendiente de proveedor</option>
-                <option value="electronic_signature">Firma electronica</option>
-                <option value="certified_digital_signature">Firma digital certificada</option>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Proveedor cloud / transferencia</Label>
+              <Label>{t("compliance.cloudProvider")}</Label>
               <Input
                 value={policy.internationalTransferProvider}
                 onChange={(event) =>
@@ -354,7 +373,7 @@ export default function CompliancePage() {
               />
             </div>
             <div className="space-y-1 md:col-span-2">
-              <Label>Salvaguardas transferencia/cloud</Label>
+              <Label>{t("compliance.cloudSafeguards")}</Label>
               <Textarea
                 value={policy.internationalTransferSafeguards}
                 onChange={(event) =>
@@ -366,7 +385,7 @@ export default function CompliancePage() {
               />
             </div>
             <div className="space-y-1">
-              <Label>Contacto privacidad</Label>
+              <Label>{t("compliance.privacyContact")}</Label>
               <Input
                 placeholder="privacidad@clinica.com"
                 value={policy.dataProtectionContact}
@@ -376,7 +395,7 @@ export default function CompliancePage() {
               />
             </div>
             <div className="space-y-1">
-              <Label>Contacto incidentes</Label>
+              <Label>{t("compliance.incidentContact")}</Label>
               <Input
                 placeholder="seguridad@clinica.com"
                 value={policy.incidentResponseContact}
@@ -393,20 +412,20 @@ export default function CompliancePage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <DatabaseBackup className="h-4 w-4" />
-                Evidencia de backup
+                {t("compliance.backupEvidence")}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-3">
                 <Input
-                  placeholder="Proveedor"
+                  placeholder={t("compliance.provider")}
                   value={backupForm.provider}
                   onChange={(event) =>
                     setBackupForm((prev) => ({ ...prev, provider: event.target.value }))
                   }
                 />
                 <Input
-                  placeholder="Ubicacion"
+                  placeholder={t("compliance.location")}
                   value={backupForm.location}
                   onChange={(event) =>
                     setBackupForm((prev) => ({ ...prev, location: event.target.value }))
@@ -421,13 +440,13 @@ export default function CompliancePage() {
                     }))
                   }
                 >
-                  <option value="verified">Verificado</option>
-                  <option value="success">Exitoso</option>
-                  <option value="failed">Fallido</option>
+                  <option value="verified">{t("compliance.verified")}</option>
+                  <option value="success">{t("compliance.success")}</option>
+                  <option value="failed">{t("compliance.failed")}</option>
                 </Select>
               </div>
               <Textarea
-                placeholder="Detalle de verificacion, snapshot/export, responsable o ticket."
+                placeholder={t("compliance.backupDetailPlaceholder")}
                 value={backupForm.detail}
                 onChange={(event) =>
                   setBackupForm((prev) => ({ ...prev, detail: event.target.value }))
@@ -438,7 +457,7 @@ export default function CompliancePage() {
                 onClick={() => backupMutation.mutate()}
                 disabled={backupMutation.isPending || backupForm.detail.trim().length < 4}
               >
-                Registrar evidencia
+                {t("compliance.registerEvidence")}
               </Button>
               <div className="space-y-2">
                 {backupQuery.data?.slice(0, 5).map((event) => (
@@ -459,7 +478,7 @@ export default function CompliancePage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <FileWarning className="h-4 w-4" />
-                Solicitudes ARCO / Habeas Data
+                {t("compliance.dataRequests")}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -473,21 +492,21 @@ export default function CompliancePage() {
                     }))
                   }
                 >
-                  {Object.entries(requestTypeLabels).map(([value, label]) => (
+                  {(Object.keys(requestTypeLabels) as DataSubjectRequestType[]).map((value) => (
                     <option key={value} value={value}>
-                      {label}
+                      {requestLabel(value)}
                     </option>
                   ))}
                 </Select>
                 <Input
-                  placeholder="Patient ID"
+                  placeholder={t("compliance.patientOrEmail")}
                   value={requestForm.patientId}
                   onChange={(event) =>
                     setRequestForm((prev) => ({ ...prev, patientId: event.target.value }))
                   }
                 />
                 <Input
-                  placeholder="Email titular"
+                  placeholder={t("compliance.subjectEmail")}
                   value={requestForm.subjectEmail}
                   onChange={(event) =>
                     setRequestForm((prev) => ({ ...prev, subjectEmail: event.target.value }))
@@ -495,7 +514,7 @@ export default function CompliancePage() {
                 />
               </div>
               <Textarea
-                placeholder="Detalle de la solicitud recibida."
+                placeholder={t("compliance.requestDetailPlaceholder")}
                 value={requestForm.description}
                 onChange={(event) =>
                   setRequestForm((prev) => ({ ...prev, description: event.target.value }))
@@ -506,16 +525,16 @@ export default function CompliancePage() {
                 onClick={() => requestMutation.mutate()}
                 disabled={requestMutation.isPending || requestForm.description.trim().length < 8}
               >
-                Registrar solicitud
+                {t("compliance.registerRequest")}
               </Button>
               <div className="space-y-2">
                 {requestsQuery.data?.slice(0, 8).map((request) => (
                   <div key={request.id} className="rounded-md border p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="font-medium">{requestTypeLabels[request.type]}</p>
+                        <p className="font-medium">{requestLabel(request.type)}</p>
                         <p className="text-xs text-muted-foreground">
-                          Vence: {formatDate(request.dueAt ?? "")}
+                          {t("compliance.due")}: {formatDate(request.dueAt ?? "")}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -525,7 +544,7 @@ export default function CompliancePage() {
                           variant="outline"
                           onClick={() => resolveRequestMutation.mutate(request)}
                         >
-                          {request.status === "fulfilled" ? "Reabrir" : "Cumplida"}
+                          {request.status === "fulfilled" ? t("compliance.reopen") : t("compliance.fulfilled")}
                         </Button>
                       </div>
                     </div>

@@ -46,6 +46,7 @@ import { evaluateMeasurement } from "../../../../../../lib/clinical-evaluator";
 import { formatDate } from "../../../../../../lib/utils";
 import { useAuth } from "../../../../../../providers/auth-provider";
 import { useClinic } from "../../../../../../providers/clinic-provider";
+import { useI18n } from "../../../../../../providers/i18n-provider";
 import { useReactToPrint } from "react-to-print";
 
 // Calculador rápido de edad
@@ -74,10 +75,12 @@ export function RecordTimeline({
   records,
   patient,
   readOnly = false,
+  professionalNameByUid,
 }: {
   records: ClinicalRecord[];
   patient: any;
   readOnly?: boolean;
+  professionalNameByUid?: (uid?: string | null) => string;
 }) {
   if (!records || records.length === 0) return null;
 
@@ -89,6 +92,7 @@ export function RecordTimeline({
           record={record}
           patient={patient}
           readOnly={readOnly}
+          professionalNameByUid={professionalNameByUid}
         />
       ))}
     </div>
@@ -99,10 +103,12 @@ function RecordCard({
   record,
   patient,
   readOnly,
+  professionalNameByUid,
 }: {
   record: ClinicalRecord;
   patient: any;
   readOnly: boolean;
+  professionalNameByUid?: (uid?: string | null) => string;
 }) {
   const { id, patientId, type, date, data, professionalUid } = record;
   const contentRef = useRef<HTMLDivElement>(null);
@@ -111,6 +117,7 @@ function RecordCard({
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const { idToken } = useAuth();
   const { activeClinicId } = useClinic();
+  const { t } = useI18n();
   const qc = useQueryClient();
 
   // Extraemos edad y sexo del paciente para el Cerebro Clínico
@@ -144,9 +151,7 @@ function RecordCard({
       setIsDeleteDialogOpen(false);
     },
     onError: () => {
-      alert(
-        "No se pudo bloquear el registro. Revis? que tengas los permisos necesarios.",
-      );
+      alert(t("records.blockError"));
       setIsDeleteDialogOpen(false);
     },
   });
@@ -166,7 +171,7 @@ function RecordCard({
       });
     },
     onError: () => {
-      alert("No pudimos actualizar la visibilidad del registro.");
+      alert(t("records.visibilityError"));
     },
   });
 
@@ -176,49 +181,49 @@ function RecordCard({
       color: "text-blue-600",
       bg: "bg-blue-50",
       border: "border-blue-100",
-      title: "Evolución Clínica",
+      title: t("records.note"),
     },
     measurement: {
       icon: Activity,
       color: "text-slate-600",
       bg: "bg-slate-50",
       border: "border-slate-200",
-      title: "Mediciones (Legado)",
+      title: t("records.legacyMeasurements"),
     },
     dynamic_measurement: {
       icon: Activity,
       color: "text-purple-600",
       bg: "bg-purple-50",
       border: "border-purple-200",
-      title: data?.templateName || "Plantilla de Medición",
+      title: data?.templateName || t("measurement.title"),
     },
     prescription: {
       icon: Pill,
       color: "text-red-600",
       bg: "bg-red-50",
       border: "border-red-100",
-      title: "Receta / Indicaciones",
+      title: t("records.prescription"),
     },
     meal_plan: {
       icon: Apple,
       color: "text-emerald-600",
       bg: "bg-emerald-50",
       border: "border-emerald-100",
-      title: "Plan de Alimentación",
+      title: t("records.mealPlan"),
     },
     attachment: {
       icon: Paperclip,
       color: "text-amber-600",
       bg: "bg-amber-50",
       border: "border-amber-100",
-      title: "Estudio / Archivo Adjunto",
+      title: t("records.attachment"),
     },
   }[type] || {
     icon: FileText,
     color: "text-gray-600",
     bg: "bg-gray-50",
     border: "border-gray-100",
-    title: "Registro Clínico",
+    title: t("records.clinicalRecord"),
   };
 
   const Icon = config.icon;
@@ -243,27 +248,22 @@ function RecordCard({
                 {config.title}
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {formatDate(date)} · Firmado por UID: {professionalUid}
+                {formatDate(date)} · {t("records.signedBy", { name: professionalNameByUid?.(professionalUid) ?? t("records.professionalFallback") })}
               </p>
               <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
                 {record.status === "error_rectified" ? (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">
-                    Rectificado
+                    {t("records.rectified")}
                   </span>
                 ) : null}
                 {record.status === "blocked" ? (
                   <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">
-                    Bajo revisi?n
+                    {t("records.underReview")}
                   </span>
                 ) : null}
                 {record.correctionOfRecordId ? (
                   <span className="rounded-full bg-blue-100 px-2 py-0.5 font-semibold text-blue-700">
-                    Rectifica {record.correctionOfRecordId.slice(0, 8)}
-                  </span>
-                ) : null}
-                {record.hash ? (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-slate-600">
-                    hash {record.hash.slice(0, 10)}
+                    {t("records.linkedRectification")}
                   </span>
                 ) : null}
               </div>
@@ -291,8 +291,8 @@ function RecordCard({
                   <EyeOff className="mr-2 h-4 w-4" />
                 )}
                 {record.visibleInPatientPortal
-                  ? "Visible en portal"
-                  : "Oculto al paciente"}
+                  ? t("records.visibleInPortalShort")
+                  : t("records.hiddenToPatient")}
               </Button>
             ) : null}
 
@@ -308,7 +308,7 @@ function RecordCard({
                   handlePrint();
                 }}
               >
-                <Printer className="mr-2 h-4 w-4" /> Imprimir
+                <Printer className="mr-2 h-4 w-4" /> {t("action.print")}
               </Button>
             )}
 
@@ -328,14 +328,14 @@ function RecordCard({
                     onClick={() => setIsEditDialogOpen(true)}
                     className="cursor-pointer"
                   >
-                    <Pencil className="mr-2 h-4 w-4" /> Rectificar registro
+                    <Pencil className="mr-2 h-4 w-4" /> {t("records.rectifyRecord")}
                   </DropdownMenuItem>
 
                   <DropdownMenuItem
                     className="text-red-600 cursor-pointer"
                     onClick={() => setIsDeleteDialogOpen(true)}
                   >
-                    <Ban className="mr-2 h-4 w-4" /> Bloquear / revisión
+                    <Ban className="mr-2 h-4 w-4" /> {t("records.blockReview")}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -346,12 +346,12 @@ function RecordCard({
         <CardContent className="p-5 text-sm text-slate-700">
           {type === "note" && (
             <p className="whitespace-pre-line leading-relaxed">
-              {data?.content || "Sin contenido"}
+              {data?.content || t("records.noContent")}
             </p>
           )}
           {type === "prescription" && (
             <p className="whitespace-pre-line leading-relaxed text-lg font-medium">
-              {data?.content || "Sin contenido"}
+              {data?.content || t("records.noContent")}
             </p>
           )}
 
@@ -359,7 +359,7 @@ function RecordCard({
             <div>
               {data?.mode === "free_text" && (
                 <p className="whitespace-pre-line leading-relaxed">
-                  {data?.freeTextContent || "Sin contenido"}
+                  {data?.freeTextContent || t("records.noContent")}
                 </p>
               )}
               {data?.mode === "weekly" && data?.weeklyTemplate && (
@@ -368,28 +368,28 @@ function RecordCard({
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider print:bg-slate-100">
                         <th className="p-3 border-b border-slate-200 font-semibold w-24">
-                          Comida
+                          {t("records.food")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold">
-                          Lunes
+                          {t("records.monday")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold">
-                          Martes
+                          {t("records.tuesday")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold">
-                          Miércoles
+                          {t("records.wednesday")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold">
-                          Jueves
+                          {t("records.thursday")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold">
-                          Viernes
+                          {t("records.friday")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold bg-emerald-50/50 print:bg-emerald-50">
-                          Sábado
+                          {t("records.saturday")}
                         </th>
                         <th className="p-3 border-b border-slate-200 font-semibold bg-emerald-50/50 print:bg-emerald-50">
-                          Domingo
+                          {t("records.sunday")}
                         </th>
                       </tr>
                     </thead>
@@ -644,7 +644,7 @@ function RecordCard({
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  Ver Documento
+                  {t("records.document")}
                 </a>
               </Button>
             </div>
@@ -658,14 +658,13 @@ function RecordCard({
       >
         <AlertDialogContent className="bg-white p-6 rounded-xl shadow-2xl border border-slate-200">
           <AlertDialogHeader>
-            <AlertDialogTitle>Bloquear asiento cl?nico</AlertDialogTitle>
+            <AlertDialogTitle>{t("records.blockTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acci?n no borra el asiento. Lo marca como bajo revisi?n y
-              conserva el contenido original para auditor?a.
+              {t("records.blockDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel>{t("action.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
@@ -673,7 +672,7 @@ function RecordCard({
               }}
               className="bg-red-600 hover:bg-red-700"
             >
-              S?, bloquear registro
+              {t("records.blockConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -696,6 +695,7 @@ function PdfPreview({
   url: string;
   onOpen?: () => void;
 }) {
+  const { t } = useI18n();
   const viewerUrl = `${url}${url.includes("?") ? "&" : "?"}response-content-disposition=inline`;
 
   return (
@@ -712,7 +712,7 @@ function PdfPreview({
             rel="noopener noreferrer"
             onClick={onOpen}
           >
-            Abrir
+            {t("action.open")}
           </a>
         </Button>
       </div>
@@ -727,7 +727,7 @@ function PdfPreview({
           className="h-[520px] w-full bg-white"
         />
         <div className="p-4 text-sm text-muted-foreground">
-          No pudimos mostrar el PDF embebido en este navegador.
+          {t("records.pdfInlineError")}
         </div>
       </object>
     </div>

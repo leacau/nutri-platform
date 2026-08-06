@@ -5,7 +5,7 @@ import { Locale, locales, messages } from "../i18n/messages";
 
 type I18nContextValue = {
   locale: Locale;
-  t: (key: string) => string;
+  t: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
   setLocale: (locale: Locale) => void;
 };
 
@@ -28,7 +28,15 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         }
         setLocale(loc);
       },
-      t: (key: string) => messages[locale][key] || key,
+      t: (key, vars) => {
+        let text = messages[locale][key] || messages["es-AR"][key] || key;
+        if (vars) {
+          Object.entries(vars).forEach(([name, value]) => {
+            text = text.replaceAll(`{${name}}`, String(value ?? ""));
+          });
+        }
+        return text;
+      },
     }),
     [locale],
   );

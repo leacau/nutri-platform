@@ -8,6 +8,7 @@ import { logEvent, writeAuditLog } from '../observability/eventLogger.js';
 import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 import { auditRouter } from './audit.js';
 import { complianceRouter } from './compliance.js';
+import { messageTemplatesRouter } from './messageTemplates.js';
 
 export const apiRouter = Router();
 import { authMiddleware } from '../middlewares/authMiddleware.js';
@@ -102,3 +103,6 @@ apiRouter.use('/audit', auditRouter);
 
 // Compliance
 apiRouter.use('/compliance', complianceRouter);
+
+// Automated message templates
+apiRouter.use('/templates', messageTemplatesRouter);

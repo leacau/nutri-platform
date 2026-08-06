@@ -28,6 +28,7 @@ import { getFirebaseApp } from "../../../../../../lib/firebase";
 import { useAuth } from "../../../../../../providers/auth-provider";
 import { useAuthedQuery } from "../../../../../../hooks/use-authed-query";
 import { useClinic } from "../../../../../../providers/clinic-provider";
+import { useI18n } from "../../../../../../providers/i18n-provider";
 import { useState } from "react";
 
 type RecordType =
@@ -166,6 +167,7 @@ function RecordForm({
 
   const { idToken, user } = useAuth();
   const { activeClinicId } = useClinic();
+  const { t } = useI18n();
   const qc = useQueryClient();
 
   // NUEVO: Traemos las plantillas del backend
@@ -242,7 +244,7 @@ function RecordForm({
             : undefined;
         if (mealPlanPdfFile) {
           if (mealPlanPdfFile.type !== "application/pdf") {
-            throw new Error("El plan adjunto debe ser un PDF.");
+            throw new Error(t("records.pdfMustBePdf"));
           }
           const storage = getStorage(getFirebaseApp());
           const uniqueFileName = `${Date.now()}-${Math.random()
@@ -296,7 +298,7 @@ function RecordForm({
       // NUEVO: Empaquetamos la plantilla dinámica
       if (type === "dynamic_measurement") {
         if (!selectedTemplate)
-          throw new Error("Debes seleccionar una plantilla");
+          throw new Error(t("records.selectTemplateError"));
         dataPayload = {
           templateId: selectedTemplateId,
           templateName: selectedTemplate.name,
@@ -332,7 +334,7 @@ function RecordForm({
             fileType: recordToEdit.data.fileType,
           };
         } else {
-          throw new Error("Por favor, selecciona un archivo para adjuntar.");
+          throw new Error(t("records.fileRequired"));
         }
       }
 
@@ -406,8 +408,8 @@ function RecordForm({
       console.error(e);
       alert(
         isEditing
-          ? "Error al guardar la rectificación."
-          : "Error al guardar el registro.",
+          ? t("records.rectificationSaveError")
+          : t("records.saveError"),
       );
     },
   });
@@ -417,31 +419,31 @@ function RecordForm({
       <DialogHeader>
         <DialogTitle>
           {isEditing
-            ? "Rectificar Registro Cl?nico"
-            : "Agregar a la Historia Cl?nica"}
+            ? t("records.rectify")
+            : t("records.addToHistory")}
         </DialogTitle>
       </DialogHeader>
 
       <div className="space-y-4 py-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Tipo de registro</Label>
+            <Label>{t("records.type")}</Label>
             <Select
               value={type}
               onChange={(e) => setType(e.target.value as RecordType)}
               disabled={isEditing}
             >
-              <option value="note">📝 Evolución Clínica</option>
+              <option value="note">{t("records.note")}</option>
               <option value="dynamic_measurement">
-                📊 Plantilla Personalizada
+                {t("records.customTemplate")}
               </option>
-              <option value="prescription">💊 Receta / Indicaciones</option>
-              <option value="meal_plan">🥗 Plan de Alimentación</option>
-              <option value="attachment">📎 Estudio / Archivo Adjunto</option>
+              <option value="prescription">{t("records.prescription")}</option>
+              <option value="meal_plan">{t("records.mealPlan")}</option>
+              <option value="attachment">{t("records.attachment")}</option>
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Fecha y hora</Label>
+            <Label>{t("records.dateTime")}</Label>
             <Input
               type="datetime-local"
               value={date}
@@ -454,8 +456,7 @@ function RecordForm({
 
         {isEditing ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            La historia cl?nica es inalterable. Esta acci?n crea un nuevo
-            asiento de rectificaci?n y conserva el original con trazabilidad.
+            {t("records.immutableWarning")}
           </div>
         ) : null}
 
@@ -468,20 +469,19 @@ function RecordForm({
           />
           <span>
             <span className="block font-medium text-slate-800">
-              Disponible en portal paciente
+              {t("records.visibleInPortal")}
             </span>
             <span className="text-xs text-muted-foreground">
-              El paciente podrÃ¡ ver este asiento si ademÃ¡s tiene habilitada la
-              visibilidad de historia clÃ­nica.
+              {t("records.visibleInPortalHelp")}
             </span>
           </span>
         </label>
 
         {type === "note" && (
           <div className="space-y-2">
-            <Label>Nota de Evolución</Label>
+            <Label>{t("records.noteLabel")}</Label>
             <Textarea
-              placeholder="Escriba las observaciones..."
+              placeholder={t("records.notePlaceholder")}
               className="min-h-[150px]"
               value={noteContent}
               onChange={(e) => setNoteContent(e.target.value)}
@@ -493,7 +493,7 @@ function RecordForm({
         {type === "dynamic_measurement" && (
           <div className="space-y-6">
             <div className="space-y-2">
-              <Label>Seleccionar Plantilla</Label>
+              <Label>{t("records.selectTemplate")}</Label>
               <Select
                 value={selectedTemplateId}
                 onChange={(e) => {
@@ -502,7 +502,7 @@ function RecordForm({
                 }}
                 disabled={isEditing}
               >
-                <option value="">Elegí una plantilla...</option>
+                <option value="">{t("records.chooseTemplate")}</option>
                 {templatesQuery.data?.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
@@ -526,7 +526,7 @@ function RecordForm({
                       }
                     >
                       {field.label} {field.unit ? `(${field.unit})` : ""}
-                      {field.type === "formula" && " ✨ (Autocalculado)"}
+                      {field.type === "formula" && ` (${t("records.autocalculated")})`}
                     </Label>
 
                     {field.type === "text" ? (
@@ -556,7 +556,7 @@ function RecordForm({
                           readOnly
                           className="pl-9 bg-purple-50 font-bold text-purple-900 border-purple-200 focus-visible:ring-0 shadow-inner"
                           value={dynamicValues[field.id] || ""}
-                          placeholder="Esperando datos..."
+                          placeholder={t("records.waitingData")}
                           tabIndex={-1}
                         />
                       </div>
@@ -570,7 +570,7 @@ function RecordForm({
 
         {type === "prescription" && (
           <div className="space-y-2">
-            <Label>Receta / Prescripción</Label>
+            <Label>{t("records.prescription")}</Label>
             <Textarea
               className="min-h-[150px]"
               value={prescriptionContent}
@@ -588,8 +588,8 @@ function RecordForm({
               }
             >
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="free_text">Texto Libre</TabsTrigger>
-                <TabsTrigger value="weekly">Grilla Semanal</TabsTrigger>
+                <TabsTrigger value="free_text">{t("records.freeText")}</TabsTrigger>
+                <TabsTrigger value="weekly">{t("records.weeklyGrid")}</TabsTrigger>
               </TabsList>
               <TabsContent value="free_text" className="mt-4">
                 <Textarea
@@ -622,7 +622,7 @@ function RecordForm({
                     >
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-1">
-                          <Label className="text-xs">Desayuno</Label>
+                          <Label className="text-xs">{t("records.breakfast")}</Label>
                           <Textarea
                             rows={2}
                             value={weeklyPlan[day.key].breakfast}
@@ -632,7 +632,7 @@ function RecordForm({
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Almuerzo</Label>
+                          <Label className="text-xs">{t("records.lunch")}</Label>
                           <Textarea
                             rows={2}
                             value={weeklyPlan[day.key].lunch}
@@ -642,7 +642,7 @@ function RecordForm({
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Merienda</Label>
+                          <Label className="text-xs">{t("records.snack")}</Label>
                           <Textarea
                             rows={2}
                             value={weeklyPlan[day.key].snack}
@@ -652,7 +652,7 @@ function RecordForm({
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Cena</Label>
+                          <Label className="text-xs">{t("records.dinner")}</Label>
                           <Textarea
                             rows={2}
                             value={weeklyPlan[day.key].dinner}
@@ -668,14 +668,13 @@ function RecordForm({
               </TabsContent>
             </Tabs>
             <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-              <Label>PDF del plan de alimentación</Label>
+              <Label>{t("records.mealPlanPdf")}</Label>
               {isEditing &&
               recordToEdit?.type === "meal_plan" &&
               recordToEdit.data.pdf?.fileUrl &&
               !mealPlanPdfFile ? (
                 <p className="text-xs text-muted-foreground">
-                  Ya hay un PDF guardado. Seleccioná otro archivo sólo si querés
-                  reemplazarlo.
+                  {t("records.pdfReplaceHelp")}
                 </p>
               ) : null}
               <Input
@@ -687,7 +686,7 @@ function RecordForm({
               />
               {mealPlanPdfFile ? (
                 <p className="text-sm font-medium text-emerald-700">
-                  Listo para subir: {mealPlanPdfFile.name}
+                  {t("records.readyToUpload", { name: mealPlanPdfFile.name })}
                 </p>
               ) : null}
             </div>
@@ -697,19 +696,18 @@ function RecordForm({
         {type === "attachment" && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Título / Descripción del estudio</Label>
+              <Label>{t("records.attachmentTitle")}</Label>
               <Input
-                placeholder="Ej: Análisis de Sangre - Laboratorio Central"
+                placeholder={t("records.attachmentTitlePlaceholder")}
                 value={attachmentTitle}
                 onChange={(e) => setAttachmentTitle(e.target.value)}
               />
             </div>
             <div className="space-y-2">
-              <Label>Seleccionar Archivo (PDF o Imágenes, max 10MB)</Label>
+              <Label>{t("records.selectAttachment")}</Label>
               {isEditing && !file && (
                 <p className="text-xs text-muted-foreground mb-2">
-                  Ya hay un archivo guardado. Seleccioná uno nuevo solo si
-                  querés reemplazarlo.
+                  {t("records.attachmentReplaceHelp")}
                 </p>
               )}
               <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-100 transition-colors">
@@ -722,8 +720,9 @@ function RecordForm({
                 />
                 {file && (
                   <p className="mt-2 text-sm text-emerald-600 font-medium">
-                    Listo para subir: {file.name} (
-                    {(file.size / 1024 / 1024).toFixed(2)} MB)
+                    {t("records.readyToUpload", {
+                      name: `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`,
+                    })}
                   </p>
                 )}
               </div>
@@ -733,12 +732,12 @@ function RecordForm({
 
         {isEditing ? (
           <div className="space-y-2">
-            <Label>Motivo de la rectificación</Label>
+            <Label>{t("records.rectificationReason")}</Label>
             <Textarea
               className="min-h-[90px]"
               value={rectificationReason}
               onChange={(e) => setRectificationReason(e.target.value)}
-              placeholder="Ej: Se rectifica por error material detectado en el asiento anterior..."
+              placeholder={t("records.rectificationReasonPlaceholder")}
             />
           </div>
         ) : null}
@@ -746,7 +745,7 @@ function RecordForm({
 
       <div className="flex justify-end gap-2 border-t pt-4">
         <Button variant="ghost" onClick={() => onOpenChange(false)}>
-          Cancelar
+          {t("action.cancel")}
         </Button>
         <Button
           onClick={() => mutation.mutate()}
@@ -758,10 +757,10 @@ function RecordForm({
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
           {mutation.isPending
-            ? "Subiendo y Guardando..."
+            ? t("records.uploadingSaving")
             : isEditing
-              ? "Guardar rectificación"
-              : "Guardar en Historia"}
+              ? t("records.saveRectification")
+              : t("records.saveToHistory")}
         </Button>
       </div>
     </DialogContent>
@@ -770,12 +769,13 @@ function RecordForm({
 
 export function NewRecordDialog({ patientId }: { patientId: string }) {
   const [open, setOpen] = useState(false);
+  const { t } = useI18n();
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button>
           <Plus className="mr-2 h-4 w-4" />
-          Nuevo Registro
+          {t("records.new")}
         </Button>
       </DialogTrigger>
       {open && (

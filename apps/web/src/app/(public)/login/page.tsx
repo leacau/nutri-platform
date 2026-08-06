@@ -45,7 +45,7 @@ function LoginContent() {
 		} catch (err: any) {
 			console.error('[Login Error Detallado]:', err);
 			const firebaseError = err?.code || err?.message || 'Error desconocido';
-			setError(`Error devuelto por Firebase: ${firebaseError}`);
+			setError(t('auth.firebaseLoginError', { error: firebaseError }));
 		}
 	};
 
@@ -56,7 +56,7 @@ function LoginContent() {
 			router.push(next);
 		} catch (err: any) {
 			console.error('[Google Login Error]:', err);
-			setError(`Error con Google: ${err?.code || err?.message}`);
+			setError(t('auth.googleLoginError', { error: err?.code || err?.message }));
 		}
 	};
 
@@ -67,27 +67,27 @@ function LoginContent() {
 				<div className='relative z-10 max-w-md space-y-6 p-12'>
 					<div className='inline-flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold'>
 						<ShieldCheck className='h-4 w-4' />
-						Multi-rol y multi-clinica
+						{t('auth.featureBadge')}
 					</div>
 					<h2 className='text-4xl font-bold leading-tight'>AMSA Core</h2>
 					<p className='text-lg text-white/80'>{t('auth.subtitle')}</p>
 					<ul className='space-y-2 text-sm text-white/80'>
-						<li>Login real con Firebase Auth.</li>
-						<li>Acceso multi-rol y multi-espacio con permisos auditables.</li>
-						<li>Gestion real de clinicas, consultorios, pacientes y turnos.</li>
+						<li>{t('auth.featureFirebase')}</li>
+						<li>{t('auth.featurePermissions')}</li>
+						<li>{t('auth.featureManagement')}</li>
 					</ul>
 				</div>
 			</div>
 			<div className='mx-auto flex w-full max-w-xl flex-col justify-center px-8 py-16'>
 				<div className='mb-8 space-y-2 text-center'>
 					<div className='inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1 text-xs font-semibold text-primary'>
-						Acceso
+						{t('auth.access')}
 					</div>
 					<h1 className='text-3xl font-semibold text-primary'>
 						{t('hero.welcome')}
 					</h1>
 					<p className='text-sm text-muted-foreground'>
-						Entra con tu usuario real de Firebase Auth.
+						{t('auth.loginSubtitle')}
 					</p>
 				</div>
 
@@ -122,7 +122,7 @@ function LoginContent() {
 					<div className='space-y-3'>
 						<Button type='submit' className='w-full' disabled={isSubmitting}>
 							<LogIn className='mr-2 h-4 w-4' />
-							{isSubmitting ? 'Cargando...' : t('action.login')}
+							{isSubmitting ? t('auth.loading') : t('action.login')}
 						</Button>
 						<Button
 							type='button'
@@ -144,10 +144,10 @@ function LoginContent() {
 				</div>
 				<div className='mt-4 flex flex-wrap justify-center gap-4 text-xs text-muted-foreground'>
 					<Link href='/terms' className='hover:text-primary hover:underline'>
-						Terminos
+						{t('auth.terms')}
 					</Link>
 					<Link href='/privacy' className='hover:text-primary hover:underline'>
-						Privacidad y datos de salud
+						{t('auth.privacy')}
 					</Link>
 				</div>
 			</div>
@@ -156,11 +156,12 @@ function LoginContent() {
 }
 
 export default function LoginPage() {
+	const { t } = useI18n();
 	return (
 		<Suspense
 			fallback={
 				<div className='flex min-h-screen items-center justify-center'>
-					Cargando...
+					{t('auth.loading')}
 				</div>
 			}
 		>

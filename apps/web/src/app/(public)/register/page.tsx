@@ -1,7 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -12,30 +10,38 @@ import { useAuth } from '../../../providers/auth-provider';
 import { useForm } from 'react-hook-form';
 import { useI18n } from '../../../providers/i18n-provider';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-const schema = z.object({
-	name: z.string().min(2, 'Ingresá tu nombre'),
-	email: z.string().email(),
-	password: z.string().min(6),
-	dni: z
-		.string()
-		.min(7, 'El DNI debe tener min 7 dígitos')
-		.max(8, 'El DNI debe tener max 8 dígitos')
-		.regex(/^\d+$/, 'Solo números'),
-	legalAccepted: z.boolean().refine((value) => value === true, {
-		message: 'Debes aceptar los terminos y la politica de privacidad.',
-	}),
-});
-
-type RegisterForm = z.infer<typeof schema>;
+type RegisterForm = {
+	name: string;
+	email: string;
+	password: string;
+	dni: string;
+	legalAccepted: boolean;
+};
 
 export default function RegisterPage() {
 	const { registerWithEmail } = useAuth();
 	const router = useRouter();
 	const { t } = useI18n();
 	const [error, setError] = useState<string | null>(null);
+
+	const schema = z.object({
+		name: z.string().min(2, t('validation.nameRequired')),
+		email: z.string().email(t('validation.invalidEmail')),
+		password: z.string().min(6),
+		dni: z
+			.string()
+			.min(7, t('team.dniMin'))
+			.max(8, t('team.dniMax'))
+			.regex(/^\d+$/, t('team.onlyNumbers')),
+		legalAccepted: z.boolean().refine((value) => value === true, {
+			message: t('auth.legalRequired'),
+		}),
+	});
+
 	const {
 		register,
 		handleSubmit,
@@ -60,7 +66,7 @@ export default function RegisterPage() {
 			router.push('/select-clinic');
 		} catch (err) {
 			console.error(err);
-			setError('No pudimos crear la cuenta. Probá con otro email.');
+			setError(t('auth.registerError'));
 		}
 	};
 
@@ -68,12 +74,13 @@ export default function RegisterPage() {
 		<div className='mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center px-6 py-12'>
 			<div className='mb-8 space-y-2 text-center'>
 				<div className='inline-flex items-center gap-2 rounded-full bg-secondary/10 px-4 py-1 text-xs font-semibold text-secondary'>
-					Onboarding
+					{t('auth.onboarding')}
 				</div>
-				<h1 className='text-3xl font-semibold text-primary'>Creá tu cuenta</h1>
+				<h1 className='text-3xl font-semibold text-primary'>
+					{t('auth.createAccount')}
+				</h1>
 				<p className='text-sm text-muted-foreground'>
-					{t('auth.subtitle')} Elegí contraseña segura y luego vinculá tu
-					clínica.
+					{t('auth.registerSubtitle', { subtitle: t('auth.subtitle') })}
 				</p>
 			</div>
 			<form
@@ -84,7 +91,7 @@ export default function RegisterPage() {
 					<Label htmlFor='name'>{t('auth.name')}</Label>
 					<Input
 						id='name'
-						placeholder='Tu nombre'
+						placeholder={t('auth.yourName')}
 						{...register('name')}
 						required
 					/>
@@ -103,7 +110,7 @@ export default function RegisterPage() {
 					<Label htmlFor='password'>{t('auth.password')}</Label>
 					<Input
 						id='password'
-						placeholder='•••••••'
+						placeholder='********'
 						type='password'
 						{...register('password')}
 						required
@@ -125,15 +132,15 @@ export default function RegisterPage() {
 						{...register('legalAccepted')}
 					/>
 					<span>
-						Acepto los{' '}
+						{t('auth.acceptLegalPrefix')}{' '}
 						<Link href='/terms' className='text-primary hover:underline'>
-							terminos de uso
+							{t('auth.termsOfUse')}
 						</Link>
-						, la{' '}
+						,{' '}
 						<Link href='/privacy' className='text-primary hover:underline'>
-							politica de privacidad y tratamiento de datos de salud
+							{t('auth.privacyPolicy')}
 						</Link>
-						, incluyendo el uso de infraestructura cloud informada.
+						, {t('auth.acceptLegalSuffix')}
 					</span>
 				</label>
 				{error ? <p className='text-sm text-destructive'>{error}</p> : null}
@@ -143,7 +150,7 @@ export default function RegisterPage() {
 				</Button>
 			</form>
 			<p className='mt-6 text-center text-sm text-muted-foreground'>
-				¿Ya tenés cuenta?{' '}
+				{t('auth.alreadyHaveAccount')}{' '}
 				<Link href='/login' className='text-primary hover:underline'>
 					{t('action.login')}
 				</Link>

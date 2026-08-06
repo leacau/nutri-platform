@@ -9,8 +9,21 @@ import {
 	defaultCapabilitiesForRole,
 	mergeMembershipCapabilities,
 } from '../security/clinicCapabilities.js';
+import { normalizeBilling } from '../billing/plans.js';
 
 const HEADER = 'x-clinic-id';
+
+async function isPatientPortalModuleEnabled(clinicId: string) {
+	const db = getFirestoreDb();
+	const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+	if (!clinicSnap.exists) return false;
+	const data = clinicSnap.data() as any;
+	const billing = normalizeBilling(
+		data?.billing,
+		data?.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+	);
+	return billing.enabledModules.patientPortal === true;
+}
 
 async function assertClinicIsActive(clinicId: string, res: Response) {
 	const db = getFirestoreDb();
@@ -115,6 +128,9 @@ export async function requireClinicContext(
 		}
 
 		if (!(await assertClinicIsActive(resolvedClinicId, res))) return;
+		if (!(await isPatientPortalModuleEnabled(resolvedClinicId))) {
+			return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
+		}
 		const patientDoc =
 			req.patientContext?.patientId
 				? await getFirestoreDb()
@@ -171,6 +187,9 @@ export async function requireClinicContext(
 			const patient = patientDoc?.data() as PatientDoc | undefined;
 			if (!patientDoc || !patient) {
 				return denyAuthz(req, res, 'Failed to resolve patient context', 403);
+			}
+			if (!(await isPatientPortalModuleEnabled(headerClinicId))) {
+				return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
 			}
 			if (patient.status !== 'active' || patient.portalAccessEnabled === false) {
 				return denyAuthz(req, res, 'Patient portal access is disabled', 403);

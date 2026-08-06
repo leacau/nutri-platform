@@ -32,26 +32,16 @@ import { useI18n } from '../../providers/i18n-provider';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-const createClinicSchema = z.object({
-	name: z.string().min(2, 'El nombre es obligatorio'),
-	adminName: z.string().min(2, 'El nombre es obligatorio'),
-	adminEmail: z.string().email('Email inválido'),
-	adminDni: z
-		.string()
-		.min(7, 'El DNI debe tener min 7 dígitos')
-		.max(8, 'El DNI debe tener max 8 dígitos')
-		.regex(/^\d+$/, 'Solo números'),
-});
+type CreateClinicForm = {
+	name: string;
+	adminName: string;
+	adminEmail: string;
+	adminDni: string;
+};
 
-type CreateClinicForm = z.infer<typeof createClinicSchema>;
-
-const createIndividualPracticeSchema = z.object({
-	name: z.string().min(2, 'El nombre es obligatorio'),
-});
-
-type CreateIndividualPracticeForm = z.infer<
-	typeof createIndividualPracticeSchema
->;
+type CreateIndividualPracticeForm = {
+	name: string;
+};
 
 function SelectClinicContent() {
 	const qc = useQueryClient();
@@ -61,6 +51,21 @@ function SelectClinicContent() {
 	const searchParams = useSearchParams();
 	const { t } = useI18n();
 	const next = searchParams.get('next') || '/app/dashboard';
+
+	const createClinicSchema = z.object({
+		name: z.string().min(2, t('validation.nameRequired')),
+		adminName: z.string().min(2, t('validation.nameRequired')),
+		adminEmail: z.string().email(t('validation.invalidEmail')),
+		adminDni: z
+			.string()
+			.min(7, t('team.dniMin'))
+			.max(8, t('team.dniMax'))
+			.regex(/^\d+$/, t('team.onlyNumbers')),
+	});
+
+	const createIndividualPracticeSchema = z.object({
+		name: z.string().min(2, t('validation.nameRequired')),
+	});
 
 	const isPlatformAdmin = me?.platformRole === 'platform_admin';
 	const hasIndividualPractice = clinics?.some(
@@ -97,7 +102,7 @@ function SelectClinicContent() {
 	};
 
 	const roleLabel = (clinicId: string) => {
-		if (isPlatformAdmin) return 'Superusuario';
+		if (isPlatformAdmin) return t('common.superuser');
 		return me?.memberships.find((m) => m.clinicId === clinicId)?.role;
 	};
 
@@ -138,10 +143,8 @@ function SelectClinicContent() {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['clinics'] });
 			reset();
-			// Ya no forzamos la redirección ni seteamos la clínica activa aquí,
-			// así te quedás en la pantalla viendo tu nueva clínica en la lista.
 		},
-		onError: () => alert('Error al crear la clínica'),
+		onError: () => alert(t('clinic.createClinicError')),
 	});
 
 	const createIndividualPracticeMutation = useMutation({
@@ -154,11 +157,9 @@ function SelectClinicContent() {
 			setActiveClinic(clinic.id);
 			router.push('/app/dashboard');
 		},
-		onError: () => alert('Error al crear el consultorio'),
+		onError: () => alert(t('clinic.createPracticeError')),
 	});
 
-	// Pequeño hack visual: a veces isLoading es false pero idToken sigue calculándose.
-	// Usamos esta variable para asegurarnos de que la carga sea real y completa.
 	const isFullyLoading = isLoading || !idToken;
 	const individualPractices =
 		clinics?.filter((clinic) => clinic.tenantType === 'individual_practice') ??
@@ -181,16 +182,18 @@ function SelectClinicContent() {
 					<CardTitle className='text-lg'>{clinic.name}</CardTitle>
 					<CardDescription>
 						{clinic.tenantType === 'individual_practice'
-							? 'Consultorio individual'
-							: 'Clinica'}
+							? t('clinic.kind.individual')
+							: t('clinic.kind.clinic')}
 					</CardDescription>
 				</div>
 			</CardHeader>
 			<CardContent className='flex items-center justify-between'>
-				<Badge variant='secondary'>Rol: {roleLabel(clinic.id)}</Badge>
+				<Badge variant='secondary'>
+					{t('clinic.role')}: {roleLabel(clinic.id)}
+				</Badge>
 				<Button onClick={() => handleSelect(clinic.id)} variant='default'>
 					<CheckCircle2 className='mr-2 h-4 w-4' />
-					Ingresar
+					{t('action.enter')}
 				</Button>
 			</CardContent>
 		</Card>
@@ -205,18 +208,18 @@ function SelectClinicContent() {
 							{t('clinic.select')}
 						</p>
 						<h1 className='text-3xl font-semibold text-primary'>
-							{isPlatformAdmin ? 'Panel de Plataforma' : 'Espacio activo'}
+							{isPlatformAdmin ? t('clinic.platformPanel') : t('common.workspace')}
 						</h1>
 					</div>
 					<Button variant='ghost' onClick={logout}>
-						Cerrar sesión
+						{t('action.logout')}
 					</Button>
 				</div>
 
 				{isFullyLoading ? (
 					<div className='flex flex-col items-center justify-center py-12 text-muted-foreground'>
 						<Loader2 className='h-8 w-8 animate-spin mb-4 text-primary' />
-						<p>Cargando tus espacios disponibles...</p>
+						<p>{t('clinic.loadingWorkspaces')}</p>
 					</div>
 				) : (
 					<>
@@ -225,10 +228,10 @@ function SelectClinicContent() {
 								<section className='space-y-3'>
 									<div>
 										<h2 className='text-lg font-semibold text-primary'>
-											Mi consultorio
+											{t('clinic.myPractice')}
 										</h2>
 										<p className='text-sm text-muted-foreground'>
-											Espacio individual para pacientes propios.
+											{t('clinic.myPracticeDetail')}
 										</p>
 									</div>
 									<div className='grid gap-6 md:grid-cols-2'>
@@ -240,9 +243,11 @@ function SelectClinicContent() {
 							{clinicTenants.length ? (
 								<section className='space-y-3'>
 									<div>
-										<h2 className='text-lg font-semibold text-primary'>Clinicas</h2>
+										<h2 className='text-lg font-semibold text-primary'>
+											{t('clinic.clinicsTitle')}
+										</h2>
 										<p className='text-sm text-muted-foreground'>
-											Espacios institucionales donde tenes una membresia.
+											{t('clinic.clinicsDetail')}
 										</p>
 									</div>
 									<div className='grid gap-6 md:grid-cols-2'>
@@ -252,11 +257,9 @@ function SelectClinicContent() {
 							) : null}
 						</div>
 
-						{/* ACÁ ESTÁ EL ARREGLO MAGISTRAL */}
-						{/* Solo mostramos el cartel de vacío si YA terminó de cargar y NO hay clínicas */}
 						{!clinics?.length && !isFullyLoading ? (
 							<div className='mt-8 rounded-xl border border-dashed p-6 text-center text-muted-foreground'>
-								No encontramos espacios disponibles para tu usuario.
+								{t('clinic.noWorkspaces')}
 							</div>
 						) : null}
 					</>
@@ -267,12 +270,9 @@ function SelectClinicContent() {
 						<CardHeader>
 							<CardTitle className='flex items-center gap-2 text-lg'>
 								<Stethoscope className='h-4 w-4' />
-								Crear mi consultorio individual
+								{t('clinic.createIndividual')}
 							</CardTitle>
-							<CardDescription>
-								Usa este espacio para gestionar pacientes propios. Mas adelante
-								podes sumar staff sin migrar datos.
-							</CardDescription>
+							<CardDescription>{t('clinic.createIndividualDetail')}</CardDescription>
 						</CardHeader>
 						<CardContent>
 							<form
@@ -282,9 +282,9 @@ function SelectClinicContent() {
 								className='grid gap-4 md:grid-cols-[1fr_auto]'
 							>
 								<div className='space-y-1'>
-									<Label>Nombre del consultorio</Label>
+									<Label>{t('clinic.practiceName')}</Label>
 									<Input
-										placeholder='Consultorio Dra. Perez'
+										placeholder={t('clinic.practicePlaceholder')}
 										{...registerPractice('name')}
 									/>
 									{practiceErrors.name && (
@@ -299,8 +299,8 @@ function SelectClinicContent() {
 										disabled={createIndividualPracticeMutation.isPending}
 									>
 										{createIndividualPracticeMutation.isPending
-											? 'Creando...'
-											: 'Crear consultorio'}
+											? t('clinic.creating')
+											: t('clinic.createPractice')}
 									</Button>
 								</div>
 							</form>
@@ -308,17 +308,14 @@ function SelectClinicContent() {
 					</Card>
 				) : null}
 
-				{/* El formulario de superadmin se queda igual */}
 				{isPlatformAdmin && !isFullyLoading ? (
 					<Card className='mt-8 border-primary/10 shadow-lg'>
 						<CardHeader>
 							<CardTitle className='flex items-center gap-2 text-lg'>
 								<Hospital className='h-4 w-4' />
-								Crear clínica y admin
+								{t('clinic.createClinicAndAdmin')}
 							</CardTitle>
-							<CardDescription>
-								Registrá una nueva clínica y asigná su clinic_admin.
-							</CardDescription>
+							<CardDescription>{t('clinic.createClinicAndAdminDetail')}</CardDescription>
 						</CardHeader>
 						<CardContent>
 							<form
@@ -328,8 +325,8 @@ function SelectClinicContent() {
 								className='grid gap-4 md:grid-cols-2'
 							>
 								<div className='space-y-1 md:col-span-2'>
-									<Label>Nombre de la clínica</Label>
-									<Input placeholder='Clínica Central' {...register('name')} />
+									<Label>{t('clinic.clinicName')}</Label>
+									<Input placeholder={t('clinic.clinicPlaceholder')} {...register('name')} />
 									{errors.name && (
 										<p className='text-xs text-red-500'>
 											{errors.name.message}
@@ -337,9 +334,9 @@ function SelectClinicContent() {
 									)}
 								</div>
 								<div className='space-y-1'>
-									<Label>Nombre del admin</Label>
+									<Label>{t('clinic.adminName')}</Label>
 									<Input
-										placeholder='Nombre y apellido'
+										placeholder={t('common.fullNamePlaceholder')}
 										{...register('adminName')}
 									/>
 									{errors.adminName && (
@@ -349,7 +346,7 @@ function SelectClinicContent() {
 									)}
 								</div>
 								<div className='space-y-1'>
-									<Label>Email del admin</Label>
+									<Label>{t('clinic.adminEmail')}</Label>
 									<Input
 										type='email'
 										placeholder='admin@clinica.com'
@@ -362,7 +359,7 @@ function SelectClinicContent() {
 									)}
 								</div>
 								<div className='space-y-1'>
-									<Label>DNI del admin</Label>
+									<Label>{t('clinic.adminDni')}</Label>
 									<Input placeholder='12345678' {...register('adminDni')} />
 									{errors.adminDni && (
 										<p className='text-xs text-red-500'>
@@ -372,7 +369,7 @@ function SelectClinicContent() {
 								</div>
 								<div className='flex items-end md:col-span-2'>
 									<Button type='submit' disabled={isSubmitting}>
-										{isSubmitting ? 'Creando...' : 'Crear clínica'}
+										{isSubmitting ? t('clinic.creating') : t('clinic.createClinic')}
 									</Button>
 								</div>
 							</form>

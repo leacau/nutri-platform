@@ -1,6 +1,6 @@
 'use client';
 
-import { BellRing, Building2, Loader2, Palette, Save } from 'lucide-react';
+import { BellRing, Loader2, Palette, Save } from 'lucide-react';
 import {
 	Card,
 	CardContent,
@@ -17,19 +17,19 @@ import { Label } from '../../../../components/ui/label';
 import { apiClient } from '../../../../lib/api-client';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useClinic } from '../../../../providers/clinic-provider';
+import { useI18n } from '../../../../providers/i18n-provider';
 
 export default function SettingsPage() {
 	const { activeClinicId, activeClinic } = useClinic();
 	const { idToken } = useAuth();
+	const { t } = useI18n();
 	const qc = useQueryClient();
 
-	// Estado local para los campos del formulario
 	const [accentColor, setAccentColor] = useState('#2F8F7B');
 	const [logoUrl, setLogoUrl] = useState('');
 	const [whatsappEnabled, setWhatsappEnabled] = useState(true);
 	const [emailEnabled, setEmailEnabled] = useState(true);
 
-	// Traer la configuración actual
 	const { data: settings, isLoading } = useQuery({
 		queryKey: ['clinic-settings', activeClinicId],
 		queryFn: () =>
@@ -37,11 +37,11 @@ export default function SettingsPage() {
 		enabled: Boolean(activeClinicId && idToken),
 	});
 
-	// Rellenar el formulario cuando llegan los datos
 	useEffect(() => {
 		if (settings) {
-			if (settings.branding?.accentColor)
+			if (settings.branding?.accentColor) {
 				setAccentColor(settings.branding.accentColor);
+			}
 			if (settings.branding?.logoUrl) setLogoUrl(settings.branding.logoUrl);
 			if (settings.reminderPreferences) {
 				setWhatsappEnabled(settings.reminderPreferences.whatsappEnabled);
@@ -50,7 +50,6 @@ export default function SettingsPage() {
 		}
 	}, [settings]);
 
-	// Guardar los cambios
 	const mutation = useMutation({
 		mutationFn: async () => {
 			return apiClient.saveClinicSettings(
@@ -64,10 +63,10 @@ export default function SettingsPage() {
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['clinic-settings', activeClinicId] });
-			alert('¡Configuración guardada con éxito!');
+			alert(t('settings.saveSuccess'));
 		},
 		onError: () => {
-			alert('Hubo un error al guardar. Revisá tus permisos.');
+			alert(t('settings.permissionSaveError'));
 		},
 	});
 
@@ -83,28 +82,27 @@ export default function SettingsPage() {
 		<main className='mx-auto max-w-4xl px-6 py-8'>
 			<div className='mb-8'>
 				<h1 className='text-3xl font-bold text-slate-900 tracking-tight'>
-					Configuración
+					{t('settings.pageTitle')}
 				</h1>
 				<p className='text-slate-500 mt-1'>
-					Personalizá la identidad y reglas de {activeClinic?.name}
+					{t('settings.pageSubtitle', {
+						name: activeClinic?.name || t('common.workspace'),
+					})}
 				</p>
 			</div>
 
 			<div className='space-y-6'>
-				{/* TARJETA 1: BRANDING (Marca) */}
 				<Card className='border-slate-200 shadow-sm'>
 					<CardHeader className='bg-slate-50/50 border-b border-slate-100 pb-4'>
 						<CardTitle className='text-lg flex items-center gap-2'>
-							<Palette className='h-5 w-5 text-blue-600' /> Identidad Visual
+							<Palette className='h-5 w-5 text-blue-600' /> {t('settings.branding')}
 						</CardTitle>
-						<CardDescription>
-							Personalizá los colores y el logo de tu plataforma.
-						</CardDescription>
+						<CardDescription>{t('settings.visualIdentityDetail')}</CardDescription>
 					</CardHeader>
 					<CardContent className='p-6 space-y-6'>
 						<div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
 							<div className='space-y-2'>
-								<Label>Color Principal (Acento)</Label>
+								<Label>{t('settings.accentColorLabel')}</Label>
 								<div className='flex items-center gap-3'>
 									<Input
 										type='color'
@@ -120,45 +118,41 @@ export default function SettingsPage() {
 									/>
 								</div>
 								<p className='text-xs text-muted-foreground mt-1'>
-									Este color se usará en botones y detalles PDF.
+									{t('settings.accentColorHelp')}
 								</p>
 							</div>
 
 							<div className='space-y-2'>
-								<Label>URL del Logo</Label>
+								<Label>{t('settings.logoUrl')}</Label>
 								<Input
 									type='url'
-									placeholder='https://ejemplo.com/mi-logo.png'
+									placeholder='https://example.com/logo.png'
 									value={logoUrl}
 									onChange={(e) => setLogoUrl(e.target.value)}
 								/>
 								<p className='text-xs text-muted-foreground mt-1'>
-									Pegá el link directo a la imagen de tu logo.
+									{t('settings.logoUrlHelp')}
 								</p>
 							</div>
 						</div>
 					</CardContent>
 				</Card>
 
-				{/* TARJETA 2: RECORDATORIOS */}
 				<Card className='border-slate-200 shadow-sm'>
 					<CardHeader className='bg-slate-50/50 border-b border-slate-100 pb-4'>
 						<CardTitle className='text-lg flex items-center gap-2'>
-							<BellRing className='h-5 w-5 text-amber-500' /> Recordatorios de
-							Turnos
+							<BellRing className='h-5 w-5 text-amber-500' /> {t('settings.reminders')}
 						</CardTitle>
-						<CardDescription>
-							Configurá cómo se avisa a los pacientes sobre sus citas.
-						</CardDescription>
+						<CardDescription>{t('settings.remindersDetail')}</CardDescription>
 					</CardHeader>
 					<CardContent className='p-6 space-y-6'>
 						<div className='flex items-center justify-between p-4 border border-slate-200 rounded-lg'>
 							<div>
 								<p className='font-semibold text-slate-900'>
-									Recordatorios por WhatsApp
+									{t('settings.whatsappReminders')}
 								</p>
 								<p className='text-sm text-slate-500'>
-									Enviar mensaje automático 24hs antes del turno.
+									{t('settings.whatsappRemindersDetail')}
 								</p>
 							</div>
 							<label className='relative inline-flex items-center cursor-pointer'>
@@ -175,10 +169,10 @@ export default function SettingsPage() {
 						<div className='flex items-center justify-between p-4 border border-slate-200 rounded-lg'>
 							<div>
 								<p className='font-semibold text-slate-900'>
-									Recordatorios por Email
+									{t('settings.emailReminders')}
 								</p>
 								<p className='text-sm text-slate-500'>
-									Enviar correo con botón para confirmar o cancelar.
+									{t('settings.emailRemindersDetail')}
 								</p>
 							</div>
 							<label className='relative inline-flex items-center cursor-pointer'>
@@ -206,7 +200,7 @@ export default function SettingsPage() {
 						) : (
 							<Save className='mr-2 h-5 w-5' />
 						)}
-						Guardar Configuración
+						{t('settings.saveSettings')}
 					</Button>
 				</div>
 			</div>

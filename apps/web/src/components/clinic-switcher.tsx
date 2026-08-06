@@ -13,6 +13,8 @@ export function ClinicSwitcher() {
 
 	const isPlatformAdmin = me?.platformRole === 'platform_admin';
 	const activeClinic = clinics?.find((clinic) => clinic.id === activeClinicId);
+	const logoUrl = activeClinic?.branding?.logoUrl;
+	const accentColor = activeClinic?.branding?.accentColor || undefined;
 
 	const handleChange = (id: string) => {
 		setActiveClinic(id);
@@ -21,15 +23,26 @@ export function ClinicSwitcher() {
 
 	return (
 		<div className='flex items-center gap-3'>
-			<div className='flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-				{activeClinic?.tenantType === 'individual_practice' ? (
-					<Stethoscope className='h-5 w-5' />
-				) : activeClinic ? (
-					<Hospital className='h-5 w-5' />
-				) : (
-					<Building2 className='h-5 w-5' />
-				)}
-			</div>
+			{logoUrl ? (
+				<img
+					src={logoUrl}
+					alt={activeClinic?.name || 'Espacio activo'}
+					className='h-10 w-10 rounded-lg border object-cover'
+				/>
+			) : (
+				<div
+					className='flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary'
+					style={accentColor ? { color: accentColor, backgroundColor: `${accentColor}18` } : undefined}
+				>
+					{activeClinic?.tenantType === 'individual_practice' ? (
+						<Stethoscope className='h-5 w-5' />
+					) : activeClinic ? (
+						<Hospital className='h-5 w-5' />
+					) : (
+						<Building2 className='h-5 w-5' />
+					)}
+				</div>
+			)}
 			<div>
 				<p className='text-xs uppercase text-muted-foreground'>
 					Espacio activo

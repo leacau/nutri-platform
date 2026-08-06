@@ -5,10 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "../providers/auth-provider";
 import { useClinic } from "../providers/clinic-provider";
-import { ClinicMembershipRole } from "../lib/types";
+import { BillingModuleKey, ClinicMembershipRole } from "../lib/types";
 import { cn } from "../lib/utils";
+import { useI18n } from "../providers/i18n-provider";
 
-function LoadingScreen({ label = "Cargando..." }: { label?: string }) {
+function LoadingScreen({ label }: { label: string }) {
   return (
     <div className="flex min-h-[50vh] flex-col items-center justify-center gap-2 text-muted-foreground">
       <Loader2 className="h-6 w-6 animate-spin" />
@@ -19,6 +20,7 @@ function LoadingScreen({ label = "Cargando..." }: { label?: string }) {
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -29,7 +31,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [loading, user, router, pathname]);
 
   if (loading || (!user && typeof window !== "undefined")) {
-    return <LoadingScreen label="Validando sesión..." />;
+    return <LoadingScreen label={t("common.validatingSession")} />;
   }
 
   if (!user) return null;
@@ -38,6 +40,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
 export function ClinicGuard({ children }: { children: React.ReactNode }) {
   const { activeClinicId, isLoading, platformRole } = useClinic();
+  const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -52,7 +55,7 @@ export function ClinicGuard({ children }: { children: React.ReactNode }) {
   }, [activeClinicId, isLoading, platformRole, router, pathname]);
 
   if (isLoading || (!activeClinicId && typeof window !== "undefined")) {
-    return <LoadingScreen label="Seleccioná una clínica para continuar" />;
+    return <LoadingScreen label={t("common.selectClinicToContinue")} />;
   }
 
   if (!activeClinicId) return null;
@@ -67,14 +70,43 @@ type RoleGuardProps = {
 
 export function RoleGuard({ allowed, allowPlatformAdmin = false, children }: RoleGuardProps) {
   const { activeMembership, platformRole } = useClinic();
+  const { t } = useI18n();
   const permitted = activeMembership && allowed.includes(activeMembership.role);
   const platformAllowed = allowPlatformAdmin && platformRole === "platform_admin";
 
   if (!permitted && !platformAllowed) {
     return (
       <div className={cn("glass-panel mx-auto my-12 max-w-xl rounded-2xl p-10 text-center")}>
-        <h2 className="text-xl font-semibold text-primary">Acceso restringido</h2>
-        <p className="mt-2 text-sm text-muted-foreground">No tenés permisos para ver este módulo en la clínica activa.</p>
+        <h2 className="text-xl font-semibold text-primary">{t("common.restrictedAccess")}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{t("common.noPermission")}</p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
+export function ModuleGuard({
+  module,
+  children,
+  allowPlatformAdmin = true,
+}: {
+  module: BillingModuleKey;
+  children: React.ReactNode;
+  allowPlatformAdmin?: boolean;
+}) {
+  const { activeClinic, platformRole } = useClinic();
+  const { t } = useI18n();
+  const platformAllowed = allowPlatformAdmin && platformRole === "platform_admin";
+  const enabled = activeClinic?.billing?.enabledModules?.[module] === true;
+
+  if (!enabled && !platformAllowed) {
+    return (
+      <div className={cn("glass-panel mx-auto my-12 max-w-xl rounded-2xl p-10 text-center")}>
+        <h2 className="text-xl font-semibold text-primary">{t("common.moduleNotIncluded")}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("common.moduleNotIncludedDetail", { module: t(`module.${module}`) })}
+        </p>
       </div>
     );
   }

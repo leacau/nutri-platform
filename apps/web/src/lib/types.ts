@@ -24,6 +24,7 @@ export type Membership = {
   patientId?: string;
   tenantType?: "clinic" | "individual_practice";
   ownerProfessionalUid?: string | null;
+  billing?: ClinicBilling;
   capabilities?: ClinicCapability[];
 };
 
@@ -39,6 +40,45 @@ export type ClinicBranding = {
   accentColor?: string | null;
 };
 
+export type BillingPlanKey =
+  | "individual"
+  | "starter_1_5"
+  | "team_6_15"
+  | "scale_16_50"
+  | "enterprise";
+
+export type BillingStatus =
+  | "trial"
+  | "active"
+  | "past_due"
+  | "suspended"
+  | "cancelled";
+
+export type BillingModuleKey =
+  | "patientPortal"
+  | "automatedMessaging"
+  | "advancedAudit"
+  | "digitalSignature"
+  | "customBranding";
+
+export type ClinicEnabledModules = Record<BillingModuleKey, boolean>;
+
+export type ClinicBillingLimits = {
+  professionals: number | null;
+  staff: number | null;
+  activePatients: number | null;
+  storageGb: number | null;
+};
+
+export type ClinicBilling = {
+  plan: BillingPlanKey;
+  status: BillingStatus;
+  enabledModules: ClinicEnabledModules;
+  limits: ClinicBillingLimits;
+  updatedAt?: string | null;
+  updatedByUid?: string | null;
+};
+
 export type Clinic = {
   id: string;
   name: string;
@@ -48,6 +88,7 @@ export type Clinic = {
   updatedAt?: string | null;
   isActive?: boolean;
   branding?: ClinicBranding | null;
+  billing?: ClinicBilling;
 };
 
 export type UserAccount = {

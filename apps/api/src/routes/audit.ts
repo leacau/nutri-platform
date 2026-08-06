@@ -2,8 +2,10 @@ import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 
 import { getFirestoreDb } from '../firebase/firestore.js';
+import { normalizeBilling } from '../billing/plans.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
+import type { ClinicDoc } from '../types/clinics.js';
 
 export const auditRouter = Router();
 
@@ -32,6 +34,22 @@ auditRouter.get(
 		const auth = req.auth!;
 		const clinicId = auth.clinicId!;
 		const db = getFirestoreDb();
+		const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+
+		if (!clinicSnap.exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Clinic not found' });
+		}
+
+		const clinic = clinicSnap.data() as ClinicDoc;
+		const billing = normalizeBilling(clinic.billing, 'starter_1_5');
+		if (!auth.isPlatformAdmin && billing.enabledModules.advancedAudit !== true) {
+			return res.status(402).json({
+				success: false,
+				message: 'Advanced audit module is not enabled',
+			});
+		}
 
 		const snap = await db
 			.collection('audit_logs')

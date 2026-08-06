@@ -9,9 +9,14 @@ import { requireClinicContext } from '../middlewares/requireClinicContext.js';
 import { requireRole } from '../middlewares/requireRole.js';
 import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
-import type { ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
+import type { ClinicBilling, ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
 import type { ClinicRole, Role } from '../types/auth.js';
 import { writeAuditLog } from '../observability/eventLogger.js';
+import {
+	PLAN_LIMITS,
+	defaultBillingForPlan,
+	normalizeBilling,
+} from '../billing/plans.js';
 
 const router = Router();
 const adminRouter = Router();
@@ -55,6 +60,13 @@ const inviteMemberSchema = z.object({
 
 const createClinicSchema = z.object({
 	name: z.string().min(2),
+	billing: z
+		.object({
+			plan: z
+				.enum(['starter_1_5', 'team_6_15', 'scale_16_50', 'enterprise'])
+				.optional(),
+		})
+		.optional(),
 	admin: z.object({
 		name: z.string().min(2),
 		email: z.string().email(),
@@ -70,10 +82,49 @@ const updateClinicSchema = z
 	.object({
 		name: z.string().min(2).optional(),
 		isActive: z.boolean().optional(),
+		billing: z
+			.object({
+				plan: z
+					.enum([
+						'individual',
+						'starter_1_5',
+						'team_6_15',
+						'scale_16_50',
+						'enterprise',
+					])
+					.optional(),
+				status: z
+					.enum(['trial', 'active', 'past_due', 'suspended', 'cancelled'])
+					.optional(),
+				enabledModules: z
+					.object({
+						patientPortal: z.boolean().optional(),
+						automatedMessaging: z.boolean().optional(),
+						advancedAudit: z.boolean().optional(),
+						digitalSignature: z.boolean().optional(),
+						customBranding: z.boolean().optional(),
+					})
+					.optional(),
+				limits: z
+					.object({
+						professionals: z.number().int().min(0).nullable().optional(),
+						staff: z.number().int().min(0).nullable().optional(),
+						activePatients: z.number().int().min(0).nullable().optional(),
+						storageGb: z.number().int().min(0).nullable().optional(),
+					})
+					.optional(),
+			})
+			.optional(),
 	})
-	.refine((data) => data.name !== undefined || data.isActive !== undefined, {
-		message: 'At least one field is required',
-	});
+	.refine(
+		(data) =>
+			data.name !== undefined ||
+			data.isActive !== undefined ||
+			data.billing !== undefined,
+		{
+			message: 'At least one field is required',
+		},
+	);
 
 const clinicSettingsSchema = z.object({
 	name: z.string().min(2).optional(),
@@ -136,6 +187,8 @@ function serializeTimestamp(value: unknown): string | null {
 }
 
 function serializeClinic(id: string, data: Partial<ClinicDoc>) {
+	const fallbackPlan =
+		data.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5';
 	return {
 		id,
 		name: data.name ?? '',
@@ -144,6 +197,101 @@ function serializeClinic(id: string, data: Partial<ClinicDoc>) {
 		createdAt: serializeTimestamp(data.createdAt),
 		updatedAt: serializeTimestamp(data.updatedAt),
 		isActive: data.isActive !== false,
+		branding: data.branding ?? null,
+		billing: normalizeBilling(data.billing, fallbackPlan),
+	};
+}
+
+async function countActiveMembersByRole(
+	clinicId: string,
+	role: ClinicRole,
+	excludeUid?: string,
+) {
+	const snap = await getFirestoreDb()
+		.collection('clinic_memberships')
+		.where('clinicId', '==', clinicId)
+		.where('role', '==', role)
+		.where('isActive', '==', true)
+		.get();
+
+	return snap.docs.filter((doc) => doc.data().uid !== excludeUid).length;
+}
+
+async function assertMemberWithinBillingLimit(
+	clinicId: string,
+	role: ClinicRole,
+	res: Response,
+	excludeUid?: string,
+) {
+	if (role !== 'professional' && role !== 'staff') return true;
+	const clinicSnap = await ensureClinicExists(clinicId);
+	if (!clinicSnap) {
+		res.status(404).json({ success: false, message: 'Not found' });
+		return false;
+	}
+	const clinic = clinicSnap.data() as ClinicDoc;
+	const billing = normalizeBilling(
+		clinic.billing,
+		clinic.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+	);
+	const limit = role === 'professional' ? billing.limits.professionals : billing.limits.staff;
+	if (limit === null) return true;
+
+	const currentCount = await countActiveMembersByRole(clinicId, role, excludeUid);
+	if (currentCount + 1 <= limit) return true;
+
+	res.status(402).json({
+		success: false,
+		message: 'Plan limit reached',
+		data: {
+			plan: billing.plan,
+			role,
+			limit,
+			currentCount,
+		},
+	});
+	return false;
+}
+
+function buildBillingUpdate(
+	current: Partial<ClinicDoc>,
+	input: NonNullable<z.infer<typeof updateClinicSchema>['billing']>,
+	updatedByUid: string | null,
+) {
+	const fallbackPlan =
+		current.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5';
+	const base = normalizeBilling(current.billing, fallbackPlan);
+	const plan = input.plan ?? base.plan;
+	const limits =
+		plan === 'enterprise'
+			? {
+					professionals: input.limits?.professionals ?? base.limits.professionals,
+					staff: input.limits?.staff ?? base.limits.staff,
+					activePatients:
+						input.limits?.activePatients ?? base.limits.activePatients,
+					storageGb: input.limits?.storageGb ?? base.limits.storageGb,
+				}
+			: PLAN_LIMITS[plan];
+	return {
+		plan,
+		status: input.status ?? base.status,
+		enabledModules: {
+			patientPortal:
+				input.enabledModules?.patientPortal ?? base.enabledModules.patientPortal,
+			automatedMessaging:
+				input.enabledModules?.automatedMessaging ??
+				base.enabledModules.automatedMessaging,
+			advancedAudit:
+				input.enabledModules?.advancedAudit ?? base.enabledModules.advancedAudit,
+			digitalSignature:
+				input.enabledModules?.digitalSignature ??
+				base.enabledModules.digitalSignature,
+			customBranding:
+				input.enabledModules?.customBranding ?? base.enabledModules.customBranding,
+		},
+		limits,
+		updatedAt: Timestamp.now(),
+		updatedByUid,
 	};
 }
 
@@ -274,6 +422,7 @@ async function createClinicWithAdmin(input: CreateClinicInput, creatorUid: strin
 	const clinicDoc: ClinicDoc = {
 		name: input.name,
 		isActive: true,
+		billing: defaultBillingForPlan(input.billing?.plan ?? 'starter_1_5'),
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -430,6 +579,12 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 				ownerProfessionalUid: data?.ownerProfessionalUid ?? null,
 				createdAt: data?.createdAt ?? null,
 				updatedAt: data?.updatedAt ?? null,
+				billing: normalizeBilling(
+					data?.billing,
+					data?.tenantType === 'individual_practice'
+						? 'individual'
+						: 'starter_1_5',
+				),
 				role: membership?.role ?? null,
 			};
 		});
@@ -477,6 +632,7 @@ router.post(
 			tenantType: 'individual_practice',
 			ownerProfessionalUid: auth.uid,
 			isActive: true,
+			billing: defaultBillingForPlan('individual'),
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -639,10 +795,16 @@ adminRouter.patch(
 		if (!clinicSnap) {
 			return res.status(404).json({ success: false, message: 'Not found' });
 		}
-
 		const update: Partial<ClinicDoc> = { updatedAt: Timestamp.now() };
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
 		if (parsed.data.isActive !== undefined) update.isActive = parsed.data.isActive;
+		if (parsed.data.billing !== undefined) {
+			update.billing = buildBillingUpdate(
+				clinicSnap.data() as ClinicDoc,
+				parsed.data.billing,
+				req.auth?.uid ?? null,
+			);
+		}
 
 		await clinicSnap.ref.update(update);
 		const fresh = await clinicSnap.ref.get();
@@ -782,6 +944,17 @@ adminRouter.post(
 		if (!userSnap.exists) {
 			return res.status(404).json({ success: false, message: 'User not found' });
 		}
+		if (
+			(parsed.data.isActive ?? true) &&
+			!(await assertMemberWithinBillingLimit(
+				clinicId,
+				parsed.data.role,
+				res,
+				parsed.data.uid,
+			))
+		) {
+			return;
+		}
 
 		const now = Timestamp.now();
 		const existing = await db
@@ -849,6 +1022,20 @@ adminRouter.patch(
 		const snap = await ref.get();
 		if (!snap.exists || (snap.data() as ClinicMembershipDoc).clinicId !== clinicId) {
 			return res.status(404).json({ success: false, message: 'Not found' });
+		}
+		const currentMember = snap.data() as ClinicMembershipDoc;
+		const nextRole = parsed.data.role ?? currentMember.role;
+		const nextActive = parsed.data.isActive ?? currentMember.isActive !== false;
+		if (
+			nextActive &&
+			!(await assertMemberWithinBillingLimit(
+				clinicId,
+				nextRole,
+				res,
+				currentMember.uid,
+			))
+		) {
+			return;
 		}
 
 		const update: Partial<ClinicMembershipDoc> = { updatedAt: Timestamp.now() };
@@ -938,6 +1125,7 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 		patientId?: string;
 		tenantType?: 'clinic' | 'individual_practice';
 		ownerProfessionalUid?: string | null;
+		billing?: ClinicBilling;
 	}> = [
 		...analysis.staffClinics,
 		...analysis.patientClinics.map((clinic) => ({
@@ -945,6 +1133,11 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 			role: 'patient' as Role,
 			clinicName: clinic.clinicName,
 			patientId: clinic.patientId,
+			tenantType: clinic.tenantType ?? 'clinic',
+			ownerProfessionalUid: clinic.ownerProfessionalUid ?? null,
+			billing:
+				clinic.billing ??
+				normalizeBilling(undefined, 'starter_1_5'),
 		})),
 	];
 
@@ -1062,6 +1255,18 @@ router.patch(
 		if (!clinicSnap) {
 			return res.status(404).json({ success: false, message: 'Not found' });
 		}
+		const currentClinic = clinicSnap.data() as ClinicDoc;
+		const billing = normalizeBilling(currentClinic.billing, 'starter_1_5');
+		if (
+			parsed.data.branding !== undefined &&
+			!req.auth?.isPlatformAdmin &&
+			billing.enabledModules.customBranding !== true
+		) {
+			return res.status(402).json({
+				success: false,
+				message: 'Custom branding module is not enabled',
+			});
+		}
 
 		const update: Partial<ClinicDoc> = { updatedAt: Timestamp.now() };
 		if (parsed.data.name !== undefined) update.name = parsed.data.name;
@@ -1167,6 +1372,17 @@ router.post(
 				success: false,
 				message: 'You cannot assign this role',
 			});
+		}
+		if (
+			(parsed.data.isActive ?? true) &&
+			!(await assertMemberWithinBillingLimit(
+				clinicId,
+				parsed.data.role,
+				res,
+				parsed.data.uid,
+			))
+		) {
+			return;
 		}
 
 		const db = getFirestoreDb();
@@ -1376,6 +1592,11 @@ router.post(
 			.where('uid', '==', uid)
 			.limit(1)
 			.get();
+		if (
+			!(await assertMemberWithinBillingLimit(clinicId, parsed.data.role, res, uid))
+		) {
+			return;
+		}
 
 		if (!memSnap.empty) {
 			const memDoc = memSnap.docs[0];

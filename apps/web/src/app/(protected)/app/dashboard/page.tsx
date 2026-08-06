@@ -29,6 +29,7 @@ import { apiClient } from '../../../../lib/api-client';
 import { formatDate } from '../../../../lib/utils';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useClinic } from '../../../../providers/clinic-provider';
+import { useI18n } from '../../../../providers/i18n-provider';
 import { useRouter } from 'next/navigation';
 
 const parseSafeDate = (dateVal: any): Date | null => {
@@ -54,12 +55,17 @@ const isSameDay = (apptDateVal: any, todayStr: string) => {
 	return `${year}-${month}-${day}` === todayStr;
 };
 
+function firstName(value: string | null | undefined) {
+	return value?.trim().split(/\s+/)[0] || null;
+}
+
 export default function DashboardPage() {
 	const { activeClinicId, activeClinic, activeMembership, platformRole } =
 		useClinic();
 	const { idToken, user } = useAuth();
 	const router = useRouter();
 	const qc = useQueryClient();
+	const { locale, t } = useI18n();
 
 	const [isMounted, setIsMounted] = useState(false);
 	const [todayDateString, setTodayDateString] = useState('');
@@ -106,7 +112,6 @@ export default function DashboardPage() {
 		onSuccess: () => qc.invalidateQueries({ queryKey: ['appointments'] }),
 	});
 
-	// Filtramos TODOS los turnos de hoy que NO estén cancelados
 	const todayAppointments =
 		isMounted && appointments
 			? appointments.filter(
@@ -116,7 +121,6 @@ export default function DashboardPage() {
 				)
 			: [];
 
-	// 1. En Sala de Espera
 	const arrivedAppointments = todayAppointments
 		.filter((appt) => appt.status === 'arrived')
 		.sort((a, b) => {
@@ -125,7 +129,6 @@ export default function DashboardPage() {
 			return (dateA?.getTime() || 0) - (dateB?.getTime() || 0);
 		});
 
-	// 2. Próximos
 	const scheduledAppointments = todayAppointments
 		.filter((appt) => appt.status === 'scheduled')
 		.sort((a, b) => {
@@ -134,55 +137,57 @@ export default function DashboardPage() {
 			return (dateA?.getTime() || 0) - (dateB?.getTime() || 0);
 		});
 
-	// 3. Atendidos (NUEVO)
 	const completedAppointments = todayAppointments
 		.filter((appt) => appt.status === 'completed')
 		.sort((a, b) => {
 			const dateA = parseSafeDate(a.completedAt || a.scheduledFor);
 			const dateB = parseSafeDate(b.completedAt || b.scheduledFor);
-			// Ordenamos descendentemente (el último atendido aparece primero en esta sub-lista)
 			return (dateB?.getTime() || 0) - (dateA?.getTime() || 0);
 		});
 
 	const totalPatients = patients?.length || 0;
 	const isLoading = isLoadingPatients || isLoadingAppts || !isMounted;
+	const isIndividualPractice = activeClinic?.tenantType === 'individual_practice';
+	const displayName =
+		firstName(user?.displayName) ||
+		(isIndividualPractice ? t('role.professional') : t('role.doctor'));
 
 	if (!isMounted) return null;
 
 	return (
 		<main className='mx-auto max-w-6xl px-6 py-8'>
-			<div className='mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4'>
+			<div className='mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center'>
 				<div>
-					<h1 className='text-3xl font-bold text-slate-900 tracking-tight'>
-						¡Hola, {user?.displayName?.split(' ')[0] || 'Doc'}! 👋
+					<h1 className='text-3xl font-bold tracking-tight text-slate-900'>
+						{t('dashboard.greeting', { name: displayName })}
 					</h1>
-					<p className='text-slate-500 mt-1'>
-						Acá tenés el resumen de tu día en{' '}
-						<span className='font-semibold text-slate-700'>
-							{activeClinic?.name}
-						</span>
-						.
+					<p className='mt-1 text-slate-500'>
+						{isIndividualPractice
+							? t('dashboard.summaryIndividual')
+							: t('dashboard.summaryClinic', {
+									clinicName: activeClinic?.name ?? '',
+								})}
 					</p>
 				</div>
 			</div>
 
 			{isLoading ? (
 				<div className='flex flex-col items-center justify-center py-20 text-slate-500'>
-					<Loader2 className='h-8 w-8 animate-spin mb-4 text-primary' />
-					<p>Cargando tu información...</p>
+					<Loader2 className='mb-4 h-8 w-8 animate-spin text-primary' />
+					<p>{t('dashboard.loading')}</p>
 				</div>
 			) : (
-				<div className='grid grid-cols-1 md:grid-cols-12 gap-6'>
-					<div className='md:col-span-8 space-y-6'>
-						<div className='grid grid-cols-1 sm:grid-cols-3 gap-4'>
-							<Card className='border-slate-200 shadow-sm bg-white hover:border-blue-200 transition-colors'>
-								<CardContent className='p-6 flex items-center gap-4'>
-									<div className='p-4 bg-blue-50 text-blue-600 rounded-full'>
+				<div className='grid grid-cols-1 gap-6 md:grid-cols-12'>
+					<div className='space-y-6 md:col-span-8'>
+						<div className='grid grid-cols-1 gap-4 sm:grid-cols-3'>
+							<Card className='border-slate-200 bg-white shadow-sm transition-colors hover:border-blue-200'>
+								<CardContent className='flex items-center gap-4 p-6'>
+									<div className='rounded-full bg-blue-50 p-4 text-blue-600'>
 										<Users className='h-6 w-6' />
 									</div>
 									<div>
 										<p className='text-sm font-medium text-slate-500'>
-											Total Pacientes
+											{t('dashboard.totalPatients')}
 										</p>
 										<h3 className='text-3xl font-bold text-slate-900'>
 											{totalPatients}
@@ -191,14 +196,14 @@ export default function DashboardPage() {
 								</CardContent>
 							</Card>
 
-							<Card className='border-slate-200 shadow-sm bg-white hover:border-emerald-200 transition-colors'>
-								<CardContent className='p-6 flex items-center gap-4'>
-									<div className='p-4 bg-emerald-50 text-emerald-600 rounded-full'>
+							<Card className='border-slate-200 bg-white shadow-sm transition-colors hover:border-emerald-200'>
+								<CardContent className='flex items-center gap-4 p-6'>
+									<div className='rounded-full bg-emerald-50 p-4 text-emerald-600'>
 										<CalendarIcon className='h-6 w-6' />
 									</div>
 									<div>
 										<p className='text-sm font-medium text-slate-500'>
-											Turnos Hoy
+											{t('dashboard.todayAppointments')}
 										</p>
 										<h3 className='text-3xl font-bold text-slate-900'>
 											{todayAppointments.length}
@@ -207,14 +212,14 @@ export default function DashboardPage() {
 								</CardContent>
 							</Card>
 
-							<Card className='border-slate-200 shadow-sm bg-white hover:border-amber-200 transition-colors'>
-								<CardContent className='p-6 flex items-center gap-4'>
-									<div className='p-4 bg-amber-50 text-amber-600 rounded-full'>
+							<Card className='border-slate-200 bg-white shadow-sm transition-colors hover:border-amber-200'>
+								<CardContent className='flex items-center gap-4 p-6'>
+									<div className='rounded-full bg-amber-50 p-4 text-amber-600'>
 										<UserCheck className='h-6 w-6' />
 									</div>
 									<div>
 										<p className='text-sm font-medium text-slate-500'>
-											En espera
+											{t('dashboard.waiting')}
 										</p>
 										<h3 className='text-3xl font-bold text-slate-900'>
 											{arrivedAppointments.length}
@@ -226,25 +231,31 @@ export default function DashboardPage() {
 
 						<Card className='border-slate-200 shadow-sm'>
 							<CardHeader className='pb-3'>
-								<CardTitle className='text-lg'>Accesos Rápidos</CardTitle>
+								<CardTitle className='text-lg'>
+									{t('dashboard.quickAccess')}
+								</CardTitle>
 								<CardDescription>
-									Acciones frecuentes para gestionar tu clínica.
+									{isIndividualPractice
+										? t('dashboard.quickAccessDetailIndividual')
+										: t('dashboard.quickAccessDetailClinic')}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
+							<CardContent className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
 								<Button
 									size='lg'
-									className='h-20 bg-slate-50 hover:bg-blue-50 text-slate-700 border border-slate-200 hover:border-blue-200 justify-start px-6 transition-all'
+									className='h-20 justify-start border border-slate-200 bg-slate-50 px-6 text-slate-700 transition-all hover:border-blue-200 hover:bg-blue-50'
 									onClick={() => router.push('/app/patients')}
 								>
 									<div className='flex items-center gap-4'>
-										<div className='bg-white p-2 rounded-full shadow-sm'>
+										<div className='rounded-full bg-white p-2 shadow-sm'>
 											<UserPlus className='h-5 w-5 text-blue-600' />
 										</div>
 										<div className='text-left'>
-											<p className='font-semibold text-base'>Nuevo Paciente</p>
+											<p className='text-base font-semibold'>
+												{t('dashboard.newPatient')}
+											</p>
 											<p className='text-xs font-normal text-slate-500'>
-												Agregar a la base
+												{t('dashboard.addToBase')}
 											</p>
 										</div>
 									</div>
@@ -252,17 +263,19 @@ export default function DashboardPage() {
 
 								<Button
 									size='lg'
-									className='h-20 bg-slate-50 hover:bg-emerald-50 text-slate-700 border border-slate-200 hover:border-emerald-200 justify-start px-6 transition-all'
+									className='h-20 justify-start border border-slate-200 bg-slate-50 px-6 text-slate-700 transition-all hover:border-emerald-200 hover:bg-emerald-50'
 									onClick={() => router.push('/app/appointments')}
 								>
 									<div className='flex items-center gap-4'>
-										<div className='bg-white p-2 rounded-full shadow-sm'>
+										<div className='rounded-full bg-white p-2 shadow-sm'>
 											<CalendarPlus className='h-5 w-5 text-emerald-600' />
 										</div>
 										<div className='text-left'>
-											<p className='font-semibold text-base'>Nuevo Turno</p>
+											<p className='text-base font-semibold'>
+												{t('dashboard.newAppointment')}
+											</p>
 											<p className='text-xs font-normal text-slate-500'>
-												Agendar consulta
+												{t('dashboard.scheduleVisit')}
 											</p>
 										</div>
 									</div>
@@ -272,10 +285,10 @@ export default function DashboardPage() {
 					</div>
 
 					<div className='md:col-span-4'>
-						<Card className='border-slate-200 shadow-sm h-full flex flex-col'>
-							<CardHeader className='pb-3 border-b border-slate-100 bg-slate-50/50'>
-								<CardTitle className='text-lg flex items-center justify-between'>
-									<span>Agenda de Hoy</span>
+						<Card className='flex h-full flex-col border-slate-200 shadow-sm'>
+							<CardHeader className='border-b border-slate-100 bg-slate-50/50 pb-3'>
+								<CardTitle className='flex items-center justify-between text-lg'>
+									<span>{t('dashboard.todayAgenda')}</span>
 									<Badge
 										variant='secondary'
 										className='bg-blue-100 text-blue-800 hover:bg-blue-100'
@@ -285,29 +298,26 @@ export default function DashboardPage() {
 								</CardTitle>
 							</CardHeader>
 
-							<CardContent className='p-0 flex-1 overflow-y-auto max-h-[500px]'>
+							<CardContent className='max-h-[500px] flex-1 overflow-y-auto p-0'>
 								{todayAppointments.length === 0 ? (
-									<div className='p-8 text-center flex flex-col items-center justify-center h-full text-slate-500'>
-										<div className='bg-slate-50 p-4 rounded-full mb-3 border border-slate-100'>
+									<div className='flex h-full flex-col items-center justify-center p-8 text-center text-slate-500'>
+										<div className='mb-3 rounded-full border border-slate-100 bg-slate-50 p-4'>
 											<CalendarIcon className='h-8 w-8 text-slate-300' />
 										</div>
 										<p className='font-medium text-slate-600'>
-											No hay turnos para hoy
+											{t('dashboard.noAppointmentsToday')}
 										</p>
-										<p className='text-sm mt-1'>
-											¡Tenés el día libre o para adelantar pendientes!
-										</p>
+										<p className='mt-1 text-sm'>{t('dashboard.freeDay')}</p>
 									</div>
 								) : (
 									<div className='flex flex-col'>
-										{/* SECCIÓN 1: SALA DE ESPERA */}
 										{arrivedAppointments.length > 0 && (
-											<div className='bg-emerald-50/50 border-b border-slate-100'>
-												<div className='px-4 py-2 border-b border-emerald-100/50 flex justify-between items-center'>
-													<span className='text-xs font-bold text-emerald-800 uppercase tracking-wider'>
-														En Sala de Espera
+											<div className='border-b border-slate-100 bg-emerald-50/50'>
+												<div className='flex items-center justify-between border-b border-emerald-100/50 px-4 py-2'>
+													<span className='text-xs font-bold uppercase tracking-wider text-emerald-800'>
+														{t('dashboard.waitingRoom')}
 													</span>
-													<span className='text-xs font-bold bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full'>
+													<span className='rounded-full bg-emerald-200 px-2 py-0.5 text-xs font-bold text-emerald-800'>
 														{arrivedAppointments.length}
 													</span>
 												</div>
@@ -315,7 +325,7 @@ export default function DashboardPage() {
 													{arrivedAppointments.map((appt) => {
 														const apptDate = parseSafeDate(appt.scheduledFor);
 														const timeString = apptDate
-															? apptDate.toLocaleTimeString('es-AR', {
+															? apptDate.toLocaleTimeString(locale, {
 																	hour: '2-digit',
 																	minute: '2-digit',
 																})
@@ -328,26 +338,26 @@ export default function DashboardPage() {
 															<Link
 																key={appt.id}
 																href={`/app/patients/${appt.patientId}`}
-																className='flex items-center justify-between p-4 hover:bg-emerald-50 transition-colors group relative overflow-hidden'
+																className='group relative flex items-center justify-between overflow-hidden p-4 transition-colors hover:bg-emerald-50'
 															>
-																<div className='absolute left-0 top-0 bottom-0 w-1 bg-emerald-500'></div>
+																<div className='absolute bottom-0 left-0 top-0 w-1 bg-emerald-500' />
 																<div className='flex items-center gap-4 pl-2'>
-																	<div className='flex flex-col items-center justify-center w-12 h-12 rounded-lg bg-white text-emerald-700 border border-emerald-200 shadow-sm'>
-																		<UserCheck className='h-4 w-4 mb-0.5 text-emerald-600' />
+																	<div className='flex h-12 w-12 flex-col items-center justify-center rounded-lg border border-emerald-200 bg-white text-emerald-700 shadow-sm'>
+																		<UserCheck className='mb-0.5 h-4 w-4 text-emerald-600' />
 																		<span className='text-xs font-bold'>
 																			{timeString}
 																		</span>
 																	</div>
 																	<div>
-																		<p className='font-bold text-slate-900 group-hover:text-emerald-700 transition-colors'>
-																			{patient?.name || 'Paciente Desconocido'}
+																		<p className='font-bold text-slate-900 transition-colors group-hover:text-emerald-700'>
+																			{patient?.name || t('dashboard.unknownPatient')}
 																		</p>
-																		<p className='text-xs text-emerald-600 font-medium'>
-																			Listo para atender
+																		<p className='text-xs font-medium text-emerald-600'>
+																			{t('dashboard.ready')}
 																		</p>
 																	</div>
 																</div>
-																<ChevronRight className='h-5 w-5 text-emerald-300 group-hover:text-emerald-600 transition-colors' />
+																<ChevronRight className='h-5 w-5 text-emerald-300 transition-colors group-hover:text-emerald-600' />
 															</Link>
 														);
 													})}
@@ -355,19 +365,18 @@ export default function DashboardPage() {
 											</div>
 										)}
 
-										{/* SECCIÓN 2: AUN NO LLEGARON */}
 										{scheduledAppointments.length > 0 && (
 											<div>
-												<div className='px-4 py-2 bg-slate-50 border-b border-slate-100 flex justify-between items-center'>
-													<span className='text-xs font-bold text-slate-500 uppercase tracking-wider'>
-														Aun no llegaron
+												<div className='flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2'>
+													<span className='text-xs font-bold uppercase tracking-wider text-slate-500'>
+														{t('dashboard.notArrived')}
 													</span>
 												</div>
 												<div className='divide-y divide-slate-100'>
 													{scheduledAppointments.map((appt) => {
 														const apptDate = parseSafeDate(appt.scheduledFor);
 														const timeString = apptDate
-															? apptDate.toLocaleTimeString('es-AR', {
+															? apptDate.toLocaleTimeString(locale, {
 																	hour: '2-digit',
 																	minute: '2-digit',
 																})
@@ -379,42 +388,40 @@ export default function DashboardPage() {
 														return (
 															<div
 																key={appt.id}
-																className='flex items-center justify-between p-4 hover:bg-slate-50 transition-colors group'
+																className='group flex items-center justify-between p-4 transition-colors hover:bg-slate-50'
 															>
 																<Link
 																	href={`/app/patients/${appt.patientId}`}
-																	className='flex-1 flex items-center gap-4'
+																	className='flex flex-1 items-center gap-4'
 																>
-																	<div className='flex flex-col items-center justify-center w-12 h-12 rounded-lg bg-white text-slate-700 border border-slate-200 shadow-sm group-hover:border-primary/30 transition-colors'>
-																		<Clock className='h-4 w-4 mb-0.5 text-slate-400 group-hover:text-primary transition-colors' />
+																	<div className='flex h-12 w-12 flex-col items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors group-hover:border-primary/30'>
+																		<Clock className='mb-0.5 h-4 w-4 text-slate-400 transition-colors group-hover:text-primary' />
 																		<span className='text-xs font-bold'>
 																			{timeString}
 																		</span>
 																	</div>
 																	<div>
-																		<p className='font-semibold text-slate-900 group-hover:text-primary transition-colors'>
-																			{patient?.name || 'Paciente Desconocido'}
+																		<p className='font-semibold text-slate-900 transition-colors group-hover:text-primary'>
+																			{patient?.name || t('dashboard.unknownPatient')}
 																		</p>
 																		<p className='text-xs text-slate-500'>
-																			Consulta General
+																			{t('dashboard.generalVisit')}
 																		</p>
 																	</div>
 																</Link>
-																<div className='flex items-center gap-2'>
-																	<Button
-																		size='sm'
-																		variant='outline'
-																		className='h-8 text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 border-emerald-200'
-																		onClick={(e) => {
-																			e.preventDefault();
-																			arriveMutation.mutate(appt.id);
-																		}}
-																		disabled={arriveMutation.isPending}
-																	>
-																		<CheckCircle2 className='h-3.5 w-3.5 mr-1' />{' '}
-																		Llegó
-																	</Button>
-																</div>
+																<Button
+																	size='sm'
+																	variant='outline'
+																	className='h-8 text-xs font-medium text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 border-emerald-200'
+																	onClick={(e) => {
+																		e.preventDefault();
+																		arriveMutation.mutate(appt.id);
+																	}}
+																	disabled={arriveMutation.isPending}
+																>
+																	<CheckCircle2 className='mr-1 h-3.5 w-3.5' />
+																	{t('dashboard.arrived')}
+																</Button>
 															</div>
 														);
 													})}
@@ -422,12 +429,11 @@ export default function DashboardPage() {
 											</div>
 										)}
 
-										{/* SECCIÓN 3: ATENDIDOS */}
 										{completedAppointments.length > 0 && (
 											<div className='opacity-75'>
-												<div className='px-4 py-2 bg-slate-100 border-b border-slate-200 flex justify-between items-center'>
-													<span className='text-xs font-bold text-slate-400 uppercase tracking-wider'>
-														Atendidos
+												<div className='flex items-center justify-between border-b border-slate-200 bg-slate-100 px-4 py-2'>
+													<span className='text-xs font-bold uppercase tracking-wider text-slate-400'>
+														{t('dashboard.completed')}
 													</span>
 													<span className='text-xs font-bold text-slate-400'>
 														{completedAppointments.length}
@@ -437,7 +443,7 @@ export default function DashboardPage() {
 													{completedAppointments.map((appt) => {
 														const apptDate = parseSafeDate(appt.scheduledFor);
 														const timeString = apptDate
-															? apptDate.toLocaleTimeString('es-AR', {
+															? apptDate.toLocaleTimeString(locale, {
 																	hour: '2-digit',
 																	minute: '2-digit',
 																})
@@ -450,21 +456,21 @@ export default function DashboardPage() {
 															<Link
 																key={appt.id}
 																href={`/app/patients/${appt.patientId}`}
-																className='flex items-center justify-between p-4 hover:bg-slate-100 transition-colors group'
+																className='group flex items-center justify-between p-4 transition-colors hover:bg-slate-100'
 															>
 																<div className='flex items-center gap-4'>
-																	<div className='flex flex-col items-center justify-center w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 shadow-sm'>
-																		<CheckCheck className='h-4 w-4 mb-0.5 text-slate-400' />
+																	<div className='flex h-12 w-12 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400 shadow-sm'>
+																		<CheckCheck className='mb-0.5 h-4 w-4 text-slate-400' />
 																		<span className='text-xs font-bold line-through'>
 																			{timeString}
 																		</span>
 																	</div>
 																	<div>
 																		<p className='font-medium text-slate-500 line-through'>
-																			{patient?.name || 'Paciente Desconocido'}
+																			{patient?.name || t('dashboard.unknownPatient')}
 																		</p>
 																		<p className='text-xs text-slate-400'>
-																			Finalizado
+																			{t('dashboard.finished')}
 																		</p>
 																	</div>
 																</div>

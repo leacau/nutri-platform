@@ -12,32 +12,38 @@ import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { RoleGuard } from '../../../../components/guards';
-import { UserAccount } from '../../../../lib/types'; // Import agregado
+import { UserAccount } from '../../../../lib/types';
 import { UserPlus2 } from 'lucide-react';
 import { apiClient } from '../../../../lib/api-client';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
 import { useClinic } from '../../../../providers/clinic-provider';
 import { useForm } from 'react-hook-form';
+import { useI18n } from '../../../../providers/i18n-provider';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-const inviteSchema = z.object({
-	name: z.string().min(2, 'El nombre es obligatorio'),
-	email: z.string().email('Email inválido'),
-	dni: z
-		.string()
-		.min(7, 'El DNI debe tener min 7 dígitos')
-		.max(8, 'El DNI debe tener max 8 dígitos')
-		.regex(/^\d+$/, 'Solo números'),
-});
-
-type InviteForm = z.infer<typeof inviteSchema>;
+type InviteForm = {
+	name: string;
+	email: string;
+	dni: string;
+};
 
 export default function NutritionistsPage() {
 	const qc = useQueryClient();
 	const { activeClinicId } = useClinic();
 	const { idToken } = useAuth();
+	const { t } = useI18n();
+
+	const inviteSchema = z.object({
+		name: z.string().min(2, t('validation.nameRequired')),
+		email: z.string().email(t('team.emailInvalid')),
+		dni: z
+			.string()
+			.min(7, t('team.dniMin'))
+			.max(8, t('team.dniMax'))
+			.regex(/^\d+$/, t('team.onlyNumbers')),
+	});
 
 	const professionalsQuery = useAuthedQuery({
 		queryKey: ['professionals', activeClinicId],
@@ -66,9 +72,9 @@ export default function NutritionistsPage() {
 		onSuccess: (data: any) => {
 			qc.invalidateQueries({ queryKey: ['professionals'] });
 			reset();
-			alert(data?.message || 'Profesional invitado/creado');
+			alert(data?.message || t('professionals.invited'));
 		},
-		onError: () => alert('Error al invitar profesional'),
+		onError: () => alert(t('professionals.inviteError')),
 	});
 
 	const handleDniBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
@@ -79,7 +85,7 @@ export default function NutritionistsPage() {
 			if (user) {
 				setValue('name', user.name);
 				setValue('email', user.email);
-				alert(`Usuario encontrado: ${user.name}. Se asignará como profesional.`);
+				alert(t('team.lookupFound', { name: user.name }));
 			}
 		} catch (e) {
 			console.error(e);
@@ -91,17 +97,17 @@ export default function NutritionistsPage() {
 			<div className='space-y-6'>
 				<div>
 					<p className='text-sm text-muted-foreground'>
-						Gestión de profesionales de la clínica
+						{t('professionals.management')}
 					</p>
 					<h1 className='text-2xl font-semibold text-primary'>
-						Profesionales
+						{t('professionals.title')}
 					</h1>
 				</div>
 
 				<div className='grid gap-6 lg:grid-cols-[1.3fr,1fr]'>
 					<Card>
 						<CardHeader>
-							<CardTitle>Equipo de profesionales</CardTitle>
+							<CardTitle>{t('professionals.team')}</CardTitle>
 						</CardHeader>
 						<CardContent className='divide-y p-0'>
 							{professionalsQuery.data?.map((professional: UserAccount) => (
@@ -122,7 +128,7 @@ export default function NutritionistsPage() {
 							))}
 							{!professionalsQuery.data?.length ? (
 								<p className='p-4 text-sm text-muted-foreground'>
-									No hay profesionales cargados.
+									{t('professionals.empty')}
 								</p>
 							) : null}
 						</CardContent>
@@ -132,7 +138,7 @@ export default function NutritionistsPage() {
 						<CardHeader>
 							<CardTitle className='flex items-center gap-2 text-lg'>
 								<UserPlus2 className='h-4 w-4' />
-								Invitar profesional
+								{t('professionals.invite')}
 							</CardTitle>
 						</CardHeader>
 						<CardContent>
@@ -153,10 +159,10 @@ export default function NutritionistsPage() {
 								</div>
 
 								<div className='space-y-1'>
-									<Label>Nombre</Label>
+									<Label>{t('common.name')}</Label>
 									<Input
 										value={undefined}
-										placeholder='Nombre'
+										placeholder={t('team.namePlaceholder')}
 										{...register('name')}
 									/>
 									{errors.name && (
@@ -184,7 +190,7 @@ export default function NutritionistsPage() {
 									type='submit'
 									disabled={isSubmitting}
 								>
-									Enviar invitación
+									{t('team.sendInvitation')}
 								</Button>
 							</form>
 						</CardContent>

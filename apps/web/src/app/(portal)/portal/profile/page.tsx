@@ -1,18 +1,21 @@
 "use client";
 
-import { useAuthedQuery } from "../../../../hooks/use-authed-query";
-import { apiClient } from "../../../../lib/api-client";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "../../../../components/ui/card";
+
+import { apiClient } from "../../../../lib/api-client";
 import { formatDate } from "../../../../lib/utils";
+import { useAuthedQuery } from "../../../../hooks/use-authed-query";
 import { useClinic } from "../../../../providers/clinic-provider";
+import { useI18n } from "../../../../providers/i18n-provider";
 
 export default function PortalProfilePage() {
   const { activeMembership } = useClinic();
+  const { t } = useI18n();
   const patientId = activeMembership?.patientId;
 
   const patientQuery = useAuthedQuery({
@@ -27,16 +30,16 @@ export default function PortalProfilePage() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-sm text-muted-foreground">Portal paciente</p>
-        <h1 className="text-2xl font-semibold text-primary">Mi perfil</h1>
+        <p className="text-sm text-muted-foreground">{t("portal.title")}</p>
+        <h1 className="text-2xl font-semibold text-primary">{t("portal.profile")}</h1>
       </div>
       <Card>
         <CardHeader>
-          <CardTitle>Datos</CardTitle>
+          <CardTitle>{t("portal.data")}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
           <div>
-            <p className="text-sm text-muted-foreground">Nombre</p>
+            <p className="text-sm text-muted-foreground">{t("common.name")}</p>
             <p className="font-semibold">{patient?.name ?? "—"}</p>
           </div>
           <div>
@@ -44,11 +47,11 @@ export default function PortalProfilePage() {
             <p className="font-semibold">{patient?.email ?? "—"}</p>
           </div>
           <div>
-            <p className="text-sm text-muted-foreground">Teléfono</p>
+            <p className="text-sm text-muted-foreground">{t("common.phone")}</p>
             <p className="font-semibold">{patient?.phone ?? "—"}</p>
           </div>
           <div>
-            <p className="text-sm text-muted-foreground">Nacimiento</p>
+            <p className="text-sm text-muted-foreground">{t("common.birthDate")}</p>
             <p className="font-semibold">
               {patient?.birthDate ? formatDate(patient.birthDate) : "—"}
             </p>
