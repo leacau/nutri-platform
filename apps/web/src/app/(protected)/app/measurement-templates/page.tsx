@@ -252,8 +252,8 @@ export default function MeasurementTemplatesPage() {
 													}
 													placeholder={
 														field.type === 'formula'
-															? 'Ej: IMC'
-															: 'Ej: Peso Actual'
+															? t('measurement.fieldNamePlaceholderFormula')
+															: t('measurement.fieldNamePlaceholderNumber')
 													}
 												/>
 												{field.label && field.type !== 'formula' && (
@@ -298,7 +298,7 @@ export default function MeasurementTemplatesPage() {
 														onChange={(e) =>
 															updateField(index, { unit: e.target.value })
 														}
-														placeholder='Ej: kg, cm'
+														placeholder={t('measurement.unitPlaceholder')}
 													/>
 												</div>
 											)}
@@ -313,7 +313,7 @@ export default function MeasurementTemplatesPage() {
 														onChange={(e) =>
 															updateField(index, { formula: e.target.value })
 														}
-														placeholder='Ej: {peso} / (({altura}/100) * ({altura}/100))'
+														placeholder={t('measurement.equationPlaceholder')}
 														className='font-mono text-sm border-purple-200 bg-purple-50 focus-visible:ring-purple-500'
 													/>
 													<div className='pt-2'>

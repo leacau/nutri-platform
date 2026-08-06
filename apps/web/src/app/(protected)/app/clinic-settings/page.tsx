@@ -9,7 +9,7 @@ import { Button } from "../../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
-import { RoleGuard } from "../../../../components/guards";
+import { ModuleGuard, RoleGuard } from "../../../../components/guards";
 import { apiClient } from "../../../../lib/api-client";
 import { getFirebaseApp } from "../../../../lib/firebase";
 import { useAuth } from "../../../../providers/auth-provider";
@@ -18,13 +18,12 @@ import { useClinic } from "../../../../providers/clinic-provider";
 import { useI18n } from "../../../../providers/i18n-provider";
 
 export default function ClinicSettingsPage() {
-  const { activeClinicId, activeClinic, platformRole } = useClinic();
+  const { activeClinicId, activeClinic } = useClinic();
   const { idToken } = useAuth();
   const { t } = useI18n();
   const qc = useQueryClient();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const customBrandingEnabled =
-    platformRole === "platform_admin" ||
     activeClinic?.billing?.enabledModules?.customBranding === true;
 
   const settingsQuery = useAuthedQuery({
@@ -183,6 +182,7 @@ export default function ClinicSettingsPage() {
 
   return (
     <RoleGuard allowed={["clinic_admin"]}>
+      <ModuleGuard module="customBranding">
       <div className="space-y-6">
         <div>
           <p className="text-sm text-muted-foreground">{t("settings.subtitle")}</p>
@@ -203,7 +203,7 @@ export default function ClinicSettingsPage() {
             <div className="space-y-1 sm:col-span-2">
               <Label>{t("settings.name")}</Label>
               <Input
-                placeholder="Clinica AMSA"
+                placeholder={t("settings.namePlaceholder")}
                 value={form.name || settingsQuery.data?.name || ""}
                 onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
               />
@@ -220,7 +220,7 @@ export default function ClinicSettingsPage() {
             <div className="space-y-1">
               <Label>{t("settings.logoUrl")}</Label>
               <Input
-                placeholder="https://..."
+                placeholder={t("settings.logoUrlPlaceholder")}
                 value={form.logoUrl || settingsQuery.data?.branding?.logoUrl || ""}
                 disabled={!customBrandingEnabled}
                 onChange={(e) => setForm((prev) => ({ ...prev, logoUrl: e.target.value }))}
@@ -244,7 +244,7 @@ export default function ClinicSettingsPage() {
             <div className="space-y-1">
               <Label>{t("settings.accentColor")}</Label>
               <Input
-                placeholder="#2F8F7B"
+                placeholder={t("settings.accentColorPlaceholder")}
                 value={form.accentColor || settingsQuery.data?.branding?.accentColor || ""}
                 disabled={!customBrandingEnabled}
                 onChange={(e) => setForm((prev) => ({ ...prev, accentColor: e.target.value }))}
@@ -343,6 +343,7 @@ export default function ClinicSettingsPage() {
           ) : null}
         </Card>
       </div>
+      </ModuleGuard>
     </RoleGuard>
   );
 }

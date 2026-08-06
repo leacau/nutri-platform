@@ -149,7 +149,7 @@ export default function NutritionistsPage() {
 								<div className='space-y-1'>
 									<Label>DNI</Label>
 									<Input
-										placeholder='12345678'
+										placeholder={t('common.dniPlaceholder')}
 										{...register('dni')}
 										onBlur={handleDniBlur}
 									/>
@@ -176,7 +176,7 @@ export default function NutritionistsPage() {
 									<Input
 										type='email'
 										value={undefined}
-										placeholder='profesional@clinica.com'
+										placeholder={t('common.professionalEmailPlaceholder')}
 										{...register('email')}
 									/>
 									{errors.email && (

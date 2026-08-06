@@ -54,7 +54,7 @@ export default function ForgotPasswordPage() {
         <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
           <div className="space-y-2">
             <Label htmlFor="email">{t("auth.email")}</Label>
-            <Input id="email" type="email" placeholder="vos@amsa.core" {...register("email")} required />
+            <Input id="email" type="email" placeholder={t("auth.emailPlaceholder")} {...register("email")} required />
           </div>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           {status === "sent" ? <p className="text-sm text-emerald-600">{t("auth.recoverSent")}</p> : null}

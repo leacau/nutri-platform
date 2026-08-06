@@ -148,7 +148,7 @@ export default function StaffPage() {
 								<div className='space-y-1'>
 									<Label>DNI</Label>
 									<Input
-										placeholder='12345678'
+										placeholder={t('common.dniPlaceholder')}
 										{...register('dni')}
 										onBlur={handleDniBlur}
 									/>
@@ -171,7 +171,7 @@ export default function StaffPage() {
 									<Label>Email</Label>
 									<Input
 										type='email'
-										placeholder='staff@clinica.com'
+										placeholder={t('common.staffEmailPlaceholder')}
 										{...register('email')}
 									/>
 									{errors.email && (

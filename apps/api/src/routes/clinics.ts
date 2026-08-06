@@ -1256,10 +1256,12 @@ router.patch(
 			return res.status(404).json({ success: false, message: 'Not found' });
 		}
 		const currentClinic = clinicSnap.data() as ClinicDoc;
-		const billing = normalizeBilling(currentClinic.billing, 'starter_1_5');
+		const billing = normalizeBilling(
+			currentClinic.billing,
+			currentClinic.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+		);
 		if (
 			parsed.data.branding !== undefined &&
-			!req.auth?.isPlatformAdmin &&
 			billing.enabledModules.customBranding !== true
 		) {
 			return res.status(402).json({

@@ -93,7 +93,7 @@ function SelectClinicContent() {
 			if (!user) return;
 
 			await user.getIdToken(true);
-		})().catch((e) => console.error('Token debug error:', e));
+		})().catch(() => undefined);
 	}, []);
 
 	const handleSelect = (clinicId: string) => {
@@ -349,7 +349,7 @@ function SelectClinicContent() {
 									<Label>{t('clinic.adminEmail')}</Label>
 									<Input
 										type='email'
-										placeholder='admin@clinica.com'
+										placeholder={t('common.adminEmailPlaceholder')}
 										{...register('adminEmail')}
 									/>
 									{errors.adminEmail && (
@@ -360,7 +360,7 @@ function SelectClinicContent() {
 								</div>
 								<div className='space-y-1'>
 									<Label>{t('clinic.adminDni')}</Label>
-									<Input placeholder='12345678' {...register('adminDni')} />
+									<Input placeholder={t('common.dniPlaceholder')} {...register('adminDni')} />
 									{errors.adminDni && (
 										<p className='text-xs text-red-500'>
 											{errors.adminDni.message}

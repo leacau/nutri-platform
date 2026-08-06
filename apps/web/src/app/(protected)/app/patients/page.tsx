@@ -324,7 +324,7 @@ export default function PatientsPage() {
             <div className="space-y-1">
               <Label>{t("patients.dniIdentification")}</Label>
               <Input
-                placeholder="12345678"
+                placeholder={t("common.dniPlaceholder")}
                 {...register("dni")}
                 onBlur={handleDniBlur}
               />
@@ -357,7 +357,7 @@ export default function PatientsPage() {
             <div className="space-y-1">
               <Label>Email</Label>
               <Input
-                placeholder="paciente@correo.com"
+                placeholder={t("common.patientEmailPlaceholder")}
                 type="email"
                 {...register("email")}
               />
@@ -369,7 +369,7 @@ export default function PatientsPage() {
             </div>
             <div className="space-y-1">
               <Label>{t("common.phone")}</Label>
-              <Input placeholder="+54 9 ..." {...register("phone")} />
+              <Input placeholder={t("common.phonePlaceholder")} {...register("phone")} />
             </div>
             <div className="space-y-1">
               <Label>{t("patients.sex")}</Label>

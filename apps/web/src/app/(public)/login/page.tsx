@@ -42,10 +42,8 @@ function LoginContent() {
 		try {
 			await loginWithEmail(data.email, data.password);
 			router.push(next);
-		} catch (err: any) {
-			console.error('[Login Error Detallado]:', err);
-			const firebaseError = err?.code || err?.message || 'Error desconocido';
-			setError(t('auth.firebaseLoginError', { error: firebaseError }));
+		} catch {
+			setError(t('auth.firebaseLoginError'));
 		}
 	};
 
@@ -54,9 +52,8 @@ function LoginContent() {
 		try {
 			await loginWithGoogle();
 			router.push(next);
-		} catch (err: any) {
-			console.error('[Google Login Error]:', err);
-			setError(t('auth.googleLoginError', { error: err?.code || err?.message }));
+		} catch {
+			setError(t('auth.googleLoginError'));
 		}
 	};
 
@@ -84,7 +81,7 @@ function LoginContent() {
 						{t('auth.access')}
 					</div>
 					<h1 className='text-3xl font-semibold text-primary'>
-						{t('hero.welcome')}
+						{t('auth.loginTitle')}
 					</h1>
 					<p className='text-sm text-muted-foreground'>
 						{t('auth.loginSubtitle')}
@@ -96,7 +93,7 @@ function LoginContent() {
 						<Label htmlFor='email'>{t('auth.email')}</Label>
 						<Input
 							id='email'
-							placeholder='vos@amsa.core'
+							placeholder={t('auth.emailPlaceholder')}
 							type='email'
 							required
 							{...register('email')}
@@ -107,7 +104,7 @@ function LoginContent() {
 						<Input
 							id='password'
 							type='password'
-							placeholder='********'
+							placeholder={t('auth.passwordPlaceholder')}
 							required
 							{...register('password')}
 						/>

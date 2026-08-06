@@ -102,6 +102,16 @@ export default function DashboardPage() {
 		enabled: Boolean(activeClinicId && idToken),
 	});
 
+	const { data: professionals } = useQuery({
+		queryKey: ['dashboard-professionals', activeClinicId, user?.uid],
+		queryFn: () => apiClient.professionals(activeClinicId!, idToken ?? undefined),
+		enabled: Boolean(
+			activeClinicId &&
+				idToken &&
+				activeClinic?.tenantType === 'individual_practice',
+		),
+	});
+
 	const arriveMutation = useMutation({
 		mutationFn: async (apptId: string) =>
 			apiClient.arriveAppointment(
@@ -148,8 +158,15 @@ export default function DashboardPage() {
 	const totalPatients = patients?.length || 0;
 	const isLoading = isLoadingPatients || isLoadingAppts || !isMounted;
 	const isIndividualPractice = activeClinic?.tenantType === 'individual_practice';
+	const ownerProfessional = professionals?.find((professional) => {
+		const ownerUid = activeClinic?.ownerProfessionalUid;
+		if (!ownerUid) return false;
+		return professional.uid === ownerUid || professional.id === ownerUid;
+	});
 	const displayName =
+		(isIndividualPractice ? firstName(ownerProfessional?.name) : null) ||
 		firstName(user?.displayName) ||
+		firstName(user?.email?.split('@')[0]) ||
 		(isIndividualPractice ? t('role.professional') : t('role.doctor'));
 
 	if (!isMounted) return null;

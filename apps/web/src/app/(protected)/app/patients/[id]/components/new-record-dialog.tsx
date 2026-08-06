@@ -536,7 +536,9 @@ function RecordForm({
                         onChange={(e) =>
                           handleDynamicValueChange(field.id, e.target.value)
                         }
-                        placeholder={`Ingresar ${field.label.toLowerCase()}`}
+                        placeholder={t("records.enterFieldValue", {
+                          field: field.label.toLowerCase(),
+                        })}
                       />
                     ) : field.type === "number" ? (
                       <Input

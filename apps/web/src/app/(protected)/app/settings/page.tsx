@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
+import { ModuleGuard, RoleGuard } from '../../../../components/guards';
 import { apiClient } from '../../../../lib/api-client';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useClinic } from '../../../../providers/clinic-provider';
@@ -79,6 +80,8 @@ export default function SettingsPage() {
 	}
 
 	return (
+		<RoleGuard allowed={['clinic_admin']}>
+			<ModuleGuard module='customBranding'>
 		<main className='mx-auto max-w-4xl px-6 py-8'>
 			<div className='mb-8'>
 				<h1 className='text-3xl font-bold text-slate-900 tracking-tight'>
@@ -124,9 +127,9 @@ export default function SettingsPage() {
 
 							<div className='space-y-2'>
 								<Label>{t('settings.logoUrl')}</Label>
-								<Input
-									type='url'
-									placeholder='https://example.com/logo.png'
+									<Input
+										type='url'
+										placeholder={t('settings.logoUrlPlaceholder')}
 									value={logoUrl}
 									onChange={(e) => setLogoUrl(e.target.value)}
 								/>
@@ -205,5 +208,7 @@ export default function SettingsPage() {
 				</div>
 			</div>
 		</main>
+			</ModuleGuard>
+		</RoleGuard>
 	);
 }

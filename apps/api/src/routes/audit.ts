@@ -44,7 +44,7 @@ auditRouter.get(
 
 		const clinic = clinicSnap.data() as ClinicDoc;
 		const billing = normalizeBilling(clinic.billing, 'starter_1_5');
-		if (!auth.isPlatformAdmin && billing.enabledModules.advancedAudit !== true) {
+		if (billing.enabledModules.advancedAudit !== true) {
 			return res.status(402).json({
 				success: false,
 				message: 'Advanced audit module is not enabled',

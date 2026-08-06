@@ -130,12 +130,38 @@ function serializeBackupEvent(id: string, data: Record<string, unknown>) {
 	};
 }
 
+async function requireAdvancedAuditModule(req: Request, res: Response) {
+	const clinicId = req.auth?.clinicId;
+	if (!clinicId) {
+		res.status(400).json({ success: false, message: 'Missing clinic context' });
+		return false;
+	}
+
+	const clinicSnap = await getFirestoreDb().collection('clinics').doc(clinicId).get();
+	const clinic = clinicSnap.data() as ClinicDoc | undefined;
+	const billing = normalizeBilling(
+		clinic?.billing,
+		clinic?.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+	);
+
+	if (billing.enabledModules.advancedAudit !== true) {
+		res.status(402).json({
+			success: false,
+			message: 'Advanced audit module is not enabled',
+		});
+		return false;
+	}
+
+	return true;
+}
+
 complianceRouter.get(
 	'/policies',
 	authMiddleware,
 	requireClinicContext,
 	requireRole('clinic_admin', 'platform_admin'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const clinicId = req.auth!.clinicId!;
 		const snap = await getFirestoreDb()
 			.collection('clinic_compliance_policies')
@@ -155,6 +181,7 @@ complianceRouter.patch(
 	requireClinicContext,
 	requireRole('clinic_admin', 'platform_admin'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const parsed = policySchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({
@@ -168,12 +195,14 @@ complianceRouter.patch(
 		const db = getFirestoreDb();
 		if (
 			parsed.data.digitalSignatureMode &&
-			parsed.data.digitalSignatureMode !== 'pending_provider' &&
-			!req.auth?.isPlatformAdmin
+			parsed.data.digitalSignatureMode !== 'pending_provider'
 		) {
 			const clinicSnap = await db.collection('clinics').doc(clinicId).get();
 			const clinic = clinicSnap.data() as ClinicDoc | undefined;
-			const billing = normalizeBilling(clinic?.billing, 'starter_1_5');
+			const billing = normalizeBilling(
+				clinic?.billing,
+				clinic?.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+			);
 			if (billing.enabledModules.digitalSignature !== true) {
 				return res.status(402).json({
 					success: false,
@@ -217,6 +246,7 @@ complianceRouter.get(
 	requireClinicContext,
 	requireRole('clinic_admin', 'platform_admin'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const clinicId = req.auth!.clinicId!;
 		const db = getFirestoreDb();
 		const [policySnap, backupSnap] = await Promise.all([
@@ -306,6 +336,7 @@ complianceRouter.get(
 	requireClinicContext,
 	requireRole('clinic_admin', 'staff', 'platform_admin', 'patient'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const clinicId = req.auth!.clinicId!;
 		const db = getFirestoreDb();
 		let query = db
@@ -336,6 +367,7 @@ complianceRouter.post(
 	requireClinicContext,
 	requireRole('clinic_admin', 'staff', 'platform_admin', 'patient'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const parsed = dataSubjectRequestSchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({
@@ -389,6 +421,7 @@ complianceRouter.patch(
 	requireClinicContext,
 	requireRole('clinic_admin', 'platform_admin'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const parsed = updateDataSubjectRequestSchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({
@@ -441,6 +474,7 @@ complianceRouter.get(
 	requireClinicContext,
 	requireRole('clinic_admin', 'platform_admin'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const clinicId = req.auth!.clinicId!;
 		const snap = await getFirestoreDb()
 			.collection('backup_events')
@@ -466,6 +500,7 @@ complianceRouter.post(
 	requireClinicContext,
 	requireRole('clinic_admin', 'platform_admin'),
 	async (req: Request, res: Response) => {
+		if (!(await requireAdvancedAuditModule(req, res))) return;
 		const parsed = backupEventSchema.safeParse(req.body ?? {});
 		if (!parsed.success) {
 			return res.status(400).json({

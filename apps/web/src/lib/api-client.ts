@@ -54,10 +54,6 @@ type RequestOptions<T> = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "/api";
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 
-if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
-  console.info("[api-client] API_BASE_URL", API_BASE);
-}
-
 type ApiResponse<T> = {
   success: boolean;
   data: T;

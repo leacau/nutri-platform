@@ -6,17 +6,16 @@ import { useClinic } from '../../../providers/clinic-provider';
 import { useI18n } from '../../../providers/i18n-provider';
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
-	const { activeClinic, activeMembership, platformRole } = useClinic();
+	const { activeClinic, activeMembership } = useClinic();
 	const { t } = useI18n();
-	const canReturnToPanel =
-		platformRole === 'platform_admin' || activeMembership?.role !== 'patient';
+	const canReturnToPanel = activeMembership?.role !== 'patient';
 	const patientPortalEnabled =
 		activeClinic?.billing?.enabledModules?.patientPortal === true;
 
 	return (
 		<Protected>
-			<RoleGuard allowed={['patient']} allowPlatformAdmin>
-				{!patientPortalEnabled && platformRole !== 'platform_admin' ? (
+			<RoleGuard allowed={['patient']}>
+				{!patientPortalEnabled ? (
 					<div className='flex min-h-screen items-center justify-center bg-slate-50 px-6'>
 						<div className='max-w-md rounded-lg border bg-white p-6 text-center shadow-sm'>
 							<h1 className='text-xl font-semibold text-primary'>

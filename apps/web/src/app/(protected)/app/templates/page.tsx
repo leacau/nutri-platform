@@ -18,12 +18,11 @@ import { useClinic } from "../../../../providers/clinic-provider";
 import { useI18n } from "../../../../providers/i18n-provider";
 
 export default function TemplatesPage() {
-  const { activeClinicId, activeClinic, platformRole } = useClinic();
+  const { activeClinicId, activeClinic } = useClinic();
   const { idToken } = useAuth();
   const { t } = useI18n();
   const qc = useQueryClient();
   const automatedMessagingEnabled =
-    platformRole === "platform_admin" ||
     activeClinic?.billing?.enabledModules?.automatedMessaging === true;
   const templatesQuery = useAuthedQuery({
     queryKey: ["templates", activeClinicId],
@@ -131,7 +130,7 @@ export default function TemplatesPage() {
                 rows={5}
                 value={form.body}
                 onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
-                placeholder="Hola {{patientName}}, tu turno es el {{date}} con {{professionalName}}."
+                placeholder={t("templates.messagePlaceholder")}
               />
             </div>
             <Button className="w-full" onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>

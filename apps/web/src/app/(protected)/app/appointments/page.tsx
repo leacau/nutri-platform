@@ -452,7 +452,7 @@ export default function AppointmentsPage() {
 									<div className='space-y-1'>
 										<Label>DNI</Label>
 										<Input
-											placeholder='12345678'
+											placeholder={t('common.dniPlaceholder')}
 											value={quickPatient.dni}
 											onChange={(e) =>
 												setQuickPatient((prev) => ({
@@ -465,7 +465,7 @@ export default function AppointmentsPage() {
 									<div className='space-y-1'>
 										<Label>{t('common.phone')}</Label>
 										<Input
-											placeholder='+54 9 ...'
+											placeholder={t('common.phonePlaceholder')}
 											value={quickPatient.phone}
 											onChange={(e) =>
 												setQuickPatient((prev) => ({
@@ -479,7 +479,7 @@ export default function AppointmentsPage() {
 										<Label>Email</Label>
 										<Input
 											type='email'
-											placeholder='paciente@correo.com'
+											placeholder={t('common.patientEmailPlaceholder')}
 											value={quickPatient.email}
 											onChange={(e) =>
 												setQuickPatient((prev) => ({

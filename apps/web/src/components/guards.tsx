@@ -89,7 +89,7 @@ export function RoleGuard({ allowed, allowPlatformAdmin = false, children }: Rol
 export function ModuleGuard({
   module,
   children,
-  allowPlatformAdmin = true,
+  allowPlatformAdmin = false,
 }: {
   module: BillingModuleKey;
   children: React.ReactNode;

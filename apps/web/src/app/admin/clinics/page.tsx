@@ -479,11 +479,11 @@ function AdminClinicsContent() {
 								</div>
 								<div className='space-y-1'>
 									<Label>Email</Label>
-									<Input type='email' placeholder='admin@clinica.com' {...createForm.register('adminEmail')} />
+									<Input type='email' placeholder={t('common.adminEmailPlaceholder')} {...createForm.register('adminEmail')} />
 								</div>
 								<div className='space-y-1'>
 									<Label>DNI</Label>
-									<Input placeholder='12345678' {...createForm.register('adminDni')} />
+									<Input placeholder={t('common.dniPlaceholder')} {...createForm.register('adminDni')} />
 								</div>
 								<Button className='self-end' type='submit' disabled={createClinicMutation.isPending}>
 									<Plus className='mr-2 h-4 w-4' />

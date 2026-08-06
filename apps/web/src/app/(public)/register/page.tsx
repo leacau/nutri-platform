@@ -100,7 +100,7 @@ export default function RegisterPage() {
 					<Label htmlFor='email'>{t('auth.email')}</Label>
 					<Input
 						id='email'
-						placeholder='vos@amsa.core'
+						placeholder={t('auth.emailPlaceholder')}
 						type='email'
 						{...register('email')}
 						required
@@ -110,7 +110,7 @@ export default function RegisterPage() {
 					<Label htmlFor='password'>{t('auth.password')}</Label>
 					<Input
 						id='password'
-						placeholder='********'
+						placeholder={t('auth.passwordPlaceholder')}
 						type='password'
 						{...register('password')}
 						required
@@ -120,7 +120,7 @@ export default function RegisterPage() {
 					<Label htmlFor='dni'>DNI</Label>
 					<Input
 						id='dni'
-						placeholder='12345678'
+						placeholder={t('common.dniPlaceholder')}
 						{...register('dni')}
 						required
 					/>

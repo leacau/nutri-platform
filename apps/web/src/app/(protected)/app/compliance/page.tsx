@@ -11,7 +11,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-import { RoleGuard } from "../../../../components/guards";
+import { ModuleGuard, RoleGuard } from "../../../../components/guards";
 import { Badge } from "../../../../components/ui/badge";
 import { Button } from "../../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
@@ -63,12 +63,11 @@ function statusVariant(status: string) {
 }
 
 export default function CompliancePage() {
-  const { activeClinicId, activeClinic, platformRole } = useClinic();
+  const { activeClinicId, activeClinic } = useClinic();
   const { idToken } = useAuth();
   const { t } = useI18n();
   const qc = useQueryClient();
   const digitalSignatureEnabled =
-    platformRole === "platform_admin" ||
     activeClinic?.billing?.enabledModules?.digitalSignature === true;
   const requestLabel = (type: DataSubjectRequestType) => t(`compliance.request.${type}`);
 
@@ -205,6 +204,7 @@ export default function CompliancePage() {
 
   return (
     <RoleGuard allowed={["clinic_admin"]} allowPlatformAdmin>
+      <ModuleGuard module="advancedAudit">
       <div className="space-y-6">
         <div>
           <p className="text-sm text-muted-foreground">{t("compliance.subtitle")}</p>
@@ -387,7 +387,7 @@ export default function CompliancePage() {
             <div className="space-y-1">
               <Label>{t("compliance.privacyContact")}</Label>
               <Input
-                placeholder="privacidad@clinica.com"
+                placeholder={t("compliance.privacyEmailPlaceholder")}
                 value={policy.dataProtectionContact}
                 onChange={(event) =>
                   setPolicy((prev) => ({ ...prev, dataProtectionContact: event.target.value }))
@@ -397,7 +397,7 @@ export default function CompliancePage() {
             <div className="space-y-1">
               <Label>{t("compliance.incidentContact")}</Label>
               <Input
-                placeholder="seguridad@clinica.com"
+                placeholder={t("compliance.incidentEmailPlaceholder")}
                 value={policy.incidentResponseContact}
                 onChange={(event) =>
                   setPolicy((prev) => ({ ...prev, incidentResponseContact: event.target.value }))
@@ -556,6 +556,7 @@ export default function CompliancePage() {
           </Card>
         </div>
       </div>
+      </ModuleGuard>
     </RoleGuard>
   );
 }

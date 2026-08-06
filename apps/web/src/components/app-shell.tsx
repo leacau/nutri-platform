@@ -101,12 +101,14 @@ const navItems: NavItem[] = [
 		href: '/app/compliance',
 		icon: <ShieldCheck className='h-4 w-4' />,
 		roles: ['clinic_admin', 'platform_admin'],
+		requiredModule: 'advancedAudit',
 	},
 	{
 		labelKey: 'nav.settings',
 		href: '/app/clinic-settings',
 		icon: <Settings className='h-4 w-4' />,
 		roles: ['clinic_admin'],
+		requiredModule: 'customBranding',
 	},
 	{
 		labelKey: 'nav.portal',
@@ -152,8 +154,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 		if (item.href === '/portal/dashboard' && !patientPortalEnabled) return false;
 		if (
 			item.requiredModule &&
-			activeClinic?.billing?.enabledModules?.[item.requiredModule] !== true &&
-			platformRole !== 'platform_admin'
+			activeClinic?.billing?.enabledModules?.[item.requiredModule] !== true
 		) {
 			return false;
 		}
@@ -221,7 +222,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 							<BarChart3 className='h-4 w-4' />
 							<span>{t('common.status')}</span>
 						</div>
-						<p>{t('common.currentRole', { role: displayRole || 'N/D' })}</p>
+						<p>{t('common.currentRole', { role: displayRole || t('common.noRole') })}</p>
 					</div>
 					<Button
 						variant='outline'

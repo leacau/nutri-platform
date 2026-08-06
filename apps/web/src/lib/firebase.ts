@@ -40,9 +40,6 @@ export function getFirebaseAuth() {
 		});
 
 		isAuthEmulatorConnected = true;
-		console.log(
-			`[firebase-client] Conectado al emulador de Auth en ${emulatorHost}`,
-		);
 	}
 
 	return auth;

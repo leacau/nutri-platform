@@ -3,8 +3,21 @@ import type { DocumentSnapshot } from 'firebase-admin/firestore';
 import { denyAuthz } from '../security/authz.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import type { PatientDoc } from '../types/patients.js';
+import type { ClinicDoc } from '../types/clinics.js';
+import { normalizeBilling } from '../billing/plans.js';
 
 const HEADER = 'x-clinic-id';
+
+async function isPatientPortalModuleEnabled(clinicId: string) {
+	const clinicSnap = await getFirestoreDb().collection('clinics').doc(clinicId).get();
+	if (!clinicSnap.exists) return false;
+	const clinic = clinicSnap.data() as ClinicDoc | undefined;
+	const billing = normalizeBilling(
+		clinic?.billing,
+		clinic?.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
+	);
+	return billing.enabledModules.patientPortal === true;
+}
 
 export async function requirePatientLink(req: Request, res: Response, next: NextFunction) {
 	if (!req.auth) {
@@ -20,6 +33,10 @@ export async function requirePatientLink(req: Request, res: Response, next: Next
 	}
 
 	const db = getFirestoreDb();
+	if (!(await isPatientPortalModuleEnabled(clinicId))) {
+		return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
+	}
+
 	const snap = await db
 		.collection('patients')
 		.where('clinicId', '==', clinicId)

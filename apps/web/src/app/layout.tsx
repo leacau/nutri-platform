@@ -15,7 +15,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
 	title: 'AMSA Core',
-	description: 'Frontend premium para clínicas multi-tenant',
+	description: 'Gestión integral para clínicas, consultorios y profesionales de salud.',
 };
 
 export default function RootLayout({
@@ -24,7 +24,6 @@ export default function RootLayout({
 	children: React.ReactNode;
 }) {
 	return (
-		// FIX: suppressHydrationWarning en HTML y BODY evita que extensiones de traducción rompan React
 		<html lang='es' suppressHydrationWarning className={cn("font-sans", geist.variable)}>
 			<body
 				className={`${inter.variable} min-h-screen bg-background text-foreground`}
