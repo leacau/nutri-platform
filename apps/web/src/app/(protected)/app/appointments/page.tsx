@@ -125,7 +125,8 @@ function nextAvailabilityRange(ranges: AvailabilityDay['ranges']) {
 export default function AppointmentsPage() {
 	const qc = useQueryClient();
 	const perms = usePermissions();
-	const { activeClinicId, activeMembership } = useClinic();
+	const { activeClinicId, activeClinic, activeMembership, platformRole } =
+		useClinic();
 	const { idToken, user } = useAuth();
 	const { t } = useI18n();
 	const [filterStatus, setFilterStatus] = useState('all');
@@ -147,6 +148,11 @@ export default function AppointmentsPage() {
 	});
 
 	const isMeProfessional = activeMembership?.role === 'professional';
+	const canManageDefaultAvailability =
+		activeClinic?.tenantType !== 'individual_practice' &&
+		(platformRole === 'platform_admin' ||
+			activeMembership?.role === 'clinic_admin' ||
+			activeMembership?.role === 'staff');
 	const [newAppointment, setNewAppointment] = useState<{
 		id?: string;
 		patientId: string;
@@ -865,6 +871,14 @@ export default function AppointmentsPage() {
 						<p className='text-sm text-muted-foreground'>
 							{t('appointments.availabilityDetail')}
 						</p>
+						<div className='rounded-lg border bg-slate-50/70 p-3 text-xs text-muted-foreground'>
+							<p>{t('appointments.saveAvailabilityHelp')}</p>
+							{canManageDefaultAvailability ? (
+								<p className='mt-1'>
+									{t('appointments.saveDefaultAvailabilityHelp')}
+								</p>
+							) : null}
+						</div>
 						<div className='space-y-1'>
 							<Label>{t('appointments.slotDuration')}</Label>
 							<Select
@@ -1058,7 +1072,7 @@ export default function AppointmentsPage() {
 								? t('common.processing')
 								: t('appointments.saveAvailability')}
 						</Button>
-						{perms.canScheduleForOthers ? (
+						{canManageDefaultAvailability ? (
 							<Button
 								type='button'
 								variant='secondary'

@@ -10,13 +10,15 @@ import {
 	LayoutDashboard,
 	Loader2,
 	LogOut,
+	Menu,
 	Settings,
 	Shield,
 	ShieldCheck,
 	UserCircle,
 	Users,
+	X,
 } from 'lucide-react';
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
 import { Button } from './ui/button';
@@ -126,6 +128,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 	const router = useRouter();
 	const perms = usePermissions();
 	const { t } = useI18n();
+	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
 	const currentRole = activeMembership?.role;
 	const patientPortalEnabled =
@@ -140,6 +143,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 			router.replace('/portal/dashboard');
 		}
 	}, [currentRole, pathname, router]);
+
+	useEffect(() => {
+		setIsMobileMenuOpen(false);
+	}, [pathname]);
 
 	if (currentRole === 'patient' && pathname?.startsWith('/app')) {
 		return (
@@ -165,81 +172,139 @@ export function AppShell({ children }: { children: ReactNode }) {
 		return currentRole ? item.roles.includes(currentRole) : false;
 	});
 
+	const workspaceName =
+		activeMembership?.clinicName ?? activeClinic?.name ?? t('common.noWorkspace');
+	const goToWorkspaceSelection = () => {
+		setIsMobileMenuOpen(false);
+		router.push('/select-clinic');
+	};
+	const handleLogout = () => {
+		setIsMobileMenuOpen(false);
+		logout();
+	};
+	const BrandBlock = ({ compact = false }: { compact?: boolean }) => (
+		<div className='flex min-w-0 items-center gap-3'>
+			{logoUrl ? (
+				<img
+					src={logoUrl}
+					alt={activeClinic?.name || t('app.name')}
+					className={cn(
+						'rounded-xl border object-cover',
+						compact ? 'h-9 w-9' : 'h-10 w-10',
+					)}
+				/>
+			) : (
+				<div
+					className={cn(
+						'flex items-center justify-center rounded-xl bg-primary/10 text-primary',
+						compact ? 'h-9 w-9 text-xs' : 'h-10 w-10',
+					)}
+					style={
+						accentColor
+							? {
+									color: accentColor,
+									backgroundColor: `${accentColor}18`,
+								}
+							: undefined
+					}
+				>
+					AC
+				</div>
+			)}
+			<div className='min-w-0'>
+				<p className='truncate text-sm font-semibold text-primary'>{t('app.name')}</p>
+				<p className='truncate text-xs text-muted-foreground'>{workspaceName}</p>
+			</div>
+		</div>
+	);
+	const NavigationLinks = () => (
+		<nav className='flex-1 space-y-1 px-3 py-4'>
+			{filteredNav.map((item) => (
+				<Link
+					key={item.href}
+					href={item.href}
+					className={cn(
+						'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-primary/5 hover:text-primary',
+						pathname?.startsWith(item.href) ? 'bg-primary/10 text-primary' : '',
+					)}
+				>
+					{item.icon}
+					{t(item.labelKey)}
+				</Link>
+			))}
+		</nav>
+	);
+	const SidebarActions = () => (
+		<div className='mt-auto space-y-2 px-4 pb-4'>
+			<div className='rounded-xl border bg-gradient-to-r from-primary/10 to-secondary/10 px-3 py-3 text-xs text-muted-foreground'>
+				<div className='flex items-center gap-2 text-primary'>
+					<BarChart3 className='h-4 w-4' />
+					<span>{t('common.status')}</span>
+				</div>
+				<p>{t('common.currentRole', { role: displayRole || t('common.noRole') })}</p>
+			</div>
+			<Button
+				variant='outline'
+				className='w-full'
+				onClick={goToWorkspaceSelection}
+			>
+				{t('action.changeWorkspace')}
+			</Button>
+			<Button variant='ghost' className='w-full' onClick={handleLogout}>
+				<LogOut className='mr-2 h-4 w-4' />
+				{t('action.logout')}
+			</Button>
+		</div>
+	);
+
 	return (
 		<div className='flex min-h-screen bg-slate-50'>
 			<aside className='hidden w-64 flex-col border-r bg-white/80 backdrop-blur lg:flex'>
 				<div className='flex items-center gap-3 px-5 py-4'>
-					{logoUrl ? (
-						<img
-							src={logoUrl}
-							alt={activeClinic?.name || t('app.name')}
-							className='h-10 w-10 rounded-xl border object-cover'
-						/>
-					) : (
-						<div
-							className='flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary'
-							style={
-								accentColor
-									? {
-											color: accentColor,
-											backgroundColor: `${accentColor}18`,
-										}
-									: undefined
-							}
-						>
-							AC
-						</div>
-					)}
-					<div>
-						<p className='text-sm font-semibold text-primary'>{t('app.name')}</p>
-						<p className='text-xs text-muted-foreground'>
-							{activeMembership?.clinicName ??
-								activeClinic?.name ??
-								t('common.noWorkspace')}
-						</p>
-					</div>
+					<BrandBlock />
 				</div>
-				<nav className='flex-1 space-y-1 px-3 py-4'>
-					{filteredNav.map((item) => (
-						<Link
-							key={item.href}
-							href={item.href}
-							className={cn(
-								'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-primary/5 hover:text-primary',
-								pathname?.startsWith(item.href)
-									? 'bg-primary/10 text-primary'
-									: '',
-							)}
-						>
-							{item.icon}
-							{t(item.labelKey)}
-						</Link>
-					))}
-				</nav>
-				<div className='mt-auto space-y-2 px-4 pb-4'>
-					<div className='rounded-xl border bg-gradient-to-r from-primary/10 to-secondary/10 px-3 py-3 text-xs text-muted-foreground'>
-						<div className='flex items-center gap-2 text-primary'>
-							<BarChart3 className='h-4 w-4' />
-							<span>{t('common.status')}</span>
-						</div>
-						<p>{t('common.currentRole', { role: displayRole || t('common.noRole') })}</p>
-					</div>
-					<Button
-						variant='outline'
-						className='w-full'
-						onClick={() => router.push('/select-clinic')}
-					>
-						{t('action.changeWorkspace')}
-					</Button>
-					<Button variant='ghost' className='w-full' onClick={logout}>
-						<LogOut className='mr-2 h-4 w-4' />
-						{t('action.logout')}
-					</Button>
-				</div>
+				<NavigationLinks />
+				<SidebarActions />
 			</aside>
+			{isMobileMenuOpen ? (
+				<div className='fixed inset-0 z-40 lg:hidden'>
+					<button
+						type='button'
+						className='absolute inset-0 bg-slate-950/40'
+						aria-label={t('action.closeMenu')}
+						onClick={() => setIsMobileMenuOpen(false)}
+					/>
+					<aside className='relative flex h-full w-[min(86vw,320px)] flex-col border-r bg-white shadow-xl'>
+						<div className='flex items-center justify-between gap-3 border-b px-4 py-3'>
+							<BrandBlock compact />
+							<Button
+								type='button'
+								variant='ghost'
+								size='icon'
+								aria-label={t('action.closeMenu')}
+								onClick={() => setIsMobileMenuOpen(false)}
+							>
+								<X className='h-5 w-5' />
+							</Button>
+						</div>
+						<NavigationLinks />
+						<SidebarActions />
+					</aside>
+				</div>
+			) : null}
 			<div className='flex flex-1 flex-col'>
-				<header className='sticky top-0 z-10 flex items-center justify-between border-b bg-white/70 px-4 py-3 backdrop-blur'>
-					<div className='flex items-center gap-3'>
+				<header className='sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-white/70 px-3 py-3 backdrop-blur sm:px-4'>
+					<div className='flex min-w-0 items-center gap-2 sm:gap-3'>
+						<Button
+							type='button'
+							variant='ghost'
+							size='icon'
+							className='shrink-0 lg:hidden'
+							aria-label={t('action.openMenu')}
+							onClick={() => setIsMobileMenuOpen(true)}
+						>
+							<Menu className='h-5 w-5' />
+						</Button>
 						<ClinicSwitcher />
 						{perms.canViewAudit ? (
 							<span className='rounded-full bg-secondary/10 px-3 py-1 text-xs font-semibold text-secondary'>
@@ -247,12 +312,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 							</span>
 						) : null}
 					</div>
-					<div className='flex items-center gap-2'>
+					<div className='flex shrink-0 items-center gap-2'>
 						<LanguageSelector />
 						<ThemeToggle />
 					</div>
 				</header>
-				<main className='flex-1 px-4 py-6'>{children}</main>
+				<main className='flex-1 overflow-x-hidden px-3 py-5 sm:px-4 sm:py-6'>
+					{children}
+				</main>
 			</div>
 		</div>
 	);
