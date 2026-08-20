@@ -107,6 +107,7 @@ export type Patient = {
   dni?: string | number;
   email?: string;
   phone?: string;
+  healthInsuranceName?: string | null;
   sexo?: "male" | "female" | "other";
   birthDate?: string;
   privateProfessionalNote?: string;
@@ -154,6 +155,99 @@ export type Appointment = {
   updatedAt: string;
   cancelledByUid?: string;
   cancelledByRole?: ClinicMembershipRole | "platform_admin";
+};
+
+export type AvailabilityRange = {
+  start: string;
+  end: string;
+};
+
+export type AvailabilityDay = {
+  dayOfWeek: number;
+  enabled: boolean;
+  start?: string;
+  end?: string;
+  ranges: AvailabilityRange[];
+};
+
+export type ProfessionalAvailability = {
+  professionalUid: string;
+  slotMinutes: number;
+  days: AvailabilityDay[];
+};
+
+export type AppointmentSlot = {
+  time: string;
+  startsAt: string;
+  available: boolean;
+  appointmentId?: string;
+};
+
+export type AppointmentSlotsResponse = {
+  slotMinutes: number;
+  free: AppointmentSlot[];
+  busy: AppointmentSlot[];
+  slots: AppointmentSlot[];
+};
+
+export type AppointmentAvailableDay = {
+  date: string;
+  freeCount: number;
+  firstAvailableTime: string | null;
+};
+
+export type AppointmentAvailableDaysResponse = {
+  days: AppointmentAvailableDay[];
+};
+
+export type FoodLogDayKey =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+export type FoodLogMealKey =
+  | "breakfast"
+  | "morningSnack"
+  | "lunch"
+  | "afternoonSnack"
+  | "dinner";
+
+export type FoodLogMealEntry = {
+  time: string;
+  detail: string;
+};
+
+export type FoodLogDays = Record<
+  FoodLogDayKey,
+  Record<FoodLogMealKey, FoodLogMealEntry>
+>;
+
+export type FoodLogNote = {
+  id: string;
+  scope: "week" | "day" | "meal";
+  dayKey?: FoodLogDayKey;
+  mealKey?: FoodLogMealKey;
+  content: string;
+  visibleToPatient: boolean;
+  professionalUid: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type FoodLog = {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  weekStart: string;
+  days: FoodLogDays;
+  sharedWithProfessionalUids: string[];
+  professionalNotes?: FoodLogNote[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type TemplateChannel = "whatsapp" | "email";
@@ -260,6 +354,34 @@ export type ClinicSettings = {
 
 export type TemplateFieldType = "number" | "text" | "select" | "formula";
 
+export type MeasurementReferenceRange = {
+  label?: string;
+  sex?: "all" | "male" | "female" | "other";
+  ageMin?: number | null;
+  ageMax?: number | null;
+  min?: number | null;
+  max?: number | null;
+  referenceValue?: number | null;
+};
+
+export type MeasurementStandard = {
+  id: string;
+  clinicId: string;
+  name: string;
+  unit?: string;
+  category?: string;
+  description?: string;
+  referenceRanges: MeasurementReferenceRange[];
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type MeasurementStandardSnapshot = Pick<
+  MeasurementStandard,
+  "id" | "name" | "unit" | "category" | "referenceRanges"
+>;
+
 export type TemplateField = {
   id: string;
   label: string;
@@ -270,6 +392,7 @@ export type TemplateField = {
   formula?: string; // ej: {peso} / (({altura}/100) * ({altura}/100))
   decimals?: number;
   standardMapping?: string; // <-- Mapeo al estándar (ej: "bmi", "body_fat")
+  standardReference?: MeasurementStandardSnapshot;
 };
 
 export type MeasurementTemplate = {

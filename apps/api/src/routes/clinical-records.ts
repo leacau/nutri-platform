@@ -215,7 +215,8 @@ clinicalRecordsRouter.get(
     // 🔒 REGLA DE HIERRO: Solo traemos los registros donde professionalUid == tu UID.
     // No importa si sos clinic_admin o superuser, la consulta en Firebase filtra por tu ID.
     const patient = { id: patientSnap.id, ...(patientSnap.data() as any) };
-    if (effectiveRole === "patient") {
+    const isPortalPatient = req.patientContext?.patientId === patientId;
+    if (effectiveRole === "patient" || isPortalPatient) {
       if (req.patientContext?.patientId !== patientId) {
         return denyAuthz(req, res, "Patient can only read own records");
       }
@@ -267,7 +268,7 @@ clinicalRecordsRouter.get(
       .sort((a: any, b: any) => dateMillis(b.date) - dateMillis(a.date));
 
     const visibleRecords = records.filter((record: any) => {
-      if (effectiveRole === "patient")
+      if (effectiveRole === "patient" || isPortalPatient)
         return record.visibleInPatientPortal === true;
       return (
         record.professionalUid === auth.uid ||

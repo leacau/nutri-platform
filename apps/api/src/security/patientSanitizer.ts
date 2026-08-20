@@ -7,6 +7,7 @@ export type PatientPublic = {
   name: string;
   email: string | null;
   phone: string | null;
+  healthInsuranceName?: string | null;
   dni?: number;
   sexo?: string | null;
   birthDate?: string | null;
@@ -25,6 +26,7 @@ export type PatientStaffView = {
   name: string;
   email: string | null;
   phone: string | null;
+  healthInsuranceName?: string | null;
   dni?: number;
   sexo?: string | null;
   birthDate?: string | null;
@@ -47,6 +49,7 @@ export function sanitizePatientForRole(
       name: p.name,
       email: p.email,
       phone: p.phone,
+      healthInsuranceName: p.healthInsuranceName ?? null,
       dni: p.dni,
       sexo: p.sexo ?? null,
       birthDate: p.birthDate ?? null,
@@ -65,6 +68,7 @@ export function sanitizePatientForRole(
     name: p.name,
     email: p.email,
     phone: p.phone,
+    healthInsuranceName: p.healthInsuranceName ?? null,
     dni: p.dni,
     sexo: p.sexo ?? null,
     birthDate: p.birthDate ?? null,

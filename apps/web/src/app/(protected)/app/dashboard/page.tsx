@@ -345,6 +345,7 @@ export default function DashboardPage() {
 															? apptDate.toLocaleTimeString(locale, {
 																	hour: '2-digit',
 																	minute: '2-digit',
+																	hour12: false,
 																})
 															: '--:--';
 														const patient = patients?.find(
@@ -359,9 +360,9 @@ export default function DashboardPage() {
 															>
 																<div className='absolute bottom-0 left-0 top-0 w-1 bg-emerald-500' />
 																<div className='flex items-center gap-4 pl-2'>
-																	<div className='flex h-12 w-12 flex-col items-center justify-center rounded-lg border border-emerald-200 bg-white text-emerald-700 shadow-sm'>
+																	<div className='flex h-12 w-16 shrink-0 flex-col items-center justify-center rounded-lg border border-emerald-200 bg-white text-emerald-700 shadow-sm'>
 																		<UserCheck className='mb-0.5 h-4 w-4 text-emerald-600' />
-																		<span className='text-xs font-bold'>
+																		<span className='whitespace-nowrap text-xs font-bold tabular-nums'>
 																			{timeString}
 																		</span>
 																	</div>
@@ -396,6 +397,7 @@ export default function DashboardPage() {
 															? apptDate.toLocaleTimeString(locale, {
 																	hour: '2-digit',
 																	minute: '2-digit',
+																	hour12: false,
 																})
 															: '--:--';
 														const patient = patients?.find(
@@ -411,9 +413,9 @@ export default function DashboardPage() {
 																	href={`/app/patients/${appt.patientId}`}
 																	className='flex flex-1 items-center gap-4'
 																>
-																	<div className='flex h-12 w-12 flex-col items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors group-hover:border-primary/30'>
+																	<div className='flex h-12 w-16 shrink-0 flex-col items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors group-hover:border-primary/30'>
 																		<Clock className='mb-0.5 h-4 w-4 text-slate-400 transition-colors group-hover:text-primary' />
-																		<span className='text-xs font-bold'>
+																		<span className='whitespace-nowrap text-xs font-bold tabular-nums'>
 																			{timeString}
 																		</span>
 																	</div>
@@ -463,6 +465,7 @@ export default function DashboardPage() {
 															? apptDate.toLocaleTimeString(locale, {
 																	hour: '2-digit',
 																	minute: '2-digit',
+																	hour12: false,
 																})
 															: '--:--';
 														const patient = patients?.find(
@@ -476,9 +479,9 @@ export default function DashboardPage() {
 																className='group flex items-center justify-between p-4 transition-colors hover:bg-slate-100'
 															>
 																<div className='flex items-center gap-4'>
-																	<div className='flex h-12 w-12 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400 shadow-sm'>
+																	<div className='flex h-12 w-16 shrink-0 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400 shadow-sm'>
 																		<CheckCheck className='mb-0.5 h-4 w-4 text-slate-400' />
-																		<span className='text-xs font-bold line-through'>
+																		<span className='whitespace-nowrap text-xs font-bold tabular-nums line-through'>
 																			{timeString}
 																		</span>
 																	</div>

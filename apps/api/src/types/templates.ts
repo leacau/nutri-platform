@@ -18,6 +18,25 @@ export const templateFieldSchema = z.object({
   formula: z.string().optional(), // ej: "{peso} / (({altura}/100) * ({altura}/100))"
   decimals: z.number().optional(), // Cuántos decimales mostrar
   standardMapping: z.string().optional(),
+  standardReference: z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      unit: z.string().optional(),
+      category: z.string().optional(),
+      referenceRanges: z.array(
+        z.object({
+          label: z.string().optional(),
+          sex: z.enum(["all", "male", "female", "other"]).optional(),
+          ageMin: z.number().nullable().optional(),
+          ageMax: z.number().nullable().optional(),
+          min: z.number().nullable().optional(),
+          max: z.number().nullable().optional(),
+          referenceValue: z.number().nullable().optional(),
+        }),
+      ),
+    })
+    .optional(),
 });
 
 // Esquema para recibir una plantilla nueva desde el Frontend

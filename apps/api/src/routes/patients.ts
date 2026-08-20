@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import type { UserRecord } from "firebase-admin/auth";
 import { Timestamp } from "firebase-admin/firestore";
 import { z } from "zod";
 
@@ -6,12 +7,15 @@ import { authMiddleware } from "../middlewares/authMiddleware.js";
 import { requireClinicContext } from "../middlewares/requireClinicContext.js";
 import { requireRole } from "../middlewares/requireRole.js";
 import { denyAuthz } from "../security/authz.js";
+import { getFirebaseAdmin } from "../firebase/admin.js";
 import { getFirestoreDb } from "../firebase/firestore.js";
 import type { PatientDoc } from "../types/patients.js";
 import { sanitizePatientForRole } from "../security/patientSanitizer.js";
 import { getDocInClinic } from "../security/getDocInClinic.js";
 import { logEvent } from "../observability/eventLogger.js";
 import type { Role } from "../types/auth.js";
+import type { ClinicDoc } from "../types/clinics.js";
+import { normalizeBilling } from "../billing/plans.js";
 import { pickHighestClinicRole } from "../security/clinicRolePriority.js";
 import {
   effectiveClinicalRole,
@@ -19,6 +23,121 @@ import {
 } from "../security/individualPractice.js";
 
 export const patientsRouter = Router();
+
+function normalizePatientEmail(email: string | null | undefined) {
+  const clean = email?.trim().toLowerCase();
+  return clean || null;
+}
+
+function normalizeCatalogText(value: string | null | undefined) {
+  const clean = value?.trim().replace(/\s+/g, " ");
+  return clean || null;
+}
+
+function normalizeCatalogKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+async function upsertHealthInsuranceOption(
+  clinicId: string,
+  name: string | null | undefined,
+) {
+  const clean = normalizeCatalogText(name);
+  if (!clean) return;
+  const db = getFirestoreDb();
+  const now = Timestamp.now();
+  const normalizedName = normalizeCatalogKey(clean);
+  const existing = await db
+    .collection("health_insurances")
+    .where("clinicId", "==", clinicId)
+    .where("normalizedName", "==", normalizedName)
+    .limit(1)
+    .get();
+
+  if (!existing.empty) {
+    await existing.docs[0]!.ref.set(
+      {
+        name: clean,
+        normalizedName,
+        isActive: true,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+    return;
+  }
+
+  await db.collection("health_insurances").add({
+    clinicId,
+    name: clean,
+    normalizedName,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+async function isPatientPortalModuleEnabled(clinicId: string) {
+  const db = getFirestoreDb();
+  const clinicSnap = await db.collection("clinics").doc(clinicId).get();
+  if (!clinicSnap.exists) return false;
+  const clinic = clinicSnap.data() as ClinicDoc | undefined;
+  const billing = normalizeBilling(
+    clinic?.billing,
+    clinic?.tenantType === "individual_practice" ? "individual" : "starter_1_5",
+  );
+  return billing.enabledModules.patientPortal === true;
+}
+
+async function ensureFirebaseUserForPatient(input: {
+  dni: number;
+  name: string;
+  email: string | null | undefined;
+}) {
+  const email = normalizePatientEmail(input.email);
+  if (!email) return null;
+
+  const { auth } = getFirebaseAdmin();
+  const password = String(input.dni);
+  let created = false;
+  let user: UserRecord;
+
+  try {
+    user = await auth.getUserByEmail(email);
+  } catch (error: any) {
+    if (error?.code !== "auth/user-not-found") throw error;
+    user = await auth.createUser({
+      email,
+      password,
+      displayName: input.name,
+      emailVerified: false,
+      disabled: false,
+    });
+    created = true;
+  }
+
+  if (!created) {
+    await auth.updateUser(user.uid, {
+      displayName: input.name,
+      disabled: false,
+    });
+  }
+
+  const currentClaims = user.customClaims ?? {};
+  await auth.setCustomUserClaims(user.uid, {
+    ...currentClaims,
+    patientPortal: true,
+    ...(created ? { forcePasswordChange: true } : {}),
+  });
+
+  return user.uid;
+}
 
 async function upsertUserForPatient(
   dni: number,
@@ -42,6 +161,7 @@ async function upsertUserForPatient(
       name,
       email,
       phone,
+      emailLowercase: normalizePatientEmail(email),
       updatedAt: now,
     });
     return userDoc.id;
@@ -51,6 +171,7 @@ async function upsertUserForPatient(
   await ref.set({
     name,
     email,
+    emailLowercase: normalizePatientEmail(email),
     phone,
     dni,
     createdAt: now,
@@ -64,6 +185,7 @@ const createPatientSchema = z.object({
   dni: z.string().min(7).max(8),
   email: z.string().email().or(z.literal("")).optional().nullable(),
   phone: z.string().or(z.literal("")).optional().nullable(),
+  healthInsuranceName: z.string().max(120).or(z.literal("")).optional().nullable(),
   sexo: z.enum(["male", "female", "other"]).optional().nullable(),
   birthDate: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
@@ -75,6 +197,7 @@ const patchPatientSchema = z.object({
   dni: z.string().min(7).max(8).optional(),
   email: z.string().email().or(z.literal("")).optional().nullable(),
   phone: z.string().or(z.literal("")).optional().nullable(),
+  healthInsuranceName: z.string().max(120).or(z.literal("")).optional().nullable(),
   sexo: z.enum(["male", "female", "other"]).optional().nullable(),
   birthDate: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
@@ -139,6 +262,7 @@ patientsRouter.get(
           name: fullName,
           email: data.email,
           phone: data.phone,
+          healthInsuranceName: data.healthInsuranceName ?? null,
           sexo: data.sexo ?? null,
           birthDate: data.birthDate ?? null,
           clinicId: data.clinicId,
@@ -162,6 +286,7 @@ patientsRouter.get(
           name: uData.name || "",
           email: uData.email,
           phone: uData.phone,
+          healthInsuranceName: uData.healthInsuranceName ?? null,
           sexo: uData.sexo ?? null,
           birthDate: uData.birthDate ?? null,
           clinicId: null,
@@ -171,6 +296,35 @@ patientsRouter.get(
     }
 
     return res.status(200).json({ success: true, data: null });
+  },
+);
+
+patientsRouter.get(
+  "/health-insurances",
+  requireClinicContext,
+  requireRole("clinic_admin", "professional", "staff", "platform_admin"),
+  async (req: Request, res: Response) => {
+    const clinicId = req.auth?.clinicId;
+    if (!clinicId) {
+      return denyAuthz(req, res, "Missing clinic context");
+    }
+
+    const db = getFirestoreDb();
+    const snap = await db
+      .collection("health_insurances")
+      .where("clinicId", "==", clinicId)
+      .where("isActive", "==", true)
+      .get();
+
+    const items = snap.docs
+      .map((doc) => ({
+        id: doc.id,
+        name: String(doc.data().name ?? ""),
+      }))
+      .filter((item) => item.name.trim().length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+
+    return res.status(200).json({ success: true, data: items });
   },
 );
 
@@ -502,11 +656,14 @@ patientsRouter.post(
     const existingDniSnap = await db
       .collection("patients")
       .where("dni", "==", dniVal)
-      .limit(1)
+      .limit(25)
       .get();
+    const existingDocInClinic = existingDniSnap.docs.find(
+      (doc) => (doc.data() as PatientDoc).clinicId === clinicId,
+    );
 
-    if (!existingDniSnap.empty) {
-      const existingDoc = existingDniSnap.docs[0]!;
+    if (existingDocInClinic) {
+      const existingDoc = existingDocInClinic;
       const existingData = existingDoc.data() as PatientDoc;
       const userId = await upsertUserForPatient(
         dniVal,
@@ -514,16 +671,28 @@ patientsRouter.post(
         parsed.data.email ?? null,
         parsed.data.phone ?? null,
       );
+      const linkedUid =
+        (await ensureFirebaseUserForPatient({
+          dni: dniVal,
+          name: parsed.data.name,
+          email: parsed.data.email,
+        })) ?? existingData.linkedUid ?? null;
 
       const updateData: Partial<PatientDoc> = {
         updatedAt: Timestamp.now(),
         userId,
         name: parsed.data.name,
         email: parsed.data.email || null,
+        emailLowercase: normalizePatientEmail(parsed.data.email),
         phone: parsed.data.phone || null,
+        healthInsuranceName:
+          normalizeCatalogText(parsed.data.healthInsuranceName) ??
+          existingData.healthInsuranceName ??
+          null,
         sexo: parsed.data.sexo ?? existingData.sexo ?? null,
         birthDate: parsed.data.birthDate || existingData.birthDate || null,
         notes: parsed.data.notes ?? existingData.notes ?? null,
+        linkedUid,
       };
 
       const existingProfessionals = existingData.assignedProfessionalUids ?? [];
@@ -540,11 +709,11 @@ patientsRouter.post(
         );
       }
 
-      if (existingData.clinicId !== clinicId) {
-        updateData.clinicId = clinicId;
-      }
-
       await existingDoc.ref.update(updateData);
+      await upsertHealthInsuranceOption(
+        clinicId,
+        updateData.healthInsuranceName,
+      );
 
       logEvent("patient_reassigned", {
         req,
@@ -570,6 +739,11 @@ patientsRouter.post(
       parsed.data.email ?? null,
       parsed.data.phone ?? null,
     );
+    const linkedUid = await ensureFirebaseUserForPatient({
+      dni: dniVal,
+      name: parsed.data.name,
+      email: parsed.data.email,
+    });
 
     const assignedProfessionalUids =
       effectiveRole === "professional"
@@ -584,11 +758,13 @@ patientsRouter.post(
       name: parsed.data.name,
       dni: dniVal,
       email: parsed.data.email || null,
+      emailLowercase: normalizePatientEmail(parsed.data.email),
       phone: parsed.data.phone || null,
+      healthInsuranceName: normalizeCatalogText(parsed.data.healthInsuranceName),
       sexo: parsed.data.sexo ?? null,
       birthDate: parsed.data.birthDate || null,
       notes: parsed.data.notes ?? null,
-      linkedUid: null,
+      linkedUid,
       portalAccessEnabled: false,
       medicalRecordAccessEnabled: false,
       status: "active",
@@ -598,6 +774,7 @@ patientsRouter.post(
 
     const ref = db.collection("patients").doc();
     await ref.set(doc);
+    await upsertHealthInsuranceOption(clinicId, doc.healthInsuranceName);
 
     const created = { id: ref.id, ...doc };
     logEvent("patient_created", { req, clinicId, data: { patientId: ref.id } });
@@ -662,8 +839,15 @@ patientsRouter.patch(
         .json({ success: false, message: "Patient not found" });
     }
 
+    const isOwner = await isIndividualPracticeOwner(current.clinicId, auth.uid);
+    const canManagePortalAccess =
+      auth.isPlatformAdmin ||
+      ["clinic_admin", "staff"].includes(auth.role ?? "") ||
+      isOwner;
+
     if (
       auth.role === "professional" &&
+      !isOwner &&
       !(current.assignedProfessionalUids ?? []).includes(auth.uid)
     ) {
       return denyAuthz(
@@ -696,10 +880,12 @@ patientsRouter.patch(
       const existingDni = await db
         .collection("patients")
         .where("dni", "==", parsedDni)
-        .limit(1)
+        .limit(25)
         .get();
       const conflictingDoc = existingDni.docs.find(
-        (doc) => doc.id !== patientId,
+        (doc) =>
+          doc.id !== patientId &&
+          (doc.data() as PatientDoc).clinicId === current.clinicId,
       );
       if (conflictingDoc) {
         return res.status(400).json({
@@ -709,10 +895,17 @@ patientsRouter.patch(
       }
       update.dni = parsedDni;
     }
-    if (parsed.data.email !== undefined)
+    if (parsed.data.email !== undefined) {
       update.email = parsed.data.email || null;
+      update.emailLowercase = normalizePatientEmail(parsed.data.email);
+    }
     if (parsed.data.phone !== undefined)
       update.phone = parsed.data.phone || null;
+    if (parsed.data.healthInsuranceName !== undefined) {
+      update.healthInsuranceName = normalizeCatalogText(
+        parsed.data.healthInsuranceName,
+      );
+    }
     if (parsed.data.sexo !== undefined) update.sexo = parsed.data.sexo ?? null;
     if (parsed.data.birthDate !== undefined)
       update.birthDate = parsed.data.birthDate || null;
@@ -721,18 +914,26 @@ patientsRouter.patch(
 
     if (
       parsed.data.portalAccessEnabled !== undefined &&
-      ["clinic_admin", "staff", "platform_admin"].includes(
-        auth.role ?? "platform_admin",
-      )
+      canManagePortalAccess
     ) {
+      if (
+        parsed.data.portalAccessEnabled === true &&
+        !(await isPatientPortalModuleEnabled(current.clinicId))
+      ) {
+        return denyAuthz(req, res, "Patient portal module is not enabled", 403);
+      }
+      if (parsed.data.portalAccessEnabled === true && !nextEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "Patient email is required to enable portal access",
+        });
+      }
       update.portalAccessEnabled = parsed.data.portalAccessEnabled;
     }
 
     if (
       parsed.data.medicalRecordAccessEnabled !== undefined &&
-      ["clinic_admin", "staff", "platform_admin"].includes(
-        auth.role ?? "platform_admin",
-      )
+      canManagePortalAccess
     ) {
       update.medicalRecordAccessEnabled =
         parsed.data.medicalRecordAccessEnabled;
@@ -755,6 +956,7 @@ patientsRouter.patch(
       parsed.data.name !== undefined ||
       parsed.data.email !== undefined ||
       parsed.data.phone !== undefined ||
+      parsed.data.healthInsuranceName !== undefined ||
       parsed.data.sexo !== undefined ||
       parsed.data.birthDate !== undefined ||
       parsed.data.dni !== undefined
@@ -768,7 +970,28 @@ patientsRouter.patch(
       );
     }
 
+    if (
+      parsed.data.portalAccessEnabled === true ||
+      parsed.data.email !== undefined ||
+      parsed.data.name !== undefined ||
+      parsed.data.dni !== undefined ||
+      (!current.linkedUid && nextEmail)
+    ) {
+      const linkedUid = await ensureFirebaseUserForPatient({
+        dni: update.dni ?? current.dni,
+        name: nextName,
+        email: nextEmail,
+      });
+      if (linkedUid) update.linkedUid = linkedUid;
+    }
+
     await db.collection("patients").doc(patientId).update(update);
+    if (parsed.data.healthInsuranceName !== undefined) {
+      await upsertHealthInsuranceOption(
+        current.clinicId,
+        update.healthInsuranceName,
+      );
+    }
 
     const freshSnap = await db.collection("patients").doc(patientId).get();
     const fresh = { id: freshSnap.id, ...(freshSnap.data() as PatientDoc) };

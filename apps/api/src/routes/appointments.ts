@@ -25,6 +25,8 @@ import type { ClinicDoc, ClinicMembershipDoc } from '../types/clinics.js';
 
 import { logEvent } from '../observability/eventLogger.js';
 import { pickHighestClinicRole } from '../security/clinicRolePriority.js';
+import { isIndividualPracticeOwner } from '../security/individualPractice.js';
+import { resolvePatientPortalPatientForClinic } from '../security/patientPortalLink.js';
 
 const router = Router();
 
@@ -46,6 +48,7 @@ const requestBodySchema = z
 
 	.object({
 		professionalUid: z.string().min(1).optional(),
+		scheduledFor: z.string().min(10).optional(),
 	})
 
 	.optional();
@@ -58,6 +61,76 @@ const updateBodySchema = z.object({
 
 	professionalUid: z.string().min(1).optional(),
 });
+
+const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+const availabilitySchema = z.object({
+	slotMinutes: z.number().int().min(10).max(240),
+	days: z
+		.array(
+			z.object({
+				dayOfWeek: z.number().int().min(0).max(6),
+				enabled: z.boolean().optional().default(true),
+				start: timeSchema.optional(),
+				end: timeSchema.optional(),
+				ranges: z
+					.array(
+						z.object({
+							start: timeSchema,
+							end: timeSchema,
+						}),
+					)
+					.max(8)
+					.optional(),
+			}),
+		)
+		.max(7),
+});
+
+type AvailabilityRange = {
+	start: string;
+	end: string;
+};
+
+type AvailabilityDay = {
+	dayOfWeek: number;
+	enabled: boolean;
+	start?: string;
+	end?: string;
+	ranges: AvailabilityRange[];
+};
+
+type AvailabilityDoc = {
+	clinicId: string;
+	professionalUid: string;
+	slotMinutes: number;
+	days: AvailabilityDay[];
+	createdAt?: Timestamp;
+	updatedAt?: Timestamp;
+	updatedByUid?: string | null;
+};
+
+type ClinicAvailabilityDefaultDoc = {
+	clinicId: string;
+	slotMinutes: number;
+	days: AvailabilityDay[];
+	createdAt?: Timestamp;
+	updatedAt?: Timestamp;
+	updatedByUid?: string | null;
+};
+
+type AppointmentSlot = {
+	time: string;
+	startsAt: string;
+	available: boolean;
+	appointmentId?: string;
+};
+
+type AppointmentAvailableDay = {
+	date: string;
+	freeCount: number;
+	firstAvailableTime: string | null;
+};
 
 function timestampToIso(ts: Timestamp | null): string | null {
 	return ts ? new Date(ts.toMillis()).toISOString() : null;
@@ -78,6 +151,307 @@ function sortAppointmentsByCreatedAtDesc(
 	return items.sort(
 		(a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt),
 	);
+}
+
+function defaultAvailability(
+	clinicId: string,
+	professionalUid: string,
+): AvailabilityDoc {
+	return {
+		clinicId,
+		professionalUid,
+		slotMinutes: 30,
+		days: [1, 2, 3, 4, 5].map((dayOfWeek) => ({
+			dayOfWeek,
+			enabled: true,
+			start: '08:00',
+			end: '18:00',
+			ranges: [{ start: '08:00', end: '18:00' }],
+		})),
+	};
+}
+
+function toMinutes(value: string) {
+	const [hours, minutes] = value.split(':').map((part) => parseInt(part, 10));
+	return (hours || 0) * 60 + (minutes || 0);
+}
+
+function toTimeLabel(minutes: number) {
+	const hours = Math.floor(minutes / 60);
+	const mins = minutes % 60;
+	return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+}
+
+function argentinaDateTime(date: string, time: string) {
+	return new Date(`${date}T${time}:00-03:00`);
+}
+
+function formatArgentinaDate(date: Date) {
+	const parts = new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'America/Argentina/Buenos_Aires',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+	}).formatToParts(date);
+	const get = (type: string) => parts.find((part) => part.type === type)?.value;
+	return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function formatArgentinaTime(date: Date) {
+	const parts = new Intl.DateTimeFormat('en-GB', {
+		timeZone: 'America/Argentina/Buenos_Aires',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	}).formatToParts(date);
+	const get = (type: string) => parts.find((part) => part.type === type)?.value;
+	return `${get('hour')}:${get('minute')}`;
+}
+
+function argentinaDayOfWeek(date: string) {
+	return argentinaDateTime(date, '12:00').getUTCDay();
+}
+
+function addDaysToDateKey(date: string, days: number) {
+	const next = argentinaDateTime(date, '12:00');
+	next.setUTCDate(next.getUTCDate() + days);
+	return formatArgentinaDate(next);
+}
+
+function normalizeAvailabilityDay(day: any): AvailabilityDay {
+	const ranges: AvailabilityRange[] = Array.isArray(day.ranges)
+		? day.ranges
+				.filter((range: any) => range?.start && range?.end)
+				.map((range: any) => ({
+					start: range.start,
+					end: range.end,
+				}))
+		: day.start && day.end
+			? [{ start: day.start, end: day.end }]
+			: [{ start: '08:00', end: '18:00' }];
+	const firstRange = ranges[0] ?? { start: '08:00', end: '18:00' };
+	return {
+		dayOfWeek: day.dayOfWeek,
+		enabled: day.enabled !== false,
+		start: firstRange.start,
+		end: firstRange.end,
+		ranges,
+	};
+}
+
+function normalizeAvailabilityDays(days: any[] | undefined) {
+	return (days ?? []).map(normalizeAvailabilityDay);
+}
+
+function validateAvailabilityDays(days: AvailabilityDay[]) {
+	for (const day of days) {
+		if (!day.enabled) continue;
+		if (!day.ranges.length) {
+			return 'Enabled days must have at least one availability range';
+		}
+		const sorted = [...day.ranges].sort(
+			(a, b) => toMinutes(a.start) - toMinutes(b.start),
+		);
+		let previousEnd = -1;
+		for (const range of sorted) {
+			const start = toMinutes(range.start);
+			const end = toMinutes(range.end);
+			if (start >= end) {
+				return 'Availability start time must be before end time';
+			}
+			if (start < previousEnd) {
+				return 'Availability ranges cannot overlap';
+			}
+			previousEnd = end;
+		}
+	}
+	return null;
+}
+
+function daysBetweenInclusive(from: string, to: string) {
+	const fromMs = argentinaDateTime(from, '12:00').getTime();
+	const toMs = argentinaDateTime(to, '12:00').getTime();
+	return Math.floor((toMs - fromMs) / (24 * 60 * 60 * 1000)) + 1;
+}
+
+async function getAvailabilityDoc(
+	db: Firestore,
+	clinicId: string,
+	professionalUid: string,
+) {
+	const id = `${clinicId}_${professionalUid}`;
+	const snap = await db.collection('professional_availability').doc(id).get();
+	if (!snap.exists) {
+		const clinicDefaultSnap = await db
+			.collection('clinic_availability_defaults')
+			.doc(clinicId)
+			.get();
+		if (clinicDefaultSnap.exists) {
+			const clinicDefault =
+				clinicDefaultSnap.data() as ClinicAvailabilityDefaultDoc;
+			return {
+				...defaultAvailability(clinicId, professionalUid),
+				slotMinutes: clinicDefault.slotMinutes,
+				days: normalizeAvailabilityDays(clinicDefault.days),
+			};
+		}
+		return defaultAvailability(clinicId, professionalUid);
+	}
+	const saved = snap.data() as AvailabilityDoc;
+	return {
+		...defaultAvailability(clinicId, professionalUid),
+		...saved,
+		days: normalizeAvailabilityDays(saved.days),
+	};
+}
+
+async function getClinicDefaultAvailability(db: Firestore, clinicId: string) {
+	const snap = await db
+		.collection('clinic_availability_defaults')
+		.doc(clinicId)
+		.get();
+	if (!snap.exists) {
+		return {
+			clinicId,
+			slotMinutes: 30,
+			days: defaultAvailability(clinicId, 'default').days,
+		};
+	}
+	const saved = snap.data() as ClinicAvailabilityDefaultDoc;
+	return {
+		clinicId,
+		slotMinutes: saved.slotMinutes ?? 30,
+		days: normalizeAvailabilityDays(
+			saved.days ?? defaultAvailability(clinicId, 'default').days,
+		),
+		createdAt: saved.createdAt,
+		updatedAt: saved.updatedAt,
+		updatedByUid: saved.updatedByUid,
+	};
+}
+
+async function assertProfessionalInClinic(
+	db: Firestore,
+	clinicId: string,
+	professionalUid: string,
+) {
+	const snap = await db
+		.collection('clinic_memberships')
+		.where('clinicId', '==', clinicId)
+		.where('uid', '==', professionalUid)
+		.where('role', '==', 'professional')
+		.where('isActive', '==', true)
+		.limit(1)
+		.get();
+	return !snap.empty;
+}
+
+async function assertPatientAssignedToProfessional(
+	db: Firestore,
+	patientId: string,
+	clinicId: string,
+	professionalUid: string,
+) {
+	const patientSnap = await db.collection('patients').doc(patientId).get();
+	if (!patientSnap.exists) return false;
+	const patient = patientSnap.data() as {
+		clinicId?: string;
+		assignedProfessionalUids?: string[];
+	};
+	return (
+		patient.clinicId === clinicId &&
+		(patient.assignedProfessionalUids ?? []).includes(professionalUid)
+	);
+}
+
+async function generateAppointmentSlots(input: {
+	db: Firestore;
+	clinicId: string;
+	professionalUid: string;
+	date: string;
+	excludeAppointmentId?: string;
+}) {
+	const availability = await getAvailabilityDoc(
+		input.db,
+		input.clinicId,
+		input.professionalUid,
+	);
+	const day = availability.days.find(
+		(item) => item.dayOfWeek === argentinaDayOfWeek(input.date) && item.enabled,
+	);
+	if (!day) return { availability, slots: [] as AppointmentSlot[] };
+
+	const snap = await input.db
+		.collection('appointments')
+		.where('clinicId', '==', input.clinicId)
+		.where('professionalUid', '==', input.professionalUid)
+		.get();
+
+	const busyByTime = new Map<string, string>();
+	snap.docs.forEach((doc) => {
+		if (doc.id === input.excludeAppointmentId) return;
+		const appointment = doc.data() as AppointmentDoc;
+		if (!['scheduled', 'arrived'].includes(appointment.status)) return;
+		if (!appointment.scheduledFor) return;
+		const scheduledDate = appointment.scheduledFor.toDate();
+		if (formatArgentinaDate(scheduledDate) !== input.date) return;
+		busyByTime.set(formatArgentinaTime(scheduledDate), doc.id);
+	});
+
+	const slots: AppointmentSlot[] = [];
+	for (const range of day.ranges) {
+		const start = toMinutes(range.start);
+		const end = toMinutes(range.end);
+		for (
+			let minutes = start;
+			minutes + availability.slotMinutes <= end;
+			minutes += availability.slotMinutes
+		) {
+			const time = toTimeLabel(minutes);
+			const appointmentId = busyByTime.get(time);
+			const startsAt = argentinaDateTime(input.date, time);
+			slots.push({
+				time,
+				startsAt: startsAt.toISOString(),
+				available: !appointmentId && startsAt.getTime() > Date.now(),
+				...(appointmentId ? { appointmentId } : {}),
+			});
+		}
+	}
+
+	return {
+		availability,
+		slots: slots.sort((a, b) => a.time.localeCompare(b.time)),
+	};
+}
+
+async function assertSlotAvailable(input: {
+	db: Firestore;
+	clinicId: string;
+	professionalUid: string;
+	scheduledMs: number;
+	excludeAppointmentId?: string;
+}) {
+	const date = new Date(input.scheduledMs);
+	const dateKey = formatArgentinaDate(date);
+	const timeKey = formatArgentinaTime(date);
+	const { slots } = await generateAppointmentSlots({
+		db: input.db,
+		clinicId: input.clinicId,
+		professionalUid: input.professionalUid,
+		date: dateKey,
+		...(input.excludeAppointmentId
+			? { excludeAppointmentId: input.excludeAppointmentId }
+			: {}),
+	});
+	const slot = slots.find((item) => item.time === timeKey);
+	if (!slot) {
+		return { ok: false as const, message: 'Selected time is outside availability' };
+	}
+	if (!slot.available) {
+		return { ok: false as const, message: 'Selected slot is already booked' };
+	}
+	return { ok: true as const };
 }
 
 async function getMembership(
@@ -117,41 +491,18 @@ async function getPatientLink(
 	clinicId: string,
 
 	uid: string,
+	email?: string | null,
+	patientId?: string | null,
 ): Promise<{ patientId: string } | null> {
-	const snap = await db
-
-		.collection('patients')
-
-		.where('clinicId', '==', clinicId)
-
-		.where('linkedUid', '==', uid)
-
-		.limit(1)
-
-		.get();
-
-	if (!snap.empty) {
-		const doc = snap.docs[0];
-		if (doc) return { patientId: doc.id };
-	}
-
-	const appointmentSnap = await db
-		.collection('appointments')
-		.where('clinicId', '==', clinicId)
-		.where('patientUid', '==', uid)
-		.limit(1)
-		.get();
-
-	if (appointmentSnap.empty) return null;
-
-	const appointmentDoc = appointmentSnap.docs[0];
-	const patientId = appointmentDoc?.data()?.patientId;
-	if (!patientId) return null;
-
-	const patientDoc = await db.collection('patients').doc(patientId).get();
-	if (!patientDoc.exists || patientDoc.data()?.clinicId !== clinicId) return null;
-
-	return { patientId: patientDoc.id };
+	const patient = await resolvePatientPortalPatientForClinic(db, {
+		uid,
+		email,
+		clinicId,
+		patientId,
+	});
+	return patient && patient.portalAccessEnabled !== false
+		? { patientId: patient.id }
+		: null;
 }
 
 // FIX: Recibe el rol para relajar la regla de 24hs si es personal de la clínica
@@ -291,6 +642,31 @@ router.post(
 				.json({ success: false, message: 'Invalid scheduledFor date' });
 		}
 
+		const professionalExists = await assertProfessionalInClinic(
+			db,
+			clinicId,
+			parsed.data.professionalUid,
+		);
+		if (!professionalExists) {
+			return res.status(400).json({
+				success: false,
+				message: 'professionalUid is not an active professional in this clinic',
+			});
+		}
+
+		const slotAvailability = await assertSlotAvailable({
+			db,
+			clinicId,
+			professionalUid: parsed.data.professionalUid,
+			scheduledMs,
+		});
+		if (!slotAvailability.ok) {
+			return res.status(409).json({
+				success: false,
+				message: slotAvailability.message,
+			});
+		}
+
 		const now = Timestamp.now();
 
 		const doc: AppointmentDoc = {
@@ -359,44 +735,6 @@ router.post(
 
 		const db = getFirestoreDb();
 
-		const existing = await db
-
-			.collection('appointments')
-
-			.where('clinicId', '==', patientCtx.clinicId)
-
-			.where('patientUid', '==', auth.uid)
-
-			.where('status', '==', 'requested')
-
-			.limit(1)
-
-			.get();
-
-		if (!existing.empty) {
-			const doc = existing.docs[0];
-
-			if (!doc) {
-				return res
-
-					.status(500)
-
-					.json({
-						success: false,
-
-						message: 'Failed to resolve requested appointment',
-					});
-			}
-
-			return res.status(200).json({
-				success: true,
-
-				message: 'Already requested',
-
-				data: { id: doc.id, ...(doc.data() as AppointmentDoc) },
-			});
-		}
-
 		const parsedRequest = requestBodySchema.safeParse(req.body ?? {});
 
 		if (!parsedRequest.success) {
@@ -410,6 +748,56 @@ router.post(
 		}
 
 		const professionalUid = parsedRequest.data?.professionalUid ?? null;
+		const scheduledFor = parsedRequest.data?.scheduledFor ?? null;
+
+		if (!scheduledFor) {
+			const existing = await db
+
+				.collection('appointments')
+
+				.where('clinicId', '==', patientCtx.clinicId)
+
+				.where('patientUid', '==', auth.uid)
+
+				.where('status', '==', 'requested')
+
+				.limit(1)
+
+				.get();
+
+			if (!existing.empty) {
+				const doc = existing.docs[0];
+
+				if (!doc) {
+					return res
+
+						.status(500)
+
+						.json({
+							success: false,
+
+							message: 'Failed to resolve requested appointment',
+						});
+				}
+
+				return res.status(200).json({
+					success: true,
+
+					message: 'Already requested',
+
+					data: { id: doc.id, ...(doc.data() as AppointmentDoc) },
+				});
+			}
+		}
+
+		if (scheduledFor && !professionalUid) {
+			return res.status(400).json({
+				success: false,
+				message: 'professionalUid is required when scheduledFor is provided',
+			});
+		}
+
+		let scheduledTimestamp: Timestamp | null = null;
 
 		if (professionalUid) {
 			const membership = await db
@@ -436,6 +824,44 @@ router.post(
 						'professionalUid is not an active professional in this clinic',
 				});
 			}
+
+			const isAssigned = await assertPatientAssignedToProfessional(
+				db,
+				patientCtx.patientId,
+				patientCtx.clinicId,
+				professionalUid,
+			);
+			if (!isAssigned) {
+				return denyAuthz(
+					req,
+					res,
+					'Patient can only request appointments with assigned professionals',
+					403,
+				);
+			}
+		}
+
+		if (scheduledFor && professionalUid) {
+			const scheduledMs = Date.parse(scheduledFor);
+			if (!Number.isFinite(scheduledMs)) {
+				return res.status(400).json({
+					success: false,
+					message: 'scheduledFor must be a valid ISO date string',
+				});
+			}
+			const slotAvailability = await assertSlotAvailable({
+				db,
+				clinicId: patientCtx.clinicId,
+				professionalUid,
+				scheduledMs,
+			});
+			if (!slotAvailability.ok) {
+				return res.status(409).json({
+					success: false,
+					message: slotAvailability.message,
+				});
+			}
+			scheduledTimestamp = Timestamp.fromMillis(scheduledMs);
 		}
 
 		const now = Timestamp.now();
@@ -449,11 +875,11 @@ router.post(
 
 			professionalUid,
 
-			status: 'requested',
+			status: scheduledTimestamp ? 'scheduled' : 'requested',
 
 			requestedAt: now,
 
-			scheduledFor: null,
+			scheduledFor: scheduledTimestamp,
 
 			cancelledAt: null,
 
@@ -534,6 +960,35 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 	}
 
 	const clinicId = clinicIdHeader as string;
+	const portalMode = req.header('x-portal-mode') === 'patient';
+
+	if (portalMode) {
+		const patient = await getPatientLink(db, clinicId, auth.uid, auth.email);
+
+		if (patient) {
+			const snap = await db
+				.collection('appointments')
+				.where('clinicId', '==', clinicId)
+				.get();
+
+			const items = sortAppointmentsByCreatedAtDesc(
+				snap.docs
+					.map((d) => ({
+						id: d.id,
+						...(d.data() as AppointmentDoc),
+					}))
+					.filter((appointment) => appointment.patientId === patient.patientId),
+			).slice(0, 50);
+
+			return res.status(200).json({ success: true, data: items });
+		}
+
+		return denyAuthz(
+			req,
+			res,
+			`User ${auth.uid} is not linked as patient in clinic ${clinicIdHeader}`,
+		);
+	}
 
 	const membership = await getMembership(db, clinicId, auth.uid);
 
@@ -562,7 +1017,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 		return res.status(200).json({ success: true, data: items });
 	}
 
-	const patient = await getPatientLink(db, clinicId, auth.uid);
+	const patient = await getPatientLink(db, clinicId, auth.uid, auth.email);
 
 	if (patient) {
 		const snap = await db
@@ -574,7 +1029,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 			id: d.id,
 
 			...(d.data() as AppointmentDoc),
-		})).filter((appointment) => appointment.patientUid === auth.uid)).slice(0, 50);
+		})).filter((appointment) => appointment.patientId === patient.patientId)).slice(0, 50);
 
 		return res.status(200).json({ success: true, data: items });
 	}
@@ -635,6 +1090,18 @@ router.post(
 		}
 
 		const db = getFirestoreDb();
+
+		const professionalExists = await assertProfessionalInClinic(
+			db,
+			clinicId,
+			parsedBody.data.professionalUid,
+		);
+		if (!professionalExists) {
+			return res.status(400).json({
+				success: false,
+				message: 'professionalUid is not an active professional in this clinic',
+			});
+		}
 
 		const ref = db.collection('appointments').doc(apptId);
 
@@ -704,6 +1171,23 @@ router.post(
 
 					'Professional cannot assign appointment to another professional',
 				) as any;
+			}
+
+			const slotAvailability = await assertSlotAvailable({
+				db,
+				clinicId,
+				professionalUid: parsedBody.data.professionalUid,
+				scheduledMs,
+				excludeAppointmentId: apptId,
+			});
+			if (!slotAvailability.ok) {
+				return {
+					http: 409 as const,
+					body: {
+						success: false,
+						message: slotAvailability.message,
+					},
+				};
 			}
 
 			const newScheduled = Timestamp.fromMillis(scheduledMs);
@@ -819,7 +1303,57 @@ router.patch(
 				const scheduledMs = Date.parse(parsedBody.data.scheduledFor);
 
 				if (Number.isFinite(scheduledMs)) {
+					const professionalUid =
+						parsedBody.data.professionalUid ?? appt.professionalUid;
+					if (!professionalUid) {
+						return {
+							http: 400 as const,
+							body: {
+								success: false,
+								message: 'professionalUid is required to schedule appointment',
+							},
+						};
+					}
+					const professionalExists = await assertProfessionalInClinic(
+						db,
+						clinicId,
+						professionalUid,
+					);
+					if (!professionalExists) {
+						return {
+							http: 400 as const,
+							body: {
+								success: false,
+								message:
+									'professionalUid is not an active professional in this clinic',
+							},
+						};
+					}
+					const slotAvailability = await assertSlotAvailable({
+						db,
+						clinicId,
+						professionalUid,
+						scheduledMs,
+						excludeAppointmentId: apptId,
+					});
+					if (!slotAvailability.ok) {
+						return {
+							http: 409 as const,
+							body: {
+								success: false,
+								message: slotAvailability.message,
+							},
+						};
+					}
 					update.scheduledFor = Timestamp.fromMillis(scheduledMs);
+				} else {
+					return {
+						http: 400 as const,
+						body: {
+							success: false,
+							message: 'scheduledFor must be a valid ISO date string',
+						},
+					};
 				}
 			}
 
@@ -906,12 +1440,45 @@ router.post(
 				.json({ success: false, message: 'Missing X-Clinic-Id header' });
 		} else {
 			const clinicId = clinicIdHeader as string;
+			const portalMode = req.header('x-portal-mode') === 'patient';
 
 			const membership = await getMembership(db, clinicId, auth.uid);
 
-			const patient = await getPatientLink(db, clinicId, auth.uid);
+			const patient = await getPatientLink(
+				db,
+				clinicId,
+				auth.uid,
+				auth.email,
+				appt.patientId,
+			);
 
-			if (membership) {
+			if (portalMode) {
+				if (!patient) {
+					return denyAuthz(req, res, 'No patient link to cancel appointment');
+				}
+
+				effectiveRole = 'patient';
+
+				if (appt.clinicId !== clinicId || patient.patientId !== appt.patientId) {
+					return denyAuthz(
+						req,
+						res,
+						'Patient can only cancel own appointments',
+					);
+				}
+
+				const clinicSnap = await db.collection('clinics').doc(clinicId).get();
+				const clinic = clinicSnap.data() as ClinicDoc | undefined;
+				const selfService = clinic?.patientAppointmentSelfService ?? {};
+				if (selfService.canCancel === false) {
+					return denyAuthz(
+						req,
+						res,
+						'Clinic does not allow patients to cancel appointments',
+					);
+				}
+				patientMinHoursBefore = selfService.minHoursBefore ?? 24;
+			} else if (membership) {
 				effectiveRole = membership.role;
 
 				req.auth = { ...auth, clinicId, role: membership.role };
@@ -1232,7 +1799,199 @@ router.post(
 	},
 );
 
-// Mantener endpoint de slots para compatibilidad mínima (mock simple)
+router.get(
+	'/availability-default/current',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'staff', 'professional', 'platform_admin'),
+	async (req: Request, res: Response) => {
+		const clinicId = req.auth!.clinicId!;
+		const db = getFirestoreDb();
+		const availability = await getClinicDefaultAvailability(db, clinicId);
+		return res.status(200).json({
+			success: true,
+			data: {
+				slotMinutes: availability.slotMinutes,
+				days: availability.days,
+			},
+		});
+	},
+);
+
+router.patch(
+	'/availability-default/current',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'staff', 'platform_admin'),
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const clinicId = auth.clinicId!;
+		const parsed = availabilitySchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid availability body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const normalizedDays = normalizeAvailabilityDays(parsed.data.days);
+		const invalidRange = validateAvailabilityDays(normalizedDays);
+		if (invalidRange) {
+			return res.status(400).json({
+				success: false,
+				message: invalidRange,
+			});
+		}
+
+		const db = getFirestoreDb();
+		const now = Timestamp.now();
+		const existing = await db
+			.collection('clinic_availability_defaults')
+			.doc(clinicId)
+			.get();
+		const data: ClinicAvailabilityDefaultDoc = {
+			clinicId,
+			slotMinutes: parsed.data.slotMinutes,
+			days: normalizedDays,
+			createdAt:
+				(existing.data() as ClinicAvailabilityDefaultDoc | undefined)
+					?.createdAt ?? now,
+			updatedAt: now,
+			updatedByUid: auth.uid,
+		};
+
+		await db.collection('clinic_availability_defaults').doc(clinicId).set(data);
+
+		return res.status(200).json({
+			success: true,
+			data: {
+				slotMinutes: data.slotMinutes,
+				days: data.days,
+			},
+		});
+	},
+);
+
+router.get(
+	'/availability/:professionalUid',
+	authMiddleware,
+	requireClinicContext,
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const clinicId = auth.clinicId!;
+		const professionalUid = req.params.professionalUid;
+		if (!professionalUid) {
+			return res
+				.status(400)
+				.json({ success: false, message: 'Missing professionalUid' });
+		}
+
+		const db = getFirestoreDb();
+		const exists = await assertProfessionalInClinic(
+			db,
+			clinicId,
+			professionalUid,
+		);
+		if (!exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Professional not found in clinic' });
+		}
+
+		const availability = await getAvailabilityDoc(db, clinicId, professionalUid);
+		return res.status(200).json({
+			success: true,
+			data: {
+				professionalUid,
+				slotMinutes: availability.slotMinutes,
+				days: availability.days,
+			},
+		});
+	},
+);
+
+router.patch(
+	'/availability/:professionalUid',
+	authMiddleware,
+	requireClinicContext,
+	requireRole('clinic_admin', 'staff', 'professional', 'platform_admin'),
+	async (req: Request, res: Response) => {
+		const auth = req.auth!;
+		const clinicId = auth.clinicId!;
+		const professionalUid = req.params.professionalUid;
+		if (!professionalUid) {
+			return res
+				.status(400)
+				.json({ success: false, message: 'Missing professionalUid' });
+		}
+
+		const db = getFirestoreDb();
+		const isOwner = await isIndividualPracticeOwner(clinicId, auth.uid);
+		if (auth.role === 'professional' && professionalUid !== auth.uid && !isOwner) {
+			return denyAuthz(
+				req,
+				res,
+				'Professional can only edit own availability',
+				403,
+			);
+		}
+
+		const exists = await assertProfessionalInClinic(
+			db,
+			clinicId,
+			professionalUid,
+		);
+		if (!exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Professional not found in clinic' });
+		}
+
+		const parsed = availabilitySchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid availability body',
+				errors: parsed.error.flatten(),
+			});
+		}
+
+		const normalizedDays = normalizeAvailabilityDays(parsed.data.days);
+		const invalidRange = validateAvailabilityDays(normalizedDays);
+		if (invalidRange) {
+			return res.status(400).json({
+				success: false,
+				message: invalidRange,
+			});
+		}
+
+		const id = `${clinicId}_${professionalUid}`;
+		const now = Timestamp.now();
+		const existing = await db.collection('professional_availability').doc(id).get();
+		const data: AvailabilityDoc = {
+			clinicId,
+			professionalUid,
+			slotMinutes: parsed.data.slotMinutes,
+			days: normalizedDays,
+			createdAt:
+				(existing.data() as AvailabilityDoc | undefined)?.createdAt ?? now,
+			updatedAt: now,
+			updatedByUid: auth.uid,
+		};
+
+		await db.collection('professional_availability').doc(id).set(data);
+
+		return res.status(200).json({
+			success: true,
+			data: {
+				professionalUid,
+				slotMinutes: data.slotMinutes,
+				days: data.days,
+			},
+		});
+	},
+);
 
 router.get(
 	'/slots',
@@ -1241,12 +2000,138 @@ router.get(
 
 	requireClinicContext,
 
-	async (_req: Request, res: Response) => {
-		return res
+	async (req: Request, res: Response) => {
+		const clinicId = req.auth!.clinicId!;
+		const professionalUid = req.query.professionalUid as string | undefined;
+		const date = req.query.date as string | undefined;
+		if (!professionalUid || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+			return res.status(400).json({
+				success: false,
+				message: 'professionalUid and date=YYYY-MM-DD are required',
+			});
+		}
 
-			.status(200)
+		const db = getFirestoreDb();
+		const exists = await assertProfessionalInClinic(db, clinicId, professionalUid);
+		if (!exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Professional not found in clinic' });
+		}
 
-			.json({ success: true, data: { free: [], busy: [], slots: [] } });
+		if (req.auth?.role === 'patient' && req.patientContext?.patientId) {
+			const isAssigned = await assertPatientAssignedToProfessional(
+				db,
+				req.patientContext.patientId,
+				clinicId,
+				professionalUid,
+			);
+			if (!isAssigned) {
+				return denyAuthz(
+					req,
+					res,
+					'Patient can only see slots for assigned professionals',
+					403,
+				);
+			}
+		}
+
+		const { availability, slots } = await generateAppointmentSlots({
+			db,
+			clinicId,
+			professionalUid,
+			date,
+		});
+		return res.status(200).json({
+			success: true,
+			data: {
+				slotMinutes: availability.slotMinutes,
+				free: slots.filter((slot) => slot.available),
+				busy: slots.filter((slot) => !slot.available),
+				slots,
+			},
+		});
+	},
+);
+
+router.get(
+	'/available-days',
+	authMiddleware,
+	requireClinicContext,
+	async (req: Request, res: Response) => {
+		const clinicId = req.auth!.clinicId!;
+		const professionalUid = req.query.professionalUid as string | undefined;
+		const from = req.query.from as string | undefined;
+		const to = req.query.to as string | undefined;
+		if (
+			!professionalUid ||
+			!from ||
+			!to ||
+			!/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+			!/^\d{4}-\d{2}-\d{2}$/.test(to)
+		) {
+			return res.status(400).json({
+				success: false,
+				message: 'professionalUid, from and to are required as YYYY-MM-DD',
+			});
+		}
+
+		const daysCount = daysBetweenInclusive(from, to);
+		if (daysCount < 1 || daysCount > 90) {
+			return res.status(400).json({
+				success: false,
+				message: 'Date range must be between 1 and 90 days',
+			});
+		}
+
+		const db = getFirestoreDb();
+		const exists = await assertProfessionalInClinic(db, clinicId, professionalUid);
+		if (!exists) {
+			return res
+				.status(404)
+				.json({ success: false, message: 'Professional not found in clinic' });
+		}
+
+		if (req.auth?.role === 'patient' && req.patientContext?.patientId) {
+			const isAssigned = await assertPatientAssignedToProfessional(
+				db,
+				req.patientContext.patientId,
+				clinicId,
+				professionalUid,
+			);
+			if (!isAssigned) {
+				return denyAuthz(
+					req,
+					res,
+					'Patient can only see availability for assigned professionals',
+					403,
+				);
+			}
+		}
+
+		const days: AppointmentAvailableDay[] = [];
+		for (let index = 0; index < daysCount; index += 1) {
+			const date = addDaysToDateKey(from, index);
+			const { slots } = await generateAppointmentSlots({
+				db,
+				clinicId,
+				professionalUid,
+				date,
+			});
+			const free = slots.filter((slot) => slot.available);
+			if (free.length > 0) {
+				days.push({
+					date,
+					freeCount: free.length,
+					firstAvailableTime: free[0]?.time ?? null,
+				});
+			}
+		}
+
+		return res.status(200).json({
+			success: true,
+			data: { days },
+		});
 	},
 );
 

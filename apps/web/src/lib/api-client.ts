@@ -1,6 +1,9 @@
 import {
   Appointment,
+  AppointmentAvailableDaysResponse,
+  AppointmentSlotsResponse,
   AuditEvent,
+  ProfessionalAvailability,
   BackupEvent,
   Clinic,
   ClinicBilling,
@@ -9,7 +12,13 @@ import {
   CompliancePolicy,
   DataSubjectRequest,
   DataSubjectRequestType,
+  FoodLog,
+  FoodLogDays,
+  FoodLogDayKey,
+  FoodLogMealKey,
+  FoodLogNote,
   MeResponse,
+  MeasurementStandard,
   MeasurementTemplate,
   Membership,
   MessageTemplate,
@@ -48,6 +57,7 @@ type RequestOptions<T> = {
   body?: unknown;
   token?: string;
   clinicId?: string;
+  portalMode?: "patient";
   mockFallback?: () => T | Promise<T>;
 };
 
@@ -98,6 +108,10 @@ async function request<T>(
 
   if (options.clinicId) {
     headers.set("X-Clinic-Id", options.clinicId);
+  }
+
+  if (options.portalMode) {
+    headers.set("X-Portal-Mode", options.portalMode);
   }
 
   const url = joinUrl(API_BASE, path);
@@ -176,6 +190,15 @@ export const apiClient = {
         internationalTransferAccepted: true,
       },
     }),
+
+  completeRequiredPasswordChange: (token?: string) =>
+    request<{ forcePasswordChange: boolean }>(
+      "/users/me/password-change-completed",
+      {
+        method: "POST",
+        token,
+      },
+    ),
 
   me: (token?: string) =>
     request<any>("/session", {
@@ -368,10 +391,16 @@ export const apiClient = {
       mockFallback: () => [],
     }),
 
-  patient: (id: string, clinicId: string, token?: string) =>
+  patient: (
+    id: string,
+    clinicId: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
     request<Patient>(`/patients/${id}`, {
       token,
       clinicId,
+      portalMode,
       mockFallback: () => {
         throw new Error("Mock patient not found");
       },
@@ -383,6 +412,7 @@ export const apiClient = {
       name: string;
       email?: string | null;
       phone?: string | null;
+      healthInsuranceName?: string | null;
       sexo?: "male" | "female" | "other" | null;
       birthDate?: string | null;
       clinicId: string;
@@ -391,6 +421,13 @@ export const apiClient = {
       token,
       clinicId,
       mockFallback: () => null,
+    }),
+
+  healthInsurances: (clinicId: string, token?: string) =>
+    request<Array<{ id: string; name: string }>>("/patients/health-insurances", {
+      token,
+      clinicId,
+      mockFallback: () => [],
     }),
 
   createPatient: (clinicId: string, data: Partial<Patient>, token?: string) =>
@@ -415,12 +452,105 @@ export const apiClient = {
       body: data,
     }),
 
-  appointments: (clinicId: string, token?: string) =>
+  appointments: (clinicId: string, token?: string, portalMode?: "patient") =>
     request<Appointment[]>("/appointments", {
       token,
       clinicId,
+      portalMode,
       mockFallback: () => [],
     }),
+
+  professionalAvailability: (
+    clinicId: string,
+    professionalUid: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
+    request<ProfessionalAvailability>(
+      `/appointments/availability/${professionalUid}`,
+      {
+        token,
+        clinicId,
+        portalMode,
+      },
+    ),
+
+  saveProfessionalAvailability: (
+    clinicId: string,
+    professionalUid: string,
+    data: Pick<ProfessionalAvailability, "slotMinutes" | "days">,
+    token?: string,
+  ) =>
+    request<ProfessionalAvailability>(
+      `/appointments/availability/${professionalUid}`,
+      {
+        method: "PATCH",
+        token,
+        clinicId,
+        body: data,
+      },
+    ),
+
+  appointmentSlots: (
+    clinicId: string,
+    professionalUid: string,
+    date: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
+    request<AppointmentSlotsResponse>(
+      `/appointments/slots?professionalUid=${encodeURIComponent(
+        professionalUid,
+      )}&date=${encodeURIComponent(date)}`,
+      {
+        token,
+        clinicId,
+        portalMode,
+      },
+    ),
+
+  appointmentAvailableDays: (
+    clinicId: string,
+    professionalUid: string,
+    from: string,
+    to: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
+    request<AppointmentAvailableDaysResponse>(
+      `/appointments/available-days?professionalUid=${encodeURIComponent(
+        professionalUid,
+      )}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      {
+        token,
+        clinicId,
+        portalMode,
+      },
+    ),
+
+  clinicAvailability: (clinicId: string, token?: string) =>
+    request<Pick<ProfessionalAvailability, "slotMinutes" | "days">>(
+      "/appointments/availability-default/current",
+      {
+        token,
+        clinicId,
+      },
+    ),
+
+  saveClinicAvailability: (
+    clinicId: string,
+    data: Pick<ProfessionalAvailability, "slotMinutes" | "days">,
+    token?: string,
+  ) =>
+    request<Pick<ProfessionalAvailability, "slotMinutes" | "days">>(
+      "/appointments/availability-default/current",
+      {
+        method: "PATCH",
+        token,
+        clinicId,
+        body: data,
+      },
+    ),
 
   createAppointment: (
     body: Partial<Appointment>,
@@ -467,6 +597,7 @@ export const apiClient = {
       method: "POST",
       token,
       clinicId,
+      portalMode: "patient",
       body,
     }),
 
@@ -484,11 +615,17 @@ export const apiClient = {
       clinicId,
     }),
 
-  cancelAppointment: (id: string, clinicId: string, token?: string) =>
+  cancelAppointment: (
+    id: string,
+    clinicId: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
     request<Appointment>(`/appointments/${id}/cancel`, {
       method: "POST",
       token,
       clinicId,
+      portalMode,
       mockFallback: () => ({ id, status: "cancelled" }) as any,
     }),
 
@@ -551,6 +688,45 @@ export const apiClient = {
 
   deleteTemplate: (id: string, clinicId: string, token?: string) =>
     request<{ success: boolean }>(`/measurement-templates/${id}`, {
+      method: "DELETE",
+      token,
+      clinicId,
+    }),
+
+  measurementStandards: (clinicId: string, token?: string) =>
+    request<MeasurementStandard[]>("/measurement-standards", {
+      token,
+      clinicId,
+      mockFallback: () => [],
+    }),
+
+  createMeasurementStandard: (
+    data: Omit<MeasurementStandard, "id" | "clinicId" | "createdAt" | "updatedAt">,
+    clinicId: string,
+    token?: string,
+  ) =>
+    request<MeasurementStandard>("/measurement-standards", {
+      method: "POST",
+      token,
+      clinicId,
+      body: data,
+    }),
+
+  updateMeasurementStandard: (
+    id: string,
+    data: Omit<MeasurementStandard, "id" | "clinicId" | "createdAt" | "updatedAt">,
+    clinicId: string,
+    token?: string,
+  ) =>
+    request<MeasurementStandard>(`/measurement-standards/${id}`, {
+      method: "PATCH",
+      token,
+      clinicId,
+      body: data,
+    }),
+
+  deleteMeasurementStandard: (id: string, clinicId: string, token?: string) =>
+    request<{ success: boolean }>(`/measurement-standards/${id}`, {
       method: "DELETE",
       token,
       clinicId,
@@ -651,10 +827,15 @@ export const apiClient = {
       body: data,
     }),
 
-  professionals: (clinicId: string, token?: string) =>
+  professionals: (
+    clinicId: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
     request<UserAccount[]>(`/clinics/${clinicId}/professionals`, {
       token,
       clinicId,
+      portalMode,
       mockFallback: () => [],
     }),
 
@@ -711,10 +892,16 @@ export const apiClient = {
     }),
 
   // NUEVO: Funciones para Registros Clínicos
-  getClinicalRecords: (patientId: string, clinicId: string, token?: string) =>
+  getClinicalRecords: (
+    patientId: string,
+    clinicId: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
     request<ClinicalRecord[]>(`/clinical-records/patient/${patientId}`, {
       token,
       clinicId,
+      portalMode,
       mockFallback: () => [],
     }),
 
@@ -810,4 +997,62 @@ export const apiClient = {
       clinicId,
       body: data,
     }),
+
+  foodLogs: (
+    patientId: string,
+    clinicId: string,
+    token?: string,
+    weekStart?: string,
+    portalMode?: "patient",
+  ) =>
+    request<FoodLog[]>(
+      `/food-logs/patient/${patientId}${weekStart ? `?weekStart=${weekStart}` : ""}`,
+      {
+        token,
+        clinicId,
+        portalMode,
+        mockFallback: () => [],
+      },
+    ),
+
+  saveFoodLog: (
+    data: {
+      patientId: string;
+      weekStart: string;
+      days: FoodLogDays;
+      sharedWithProfessionalUids: string[];
+    },
+    clinicId: string,
+    token?: string,
+    portalMode?: "patient",
+  ) =>
+    request<FoodLog>("/food-logs", {
+      method: "POST",
+      token,
+      clinicId,
+      portalMode,
+      body: data,
+    }),
+
+  addFoodLogNote: (
+    logId: string,
+    data: {
+      scope: "week" | "day" | "meal";
+      dayKey?: FoodLogDayKey;
+      mealKey?: FoodLogMealKey;
+      content: string;
+      visibleToPatient: boolean;
+    },
+    clinicId: string,
+    token?: string,
+  ) =>
+    request<FoodLogNote>(
+      `/food-logs/${logId}/notes`,
+      {
+        method: "POST",
+        token,
+        clinicId,
+        body: data,
+      },
+    ),
 };

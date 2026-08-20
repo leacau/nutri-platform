@@ -22,6 +22,8 @@ import {
 } from '../../../../components/ui/card';
 import {
 	MeasurementTemplate,
+	MeasurementReferenceRange,
+	MeasurementStandard,
 	TemplateField,
 	TemplateFieldType,
 } from '../../../../lib/types';
@@ -58,6 +60,41 @@ const STANDARD_MAPPINGS = [
 	{ id: 'muscle', labelKey: 'measurement.mapping.muscle' },
 ];
 
+type StandardRangeForm = {
+	label: string;
+	sex: 'all' | 'male' | 'female' | 'other';
+	ageMin: string;
+	ageMax: string;
+	min: string;
+	max: string;
+	referenceValue: string;
+};
+
+const emptyStandardRange = (): StandardRangeForm => ({
+	label: '',
+	sex: 'all',
+	ageMin: '',
+	ageMax: '',
+	min: '',
+	max: '',
+	referenceValue: '',
+});
+
+const toOptionalNumber = (value: string) => {
+	const clean = value.trim();
+	if (!clean) return null;
+	const parsed = Number(clean);
+	return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toStandardSnapshot = (standard: MeasurementStandard) => ({
+	id: standard.id,
+	name: standard.name,
+	...(standard.unit ? { unit: standard.unit } : {}),
+	...(standard.category ? { category: standard.category } : {}),
+	referenceRanges: standard.referenceRanges,
+});
+
 export default function MeasurementTemplatesPage() {
 	const { activeClinicId } = useClinic();
 	const { idToken } = useAuth();
@@ -72,6 +109,14 @@ export default function MeasurementTemplatesPage() {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [fields, setFields] = useState<TemplateField[]>([]);
+	const [editingStandardId, setEditingStandardId] = useState<string | null>(null);
+	const [standardName, setStandardName] = useState('');
+	const [standardUnit, setStandardUnit] = useState('');
+	const [standardCategory, setStandardCategory] = useState('');
+	const [standardDescription, setStandardDescription] = useState('');
+	const [standardRanges, setStandardRanges] = useState<StandardRangeForm[]>([
+		emptyStandardRange(),
+	]);
 
 	const { data: templates, isLoading } = useQuery({
 		queryKey: ['measurement-templates', activeClinicId],
@@ -115,6 +160,16 @@ export default function MeasurementTemplatesPage() {
 		onError: (err: any) =>
 			alert(err.message || t('measurement.saveError')),
 	});
+	const { data: standards, isLoading: isLoadingStandards } = useQuery({
+		queryKey: ['measurement-standards', activeClinicId],
+		queryFn: () =>
+			apiClient.measurementStandards(activeClinicId!, idToken ?? undefined),
+		enabled: Boolean(activeClinicId && idToken),
+	});
+
+	const standardsByValue = new Map(
+		(standards ?? []).map((standard) => [`standard:${standard.id}`, standard]),
+	);
 
 	const deleteMutation = useMutation({
 		mutationFn: async (id: string) =>
@@ -122,6 +177,101 @@ export default function MeasurementTemplatesPage() {
 		onSuccess: () =>
 			qc.invalidateQueries({ queryKey: ['measurement-templates'] }),
 	});
+
+	const resetStandardForm = () => {
+		setEditingStandardId(null);
+		setStandardName('');
+		setStandardUnit('');
+		setStandardCategory('');
+		setStandardDescription('');
+		setStandardRanges([emptyStandardRange()]);
+	};
+
+	const buildStandardPayload = () => {
+		const referenceRanges: MeasurementReferenceRange[] = standardRanges
+			.map((range) => ({
+				label: range.label.trim(),
+				sex: range.sex,
+				ageMin: toOptionalNumber(range.ageMin),
+				ageMax: toOptionalNumber(range.ageMax),
+				min: toOptionalNumber(range.min),
+				max: toOptionalNumber(range.max),
+				referenceValue: toOptionalNumber(range.referenceValue),
+			}))
+			.filter(
+				(range) =>
+					range.min !== null ||
+					range.max !== null ||
+					range.referenceValue !== null,
+			);
+		if (!standardName.trim()) throw new Error(t('measurement.standardNameRequired'));
+		if (!referenceRanges.length) {
+			throw new Error(t('measurement.standardRangeRequired'));
+		}
+		return {
+			name: standardName.trim(),
+			unit: standardUnit.trim(),
+			category: standardCategory.trim(),
+			description: standardDescription.trim(),
+			referenceRanges,
+			isActive: true,
+		};
+	};
+
+	const saveStandardMutation = useMutation({
+		mutationFn: async () => {
+			const payload = buildStandardPayload();
+			if (editingStandardId) {
+				return apiClient.updateMeasurementStandard(
+					editingStandardId,
+					payload,
+					activeClinicId!,
+					idToken ?? undefined,
+				);
+			}
+			return apiClient.createMeasurementStandard(
+				payload,
+				activeClinicId!,
+				idToken ?? undefined,
+			);
+		},
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ['measurement-standards'] });
+			resetStandardForm();
+		},
+		onError: (err: any) => alert(err.message || t('measurement.standardSaveError')),
+	});
+
+	const deleteStandardMutation = useMutation({
+		mutationFn: async (id: string) =>
+			apiClient.deleteMeasurementStandard(
+				id,
+				activeClinicId!,
+				idToken ?? undefined,
+			),
+		onSuccess: () =>
+			qc.invalidateQueries({ queryKey: ['measurement-standards'] }),
+	});
+
+	const startEditingStandard = (standard: MeasurementStandard) => {
+		setEditingStandardId(standard.id);
+		setStandardName(standard.name);
+		setStandardUnit(standard.unit || '');
+		setStandardCategory(standard.category || '');
+		setStandardDescription(standard.description || '');
+		setStandardRanges(
+			standard.referenceRanges.map((range) => ({
+				label: range.label || '',
+				sex: range.sex || 'all',
+				ageMin: range.ageMin == null ? '' : String(range.ageMin),
+				ageMax: range.ageMax == null ? '' : String(range.ageMax),
+				min: range.min == null ? '' : String(range.min),
+				max: range.max == null ? '' : String(range.max),
+				referenceValue:
+					range.referenceValue == null ? '' : String(range.referenceValue),
+			})),
+		);
+	};
 
 	const resetForm = () => {
 		setIsCreating(false);
@@ -189,6 +339,261 @@ export default function MeasurementTemplatesPage() {
 					</Button>
 				)}
 			</div>
+
+			<Card className='mb-8 border-emerald-100'>
+				<CardHeader>
+					<CardTitle className='flex items-center gap-2 text-lg'>
+						<LinkIcon className='h-4 w-4 text-emerald-700' />
+						{t('measurement.standardRepository')}
+					</CardTitle>
+					<CardDescription>
+						{t('measurement.standardRepositoryHelp')}
+					</CardDescription>
+				</CardHeader>
+				<CardContent className='space-y-5'>
+					<div className='grid gap-3 md:grid-cols-4'>
+						<div className='space-y-1 md:col-span-2'>
+							<Label>{t('measurement.standardName')}</Label>
+							<Input
+								value={standardName}
+								onChange={(e) => setStandardName(e.target.value)}
+								placeholder={t('measurement.standardNamePlaceholder')}
+							/>
+						</div>
+						<div className='space-y-1'>
+							<Label>{t('measurement.unit')}</Label>
+							<Input
+								value={standardUnit}
+								onChange={(e) => setStandardUnit(e.target.value)}
+								placeholder='mg/dL, %, kg/m2'
+							/>
+						</div>
+						<div className='space-y-1'>
+							<Label>{t('measurement.standardCategory')}</Label>
+							<Input
+								value={standardCategory}
+								onChange={(e) => setStandardCategory(e.target.value)}
+								placeholder={t('measurement.standardCategoryPlaceholder')}
+							/>
+						</div>
+						<div className='space-y-1 md:col-span-4'>
+							<Label>{t('measurement.description')}</Label>
+							<Input
+								value={standardDescription}
+								onChange={(e) => setStandardDescription(e.target.value)}
+								placeholder={t('measurement.standardDescriptionPlaceholder')}
+							/>
+						</div>
+					</div>
+
+					<div className='space-y-3'>
+						<div className='flex items-center justify-between gap-3'>
+							<h3 className='text-sm font-semibold text-slate-800'>
+								{t('measurement.referenceRanges')}
+							</h3>
+							<Button
+								type='button'
+								variant='outline'
+								size='sm'
+								onClick={() =>
+									setStandardRanges((prev) => [...prev, emptyStandardRange()])
+								}
+							>
+								<Plus className='mr-2 h-4 w-4' />
+								{t('measurement.addRange')}
+							</Button>
+						</div>
+						{standardRanges.map((range, index) => (
+							<div
+								key={index}
+								className='grid gap-2 rounded-lg border bg-slate-50/60 p-3 md:grid-cols-8'
+							>
+								<Input
+									className='md:col-span-2'
+									value={range.label}
+									onChange={(e) =>
+										setStandardRanges((prev) =>
+											prev.map((item, i) =>
+												i === index ? { ...item, label: e.target.value } : item,
+											),
+										)
+									}
+									placeholder={t('measurement.rangeLabelPlaceholder')}
+								/>
+								<Select
+									value={range.sex}
+									onChange={(e) =>
+										setStandardRanges((prev) =>
+											prev.map((item, i) =>
+												i === index
+													? {
+															...item,
+															sex: e.target.value as StandardRangeForm['sex'],
+														}
+													: item,
+											),
+										)
+									}
+								>
+									<option value='all'>{t('measurement.sexAll')}</option>
+									<option value='female'>{t('sex.female')}</option>
+									<option value='male'>{t('sex.male')}</option>
+									<option value='other'>{t('sex.other')}</option>
+								</Select>
+								<Input
+									type='number'
+									value={range.ageMin}
+									onChange={(e) =>
+										setStandardRanges((prev) =>
+											prev.map((item, i) =>
+												i === index ? { ...item, ageMin: e.target.value } : item,
+											),
+										)
+									}
+									placeholder={t('measurement.ageMin')}
+								/>
+								<Input
+									type='number'
+									value={range.ageMax}
+									onChange={(e) =>
+										setStandardRanges((prev) =>
+											prev.map((item, i) =>
+												i === index ? { ...item, ageMax: e.target.value } : item,
+											),
+										)
+									}
+									placeholder={t('measurement.ageMax')}
+								/>
+								<Input
+									type='number'
+									value={range.min}
+									onChange={(e) =>
+										setStandardRanges((prev) =>
+											prev.map((item, i) =>
+												i === index ? { ...item, min: e.target.value } : item,
+											),
+										)
+									}
+									placeholder={t('measurement.normalMin')}
+								/>
+								<Input
+									type='number'
+									value={range.max}
+									onChange={(e) =>
+										setStandardRanges((prev) =>
+											prev.map((item, i) =>
+												i === index ? { ...item, max: e.target.value } : item,
+											),
+										)
+									}
+									placeholder={t('measurement.normalMax')}
+								/>
+								<div className='flex gap-2'>
+									<Input
+										type='number'
+										value={range.referenceValue}
+										onChange={(e) =>
+											setStandardRanges((prev) =>
+												prev.map((item, i) =>
+													i === index
+														? { ...item, referenceValue: e.target.value }
+														: item,
+												),
+											)
+										}
+										placeholder={t('measurement.referenceValue')}
+									/>
+									<Button
+										type='button'
+										variant='ghost'
+										size='icon'
+										disabled={standardRanges.length <= 1}
+										onClick={() =>
+											setStandardRanges((prev) =>
+												prev.filter((_item, i) => i !== index),
+											)
+										}
+									>
+										<Trash2 className='h-4 w-4' />
+									</Button>
+								</div>
+							</div>
+						))}
+					</div>
+
+					<div className='flex flex-wrap justify-end gap-2'>
+						{editingStandardId ? (
+							<Button type='button' variant='ghost' onClick={resetStandardForm}>
+								{t('action.cancel')}
+							</Button>
+						) : null}
+						<Button
+							type='button'
+							onClick={() => saveStandardMutation.mutate()}
+							disabled={saveStandardMutation.isPending}
+						>
+							{saveStandardMutation.isPending ? (
+								<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+							) : (
+								<Save className='mr-2 h-4 w-4' />
+							)}
+							{editingStandardId
+								? t('measurement.saveStandardChanges')
+								: t('measurement.saveStandard')}
+						</Button>
+					</div>
+
+					<div className='grid gap-3 md:grid-cols-2'>
+						{isLoadingStandards ? (
+							<p className='text-sm text-muted-foreground'>
+								{t('common.loading')}
+							</p>
+						) : null}
+						{standards?.map((standard) => (
+							<div
+								key={standard.id}
+								className='flex items-start justify-between gap-3 rounded-lg border p-3'
+							>
+								<div>
+									<p className='font-semibold text-slate-900'>
+										{standard.name}
+										{standard.unit ? (
+											<span className='text-sm font-normal text-muted-foreground'>
+												{' '}
+												({standard.unit})
+											</span>
+										) : null}
+									</p>
+									<p className='text-xs text-muted-foreground'>
+										{standard.category || t('measurement.noCategory')} ·{' '}
+										{t('measurement.rangesCount', {
+											count: standard.referenceRanges.length,
+										})}
+									</p>
+								</div>
+								<div className='flex gap-1'>
+									<Button
+										type='button'
+										variant='ghost'
+										size='icon'
+										onClick={() => startEditingStandard(standard)}
+									>
+										<Pencil className='h-4 w-4' />
+									</Button>
+									<Button
+										type='button'
+										variant='ghost'
+										size='icon'
+										onClick={() => deleteStandardMutation.mutate(standard.id)}
+									>
+										<Trash2 className='h-4 w-4 text-red-500' />
+									</Button>
+								</div>
+							</div>
+						))}
+					</div>
+				</CardContent>
+			</Card>
 
 			{isCreating ? (
 				<div className='space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500'>
@@ -272,17 +677,35 @@ export default function MeasurementTemplatesPage() {
 													</Label>
 													<Select
 														value={field.standardMapping || ''}
-														onChange={(e) =>
+														onChange={(e) => {
+															const value = e.target.value;
+															const standard = standardsByValue.get(value);
 															updateField(index, {
-																standardMapping: e.target.value,
-															})
-														}
+																standardMapping: value,
+																standardReference: standard
+																	? toStandardSnapshot(standard)
+																	: undefined,
+															});
+														}}
 													>
 														{STANDARD_MAPPINGS.map((map) => (
 															<option key={map.id} value={map.id}>
 																{t(map.labelKey)}
 															</option>
 														))}
+														{standards?.length ? (
+															<optgroup label={t('measurement.customStandards')}>
+																{standards.map((standard) => (
+																	<option
+																		key={standard.id}
+																		value={`standard:${standard.id}`}
+																	>
+																		{standard.name}
+																		{standard.unit ? ` (${standard.unit})` : ''}
+																	</option>
+																))}
+															</optgroup>
+														) : null}
 													</Select>
 													<p className='text-[10px] text-muted-foreground leading-tight'>
 														{t('measurement.mappingHelp')}

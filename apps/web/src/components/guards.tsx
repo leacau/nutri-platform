@@ -69,9 +69,14 @@ type RoleGuardProps = {
 };
 
 export function RoleGuard({ allowed, allowPlatformAdmin = false, children }: RoleGuardProps) {
-  const { activeMembership, platformRole } = useClinic();
+  const { activeClinicId, activeMembership, me, platformRole } = useClinic();
   const { t } = useI18n();
-  const permitted = activeMembership && allowed.includes(activeMembership.role);
+  const permitted =
+    (activeMembership && allowed.includes(activeMembership.role)) ||
+    me?.memberships.some(
+      (membership) =>
+        membership.clinicId === activeClinicId && allowed.includes(membership.role),
+    );
   const platformAllowed = allowPlatformAdmin && platformRole === "platform_admin";
 
   if (!permitted && !platformAllowed) {

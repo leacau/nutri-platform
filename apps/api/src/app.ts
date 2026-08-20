@@ -48,6 +48,7 @@ export function buildApp(): Express {
 				'Authorization',
 				'x-clinic-id',
 				'x-dev-secret',
+				'x-portal-mode',
 			],
 		}),
 	);

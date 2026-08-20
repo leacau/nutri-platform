@@ -3,6 +3,7 @@ export type Patient = {
 	name: string;
 	email?: string | null;
 	phone?: string | null;
+	healthInsuranceName?: string | null;
 	dni?: string | number | null;
 	sexo?: 'male' | 'female' | 'other' | null;
 	birthDate?: string | null;
@@ -17,6 +18,30 @@ export type Appointment = {
 	status: 'requested' | 'scheduled' | 'arrived' | 'cancelled' | 'completed';
 	requestedAt?: unknown;
 	scheduledFor?: unknown;
+};
+
+export type AppointmentSlot = {
+	time: string;
+	startsAt: string;
+	available: boolean;
+	appointmentId?: string;
+};
+
+export type AppointmentSlotsResponse = {
+	slotMinutes: number;
+	free: AppointmentSlot[];
+	busy: AppointmentSlot[];
+	slots: AppointmentSlot[];
+};
+
+export type AppointmentAvailableDay = {
+	date: string;
+	freeCount: number;
+	firstAvailableTime: string | null;
+};
+
+export type AppointmentAvailableDaysResponse = {
+	days: AppointmentAvailableDay[];
 };
 
 export type ClinicalRecord = {
@@ -36,6 +61,43 @@ export type ClinicalRecord = {
 		};
 		[key: string]: unknown;
 	};
+};
+
+export type UserAccount = {
+	id: string;
+	uid?: string;
+	name: string;
+	email?: string | null;
+};
+
+export type FoodLogMealKey =
+	| 'breakfast'
+	| 'morningSnack'
+	| 'lunch'
+	| 'afternoonSnack'
+	| 'dinner';
+
+export type FoodLogDayKey =
+	| 'monday'
+	| 'tuesday'
+	| 'wednesday'
+	| 'thursday'
+	| 'friday'
+	| 'saturday'
+	| 'sunday';
+
+export type FoodLogDays = Record<
+	FoodLogDayKey,
+	Record<FoodLogMealKey, { time: string; detail: string }>
+>;
+
+export type FoodLog = {
+	id: string;
+	patientId: string;
+	weekStart: string;
+	days: FoodLogDays;
+	sharedWithProfessionalUids: string[];
+	updatedAt?: unknown;
 };
 
 export type SessionResponse = {

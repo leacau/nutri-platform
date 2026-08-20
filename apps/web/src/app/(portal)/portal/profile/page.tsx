@@ -14,14 +14,18 @@ import { useClinic } from "../../../../providers/clinic-provider";
 import { useI18n } from "../../../../providers/i18n-provider";
 
 export default function PortalProfilePage() {
-  const { activeMembership } = useClinic();
+  const { activeClinicId, me } = useClinic();
   const { t } = useI18n();
-  const patientId = activeMembership?.patientId;
+  const patientMembership = me?.memberships.find(
+    (membership) =>
+      membership.clinicId === activeClinicId && membership.role === "patient",
+  );
+  const patientId = patientMembership?.patientId;
 
   const patientQuery = useAuthedQuery({
     queryKey: ["portal-patient-profile", patientId],
     queryFn: (token, clinicId) =>
-      apiClient.patient(patientId!, clinicId, token),
+      apiClient.patient(patientId!, clinicId, token, "patient"),
     enabled: Boolean(patientId),
   });
 

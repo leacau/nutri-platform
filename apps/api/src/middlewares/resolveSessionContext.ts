@@ -6,7 +6,6 @@ import type {
 import type { NextFunction, Request, Response } from 'express';
 
 import type { ClinicBilling, ClinicMembershipDoc } from '../types/clinics.js';
-import type { PatientDoc } from '../types/patients.js';
 import type { ClinicCapability, Role } from '../types/auth.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import {
@@ -18,6 +17,7 @@ import {
 	mergeMembershipCapabilities,
 } from '../security/clinicCapabilities.js';
 import { normalizeBilling } from '../billing/plans.js';
+import { resolvePatientPortalClinics } from '../security/patientPortalLink.js';
 
 export interface SessionAnalysisResult {
 	staffClinics: Array<{
@@ -48,6 +48,7 @@ export async function analyzeUserSession(
 	uid: string,
 	xClinicIdHeader: string | undefined,
 	isPlatformAdmin: boolean = false,
+	email?: string | null,
 ): Promise<SessionAnalysisResult> {
 	const db = getFirestoreDb();
 
@@ -171,10 +172,12 @@ export async function analyzeUserSession(
 			}
 		}
 
-		return result;
 	}
 
-	const patientClinicsMap = await resolvePatientClinics(db, uid);
+	const patientClinicsMap = await resolvePatientPortalClinics(db, {
+		uid,
+		email,
+	});
 	if (patientClinicsMap.size > 0) {
 			const clinicsMap = await fetchClinicSummaries(
 			db,
@@ -219,60 +222,6 @@ export async function analyzeUserSession(
 	return result;
 }
 
-async function resolvePatientClinics(
-	db: Firestore,
-	uid: string,
-): Promise<Map<string, { id: string } & PatientDoc>> {
-	const map = new Map<string, { id: string } & PatientDoc>();
-
-	const patientsSnap = await db
-		.collection('patients')
-		.where('linkedUid', '==', uid)
-		.get();
-
-	patientsSnap.forEach((doc: QueryDocumentSnapshot) => {
-		const patient = doc.data() as PatientDoc;
-		if (!patient.clinicId || patient.status !== 'active') return;
-		if (!map.has(patient.clinicId)) {
-			map.set(patient.clinicId, { id: doc.id, ...patient });
-			return;
-		}
-
-		console.warn(
-			`[Session] Duplicate patient record for uid ${uid} in clinic ${
-				patient.clinicId
-			}. Using ${map.get(patient.clinicId)?.id}`,
-		);
-	});
-
-	const appointmentsSnap = await db
-		.collection('appointments')
-		.where('patientUid', '==', uid)
-		.limit(100)
-		.get();
-
-	for (const appointmentDoc of appointmentsSnap.docs) {
-		const appointment = appointmentDoc.data() as {
-			clinicId?: string;
-			patientId?: string;
-		};
-		if (!appointment.clinicId || !appointment.patientId) continue;
-		if (map.has(appointment.clinicId)) continue;
-
-		const patientDoc = await db.collection('patients').doc(appointment.patientId).get();
-		if (!patientDoc.exists) continue;
-
-		const patient = patientDoc.data() as PatientDoc;
-		if (patient.clinicId !== appointment.clinicId || patient.status !== 'active') {
-			continue;
-		}
-
-		map.set(appointment.clinicId, { id: patientDoc.id, ...patient });
-	}
-
-	return map;
-}
-
 async function fetchClinicSummaries(
 	db: Firestore,
 	ids: string[],
@@ -301,8 +250,8 @@ async function fetchClinicSummaries(
 	const refs = ids.map((id) => db.collection('clinics').doc(id));
 	const snaps = await db.getAll(...refs);
 
-	snaps.forEach((snap: DocumentSnapshot) => {
-		if (!snap.exists) return;
+	for (const snap of snaps) {
+		if (!snap.exists) continue;
 		const d = snap.data() as
 			| {
 					name?: string;
@@ -311,18 +260,52 @@ async function fetchClinicSummaries(
 					billing?: Partial<ClinicBilling>;
 			  }
 			| undefined;
+		const tenantType = d?.tenantType ?? 'clinic';
+		const ownerProfessionalUid = d?.ownerProfessionalUid ?? null;
 		map.set(snap.id, {
-			name: d?.name ?? 'Sin nombre',
-			tenantType: d?.tenantType ?? 'clinic',
-			ownerProfessionalUid: d?.ownerProfessionalUid ?? null,
+			name: await resolveClinicDisplayName(db, {
+				name: d?.name ?? null,
+				tenantType,
+				ownerProfessionalUid,
+			}),
+			tenantType,
+			ownerProfessionalUid,
 			billing: normalizeBilling(
 				d?.billing,
 				d?.tenantType === 'individual_practice' ? 'individual' : 'starter_1_5',
 			),
 		});
-	});
+	}
 
 	return map;
+}
+
+async function resolveClinicDisplayName(
+	db: Firestore,
+	input: {
+		name?: string | null;
+		tenantType: 'clinic' | 'individual_practice';
+		ownerProfessionalUid: string | null;
+	},
+) {
+	const currentName = input.name?.trim();
+	if (
+		input.tenantType !== 'individual_practice' ||
+		!input.ownerProfessionalUid ||
+		(currentName && !currentName.includes('@'))
+	) {
+		return currentName || 'Sin nombre';
+	}
+
+	const userSnap = await db.collection('users').doc(input.ownerProfessionalUid).get();
+	const user = userSnap.data() as
+		| { name?: string; displayName?: string; email?: string }
+		| undefined;
+	const ownerName = user?.name || user?.displayName;
+	if (ownerName?.trim()) {
+		return `Consultorio de ${ownerName.trim()}`;
+	}
+	return currentName || 'Sin nombre';
 }
 
 export async function resolveSessionContext(
@@ -340,6 +323,7 @@ export async function resolveSessionContext(
 			req.auth.uid,
 			xClinicId,
 			req.auth.isPlatformAdmin,
+			req.auth.email,
 		);
 
 		if (analysis.resolved.role) {

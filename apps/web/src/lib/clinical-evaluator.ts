@@ -15,6 +15,21 @@ export interface EvaluationResult {
 	borderClass: string;
 }
 
+export type CustomReferenceRange = {
+	label?: string;
+	sex?: 'all' | 'male' | 'female' | 'other';
+	ageMin?: number | null;
+	ageMax?: number | null;
+	min?: number | null;
+	max?: number | null;
+	referenceValue?: number | null;
+};
+
+export type CustomMeasurementStandard = {
+	name: string;
+	referenceRanges: CustomReferenceRange[];
+};
+
 const STATUS_UI: Record<
 	ClinicalStatus,
 	Omit<EvaluationResult, 'status' | 'label'>
@@ -46,12 +61,64 @@ const STATUS_UI: Record<
 	},
 };
 
+function genderMatches(rangeSex: string | undefined, gender: string) {
+	if (!rangeSex || rangeSex === 'all') return true;
+	if (rangeSex === 'female') return gender === 'F' || gender === 'female';
+	if (rangeSex === 'male') return gender === 'M' || gender === 'male';
+	return rangeSex === gender;
+}
+
+function ageMatches(range: CustomReferenceRange, age: number) {
+	if (range.ageMin != null && age < range.ageMin) return false;
+	if (range.ageMax != null && age > range.ageMax) return false;
+	return true;
+}
+
+function evaluateCustomStandard(
+	standard: CustomMeasurementStandard,
+	value: number,
+	age: number,
+	gender: string,
+): EvaluationResult {
+	const range =
+		standard.referenceRanges.find(
+			(item) => genderMatches(item.sex, gender) && ageMatches(item, age),
+		) ?? standard.referenceRanges[0];
+	if (!range) {
+		return { status: 'unknown', label: '', ...STATUS_UI.unknown };
+	}
+
+	const labelSuffix = range.label ? ` · ${range.label}` : '';
+	if (range.min != null && value < range.min) {
+		return { status: 'low', label: `Bajo${labelSuffix}`, ...STATUS_UI.low };
+	}
+	if (range.max != null && value > range.max) {
+		return { status: 'warning', label: `Alto${labelSuffix}`, ...STATUS_UI.warning };
+	}
+	if (range.referenceValue != null && range.min == null && range.max == null) {
+		if (value === range.referenceValue) {
+			return { status: 'normal', label: `Normal${labelSuffix}`, ...STATUS_UI.normal };
+		}
+		return {
+			status: value < range.referenceValue ? 'low' : 'warning',
+			label: `${value < range.referenceValue ? 'Bajo' : 'Alto'}${labelSuffix}`,
+			...(value < range.referenceValue ? STATUS_UI.low : STATUS_UI.warning),
+		};
+	}
+
+	return { status: 'normal', label: `Normal${labelSuffix}`, ...STATUS_UI.normal };
+}
+
 export function evaluateMeasurement(
-	indicator: 'bmi' | 'body_fat' | 'muscle' | 'visceral_fat' | string,
+	indicator: 'bmi' | 'body_fat' | 'muscle' | 'visceral_fat' | string | CustomMeasurementStandard,
 	value: number,
 	age: number,
 	gender: 'M' | 'F' | string,
 ): EvaluationResult {
+	if (typeof indicator !== 'string') {
+		return evaluateCustomStandard(indicator, value, age, gender);
+	}
+
 	// 1. EVALUACIÓN DE GRASA VISCERAL (Universal)
 	if (indicator.toLowerCase().includes('visceral')) {
 		if (value <= 9)

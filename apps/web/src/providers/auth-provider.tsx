@@ -3,11 +3,13 @@
 import {
 	User,
 	createUserWithEmailAndPassword,
+	getIdTokenResult,
 	onAuthStateChanged,
 	sendPasswordResetEmail,
 	signInWithEmailAndPassword,
 	signInWithPopup,
 	signOut,
+	updatePassword,
 } from 'firebase/auth';
 import {
 	createContext,
@@ -23,9 +25,13 @@ type AuthContextValue = {
 	idToken: string | null;
 	loading: boolean;
 	refreshToken: () => Promise<void>;
-	loginWithEmail: (email: string, password: string) => Promise<void>;
+	loginWithEmail: (
+		email: string,
+		password: string,
+	) => Promise<{ token: string; claims: Record<string, unknown> }>;
 	registerWithEmail: (email: string, password: string) => Promise<string>;
 	loginWithGoogle: () => Promise<void>;
+	updateCurrentPassword: (password: string) => Promise<void>;
 	resetPassword: (email: string) => Promise<void>;
 	logout: () => Promise<void>;
 };
@@ -61,10 +67,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const loginWithEmail = useCallback(
 		async (email: string, password: string) => {
-			await signInWithEmailAndPassword(auth, email, password);
-			await refreshToken();
+			const credentials = await signInWithEmailAndPassword(auth, email, password);
+			const tokenResult = await getIdTokenResult(credentials.user, true);
+			setIdToken(tokenResult.token);
+			return { token: tokenResult.token, claims: tokenResult.claims };
 		},
-		[auth, refreshToken]
+		[auth]
 	);
 
 	const registerWithEmail = useCallback(
@@ -85,6 +93,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		await signInWithPopup(auth, googleProvider);
 		await refreshToken();
 	}, [auth, refreshToken]);
+
+	const updateCurrentPassword = useCallback(
+		async (password: string) => {
+			if (!auth.currentUser) throw new Error('Missing authenticated user');
+			await updatePassword(auth.currentUser, password);
+		},
+		[auth],
+	);
 
 	const resetPassword = useCallback(
 		async (email: string) => {
@@ -131,6 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				loginWithEmail,
 				registerWithEmail,
 				loginWithGoogle,
+				updateCurrentPassword,
 				resetPassword,
 				logout,
 			}}

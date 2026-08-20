@@ -7,7 +7,9 @@ export type PatientDoc = {
   dni: number;
   name: string;
   email: string | null;
+  emailLowercase?: string | null;
   phone: string | null;
+  healthInsuranceName?: string | null;
   sexo?: "male" | "female" | "other" | null;
   birthDate?: string | null;
   notes?: string | null;

@@ -25,7 +25,8 @@ import { RecordTimeline } from "./components/record-timeline";
 import { Textarea } from "../../../../../components/ui/textarea";
 import { UserAccount } from "../../../../../lib/types";
 import { apiClient } from "../../../../../lib/api-client";
-import { formatDate } from "../../../../../lib/utils";
+import { FoodLogPanel } from "./components/food-log-panel";
+import { formatDate, formatDateTime } from "../../../../../lib/utils";
 import { useAuth } from "../../../../../providers/auth-provider";
 import { useAuthedQuery } from "../../../../../hooks/use-authed-query";
 import { useClinic } from "../../../../../providers/clinic-provider";
@@ -204,6 +205,26 @@ export default function PatientDetailPage() {
 
   const patient = patientQuery.data;
 
+  const portalAccessMutation = useMutation({
+    mutationFn: async (data: {
+      portalAccessEnabled?: boolean;
+      medicalRecordAccessEnabled?: boolean;
+    }) =>
+      apiClient.updatePatient(
+        params.id,
+        activeClinicId || "",
+        data,
+        idToken || undefined,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["patient", params.id] });
+      qc.invalidateQueries({ queryKey: ["patients", activeClinicId] });
+    },
+    onError: () => {
+      alert(t("patients.accessUpdateError"));
+    },
+  });
+
   // Todos los turnos de este paciente
   const appointments = (appointmentsQuery.data || []).filter(
     (appt) => appt.patientId === params.id,
@@ -227,10 +248,6 @@ export default function PatientDetailPage() {
       )?.name ?? t("common.workspaceProfessionalUnavailable")
     );
   };
-  const assignedProfessionalNames = (patient?.assignedProfessionalUids ?? [])
-    .map(professionalNameByUid)
-    .join(", ");
-
   if (patientQuery.isLoading || !isMounted) {
     return <p className="text-sm text-muted-foreground">{t("patients.loadingRecord")}</p>;
   }
@@ -286,16 +303,43 @@ export default function PatientDetailPage() {
             <p className="text-sm text-slate-500 font-medium">
               {patient.email || t("patients.noEmailRegistered")}
             </p>
-            <span className="text-slate-300">•</span>
-            <Badge
-              variant="secondary"
-              className="text-xs font-normal bg-slate-100 text-slate-600"
-            >
-              {t("patients.assigned")}:{" "}
-              {assignedProfessionalNames || t("patients.generalClinic")}
-            </Badge>
           </div>
         </div>
+        {perms.canManagePatientPortalAccess ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={patient.portalAccessEnabled ? "default" : "outline"}
+              onClick={() =>
+                portalAccessMutation.mutate({
+                  portalAccessEnabled: !patient.portalAccessEnabled,
+                })
+              }
+              disabled={portalAccessMutation.isPending}
+            >
+              {patient.portalAccessEnabled
+                ? t("patients.disablePortal")
+                : t("patients.enablePortal")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={patient.medicalRecordAccessEnabled ? "default" : "outline"}
+              onClick={() =>
+                portalAccessMutation.mutate({
+                  medicalRecordAccessEnabled:
+                    !patient.medicalRecordAccessEnabled,
+                })
+              }
+              disabled={portalAccessMutation.isPending}
+            >
+              {patient.medicalRecordAccessEnabled
+                ? t("patients.hideHistory")
+                : t("patients.allowHistory")}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* Contenedor Principal: 2 Columnas */}
@@ -321,6 +365,14 @@ export default function PatientDetailPage() {
                 </p>
                 <p className="font-medium text-slate-900">
                   {patient.phone || "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                  {t("patients.healthInsurance")}
+                </p>
+                <p className="font-medium text-slate-900">
+                  {patient.healthInsuranceName || "—"}
                 </p>
               </div>
               <div>
@@ -384,7 +436,7 @@ export default function PatientDetailPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-semibold text-slate-700">
-                        {safeDate ? formatDate(safeDate.toISOString()) : "—"}
+                        {safeDate ? formatDateTime(safeDate.toISOString()) : "—"}
                       </p>
                     </div>
                   </div>
@@ -401,6 +453,8 @@ export default function PatientDetailPage() {
 
         {/* COLUMNA DERECHA: El Muro de Historia Clínica */}
         <div className="space-y-4">
+          <FoodLogPanel patientId={patient.id} />
+
           <div className="flex items-center justify-between bg-white p-4 rounded-xl border shadow-sm border-slate-200">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">

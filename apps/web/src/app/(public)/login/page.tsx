@@ -8,6 +8,7 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import Link from 'next/link';
+import { apiClient } from '../../../lib/api-client';
 import { useAuth } from '../../../providers/auth-provider';
 import { useForm } from 'react-hook-form';
 import { useI18n } from '../../../providers/i18n-provider';
@@ -22,11 +23,18 @@ const loginSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>;
 
 function LoginContent() {
-	const { loginWithEmail, loginWithGoogle } = useAuth();
+	const { loginWithEmail, loginWithGoogle, refreshToken, updateCurrentPassword } =
+		useAuth();
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const { t } = useI18n();
 	const [error, setError] = useState<string | null>(null);
+	const [pendingPasswordToken, setPendingPasswordToken] = useState<string | null>(
+		null,
+	);
+	const [newPassword, setNewPassword] = useState('');
+	const [newPasswordRepeat, setNewPasswordRepeat] = useState('');
+	const [isChangingPassword, setIsChangingPassword] = useState(false);
 	const {
 		register,
 		handleSubmit,
@@ -40,10 +48,39 @@ function LoginContent() {
 	const onSubmit = async (data: LoginForm) => {
 		setError(null);
 		try {
-			await loginWithEmail(data.email, data.password);
+			const result = await loginWithEmail(data.email, data.password);
+			if (result.claims.forcePasswordChange === true) {
+				setPendingPasswordToken(result.token);
+				return;
+			}
 			router.push(next);
 		} catch {
 			setError(t('auth.firebaseLoginError'));
+		}
+	};
+
+	const handleRequiredPasswordChange = async () => {
+		setError(null);
+		if (newPassword.length < 8) {
+			setError(t('auth.newPasswordMin'));
+			return;
+		}
+		if (newPassword !== newPasswordRepeat) {
+			setError(t('auth.passwordsDoNotMatch'));
+			return;
+		}
+		setIsChangingPassword(true);
+		try {
+			await updateCurrentPassword(newPassword);
+			await apiClient.completeRequiredPasswordChange(
+				pendingPasswordToken ?? undefined,
+			);
+			await refreshToken();
+			router.push(next);
+		} catch {
+			setError(t('auth.passwordChangeError'));
+		} finally {
+			setIsChangingPassword(false);
 		}
 	};
 
@@ -88,6 +125,49 @@ function LoginContent() {
 					</p>
 				</div>
 
+				{pendingPasswordToken ? (
+					<div className='space-y-5 rounded-xl border bg-white p-5 shadow-sm'>
+						<div>
+							<h2 className='text-xl font-semibold text-primary'>
+								{t('auth.requiredPasswordTitle')}
+							</h2>
+							<p className='mt-1 text-sm text-muted-foreground'>
+								{t('auth.requiredPasswordDetail')}
+							</p>
+						</div>
+						<div className='space-y-2'>
+							<Label>{t('auth.newPassword')}</Label>
+							<Input
+								type='password'
+								value={newPassword}
+								onChange={(event) => setNewPassword(event.target.value)}
+							/>
+						</div>
+						<div className='space-y-2'>
+							<Label>{t('auth.repeatPassword')}</Label>
+							<Input
+								type='password'
+								value={newPasswordRepeat}
+								onChange={(event) => setNewPasswordRepeat(event.target.value)}
+							/>
+						</div>
+						{error ? (
+							<div className='rounded-md bg-destructive/15 p-3'>
+								<p className='text-sm font-medium text-destructive'>{error}</p>
+							</div>
+						) : null}
+						<Button
+							type='button'
+							className='w-full'
+							onClick={handleRequiredPasswordChange}
+							disabled={isChangingPassword}
+						>
+							{isChangingPassword
+								? t('common.processing')
+								: t('auth.saveNewPassword')}
+						</Button>
+					</div>
+				) : (
 				<form onSubmit={handleSubmit(onSubmit)} className='space-y-6'>
 					<div className='space-y-2'>
 						<Label htmlFor='email'>{t('auth.email')}</Label>
@@ -131,6 +211,7 @@ function LoginContent() {
 						</Button>
 					</div>
 				</form>
+				)}
 				<div className='mt-6 flex flex-wrap justify-between text-sm text-muted-foreground'>
 					<Link href='/register' className='text-primary hover:underline'>
 						{t('action.register')}

@@ -2,6 +2,7 @@
 
 import { ClinicCapability, ClinicMembershipRole } from '../lib/types';
 import { useClinic } from '../providers/clinic-provider';
+import { useAuth } from '../providers/auth-provider';
 import { useMemo } from 'react';
 
 export type PermissionSet = {
@@ -135,11 +136,29 @@ function permissionsFromCapabilities(
 }
 
 export function usePermissions(): PermissionSet {
-	const { activeMembership, platformRole } = useClinic();
+	const { activeClinic, activeMembership, platformRole } = useClinic();
+	const { user } = useAuth();
 
 	return useMemo(() => {
 		// Platform admin: override total
 		if (platformRole === 'platform_admin') return platformAdminPermissions;
+
+		const isIndividualOwner =
+			activeClinic?.tenantType === 'individual_practice' &&
+			Boolean(activeClinic.ownerProfessionalUid) &&
+			activeClinic.ownerProfessionalUid === user?.uid;
+
+		if (isIndividualOwner) {
+			return {
+				...permsByRole.professional,
+				canViewSettings: true,
+				canManageClinicUsers: true,
+				canManagePatientPortalAccess: true,
+				canAssignAnyPatient: true,
+				canSeeAllAppointments: true,
+				canScheduleForOthers: true,
+			};
+		}
 
 		// Si todavía no hay clínica activa, no hay permisos
 		const role = activeMembership?.role;
@@ -150,5 +169,5 @@ export function usePermissions(): PermissionSet {
 		}
 
 		return permsByRole[role] ?? defaultPermissions;
-	}, [activeMembership, platformRole]);
+	}, [activeClinic, activeMembership, platformRole, user?.uid]);
 }

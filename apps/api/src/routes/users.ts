@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
+import { getFirebaseAdmin } from '../firebase/admin.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import { inviteUser } from '../controllers/invitation.controller.js';
 import { requireClinicContext } from '../middlewares/requireClinicContext.js';
@@ -123,6 +124,28 @@ router.post(
 		return res.status(200).json({
 			success: true,
 			data: { acceptedAt: now.toDate().toISOString() },
+		});
+	},
+);
+
+router.post(
+	'/me/password-change-completed',
+	authMiddleware,
+	async (req: Request, res: Response) => {
+		if (!req.auth) {
+			return res.status(401).json({ success: false, message: 'Unauthenticated' });
+		}
+
+		const { auth } = getFirebaseAdmin();
+		const user = await auth.getUser(req.auth.uid);
+		const claims = { ...(user.customClaims ?? {}) };
+		delete claims.forcePasswordChange;
+
+		await auth.setCustomUserClaims(req.auth.uid, claims);
+
+		return res.status(200).json({
+			success: true,
+			data: { forcePasswordChange: false },
 		});
 	},
 );

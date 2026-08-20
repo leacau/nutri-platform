@@ -1,10 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { DocumentSnapshot } from 'firebase-admin/firestore';
 import { denyAuthz } from '../security/authz.js';
 import { getFirestoreDb } from '../firebase/firestore.js';
-import type { PatientDoc } from '../types/patients.js';
 import type { ClinicDoc } from '../types/clinics.js';
 import { normalizeBilling } from '../billing/plans.js';
+import { resolvePatientPortalPatientForClinic } from '../security/patientPortalLink.js';
 
 const HEADER = 'x-clinic-id';
 
@@ -37,33 +36,13 @@ export async function requirePatientLink(req: Request, res: Response, next: Next
 		return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
 	}
 
-	const snap = await db
-		.collection('patients')
-		.where('clinicId', '==', clinicId)
-		.where('linkedUid', '==', req.auth.uid)
-		.limit(1)
-		.get();
+	const patient = await resolvePatientPortalPatientForClinic(db, {
+		uid: req.auth.uid,
+		email: req.auth.email,
+		clinicId,
+	});
 
-	let doc: DocumentSnapshot | undefined = snap.docs[0];
-
-	if (snap.empty) {
-		const appointmentSnap = await db
-			.collection('appointments')
-			.where('clinicId', '==', clinicId)
-			.where('patientUid', '==', req.auth.uid)
-			.limit(1)
-			.get();
-
-		const patientId = appointmentSnap.docs[0]?.data()?.patientId;
-		if (patientId) {
-			const patientDoc = await db.collection('patients').doc(patientId).get();
-			if (patientDoc.exists && patientDoc.data()?.clinicId === clinicId) {
-				doc = patientDoc;
-			}
-		}
-	}
-
-	if (!doc) {
+	if (!patient) {
 		return denyAuthz(
 			req,
 			res,
@@ -71,11 +50,10 @@ export async function requirePatientLink(req: Request, res: Response, next: Next
 		);
 	}
 
-	const patient = doc.data() as PatientDoc;
-	if (patient.portalAccessEnabled === false || patient.status !== 'active') {
+	if (patient.portalAccessEnabled === false || patient.status === 'inactive') {
 		return denyAuthz(req, res, 'Patient portal access is disabled');
 	}
 
-	req.patientContext = { patientId: doc.id, clinicId };
+	req.patientContext = { patientId: patient.id, clinicId };
 	return next();
 }

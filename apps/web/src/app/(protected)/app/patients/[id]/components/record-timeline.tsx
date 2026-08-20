@@ -274,10 +274,14 @@ function RecordCard({
             {!readOnly ? (
               <Button
                 variant={
-                  record.visibleInPatientPortal ? "secondary" : "outline"
+                  record.visibleInPatientPortal ? "default" : "outline"
                 }
                 size="sm"
-                className="bg-white hover:bg-slate-50"
+                className={
+                  record.visibleInPatientPortal
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "bg-white hover:bg-slate-50"
+                }
                 onClick={() =>
                   portalVisibilityMutation.mutate(
                     !record.visibleInPatientPortal,
@@ -554,7 +558,7 @@ function RecordCard({
                   (field.type === "number" || field.type === "formula")
                 ) {
                   evalResult = evaluateMeasurement(
-                    field.standardMapping || field.label,
+                    field.standardReference || field.standardMapping || field.label,
                     valNum,
                     patientAge,
                     patientGender,

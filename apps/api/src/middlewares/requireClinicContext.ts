@@ -1,5 +1,4 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { DocumentSnapshot } from 'firebase-admin/firestore';
 import { getFirestoreDb } from '../firebase/firestore.js';
 import { denyAuthz } from '../security/authz.js';
 import type { ClinicMembershipDoc } from '../types/clinics.js';
@@ -10,8 +9,19 @@ import {
 	mergeMembershipCapabilities,
 } from '../security/clinicCapabilities.js';
 import { normalizeBilling } from '../billing/plans.js';
+import { resolvePatientPortalPatientForClinic } from '../security/patientPortalLink.js';
 
 const HEADER = 'x-clinic-id';
+
+function requestedPatientId(req: Request) {
+	const paramsPatientId =
+		typeof req.params?.patientId === 'string' ? req.params.patientId : null;
+	const bodyPatientId =
+		typeof req.body?.patientId === 'string' ? req.body.patientId : null;
+	const queryPatientId =
+		typeof req.query?.patientId === 'string' ? req.query.patientId : null;
+	return paramsPatientId ?? bodyPatientId ?? queryPatientId ?? null;
+}
 
 async function isPatientPortalModuleEnabled(clinicId: string) {
 	const db = getFirestoreDb();
@@ -40,38 +50,6 @@ async function assertClinicIsActive(clinicId: string, res: Response) {
 	return true;
 }
 
-async function resolvePatientDocumentForClinic(uid: string, clinicId: string) {
-	const db = getFirestoreDb();
-	const patientSnap = await db
-		.collection('patients')
-		.where('clinicId', '==', clinicId)
-		.where('linkedUid', '==', uid)
-		.limit(1)
-		.get();
-
-	let patientDoc: DocumentSnapshot | undefined = patientSnap.docs[0];
-	if (patientDoc) return patientDoc;
-
-	const appointmentSnap = await db
-		.collection('appointments')
-		.where('clinicId', '==', clinicId)
-		.where('patientUid', '==', uid)
-		.limit(1)
-		.get();
-	const patientId = appointmentSnap.docs[0]?.data()?.patientId;
-	if (!patientId) return undefined;
-
-	const appointmentPatientDoc = await db.collection('patients').doc(patientId).get();
-	if (
-		appointmentPatientDoc.exists &&
-		appointmentPatientDoc.data()?.clinicId === clinicId
-	) {
-		patientDoc = appointmentPatientDoc;
-	}
-
-	return patientDoc;
-}
-
 export async function requireClinicContext(
 	req: Request,
 	res: Response,
@@ -82,6 +60,7 @@ export async function requireClinicContext(
 	}
 
 	const headerClinicId = req.header(HEADER) ?? null;
+	const portalMode = req.header('x-portal-mode') === 'patient';
 
 	// Platform admin: confía en el header (auditaría en prod)
 	if (req.auth.isPlatformAdmin) {
@@ -97,6 +76,58 @@ export async function requireClinicContext(
 			clinicId: headerClinicId,
 			role: 'platform_admin',
 			clinicCapabilities: defaultCapabilitiesForRole('clinic_admin'),
+		};
+		return next();
+	}
+
+	if (portalMode) {
+		if (!headerClinicId) {
+			return res.status(400).json({
+				success: false,
+				message: 'Missing X-Clinic-Id header',
+			});
+		}
+
+		if (!(await assertClinicIsActive(headerClinicId, res))) return;
+		if (!(await isPatientPortalModuleEnabled(headerClinicId))) {
+			return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
+		}
+
+		const patientDoc = await resolvePatientPortalPatientForClinic(
+			getFirestoreDb(),
+			{
+				uid: req.auth.uid,
+				email: req.auth.email,
+				clinicId: headerClinicId,
+				patientId: requestedPatientId(req),
+			},
+		);
+
+		if (!patientDoc) {
+			return denyAuthz(
+				req,
+				res,
+				`User ${req.auth.uid} is not linked as patient in clinic ${headerClinicId}`,
+				403,
+			);
+		}
+
+		if (
+			patientDoc.status === 'inactive' ||
+			patientDoc.portalAccessEnabled === false
+		) {
+			return denyAuthz(req, res, 'Patient portal access is disabled', 403);
+		}
+
+		req.patientContext = {
+			patientId: patientDoc.id,
+			clinicId: headerClinicId,
+		};
+		req.auth = {
+			...req.auth,
+			clinicId: headerClinicId,
+			role: 'patient',
+			clinicCapabilities: [],
 		};
 		return next();
 	}
@@ -131,23 +162,36 @@ export async function requireClinicContext(
 		if (!(await isPatientPortalModuleEnabled(resolvedClinicId))) {
 			return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
 		}
-		const patientDoc =
+		const patientLink =
 			req.patientContext?.patientId
 				? await getFirestoreDb()
 						.collection('patients')
 						.doc(req.patientContext.patientId)
 						.get()
-				: await resolvePatientDocumentForClinic(req.auth.uid, resolvedClinicId);
-		const patient = patientDoc?.data() as PatientDoc | undefined;
-		if (!patientDoc || !patientDoc.exists || !patient) {
+						.then((doc) => {
+							const patient = doc.data() as PatientDoc | undefined;
+							return doc.exists && patient?.clinicId === resolvedClinicId
+								? { id: doc.id, ...patient }
+								: null;
+						})
+				: await resolvePatientPortalPatientForClinic(getFirestoreDb(), {
+						uid: req.auth.uid,
+						email: req.auth.email,
+						clinicId: resolvedClinicId,
+						patientId: requestedPatientId(req),
+					});
+		if (!patientLink) {
 			return denyAuthz(req, res, 'Failed to resolve patient context', 403);
 		}
-		if (patient.status !== 'active' || patient.portalAccessEnabled === false) {
+		if (
+			patientLink.status === 'inactive' ||
+			patientLink.portalAccessEnabled === false
+		) {
 			return denyAuthz(req, res, 'Patient portal access is disabled', 403);
 		}
 
 		req.patientContext = {
-			patientId: patientDoc.id,
+			patientId: patientLink.id,
 			clinicId: resolvedClinicId,
 		};
 		req.auth = {
@@ -178,20 +222,21 @@ export async function requireClinicContext(
 		.get();
 
 	if (snap.empty) {
-		const patientDoc = await resolvePatientDocumentForClinic(
-			req.auth.uid,
-			headerClinicId,
-		);
+		const patientDoc = await resolvePatientPortalPatientForClinic(db, {
+			uid: req.auth.uid,
+			email: req.auth.email,
+			clinicId: headerClinicId,
+			patientId: requestedPatientId(req),
+		});
 
 		if (patientDoc) {
-			const patient = patientDoc?.data() as PatientDoc | undefined;
-			if (!patientDoc || !patient) {
-				return denyAuthz(req, res, 'Failed to resolve patient context', 403);
-			}
 			if (!(await isPatientPortalModuleEnabled(headerClinicId))) {
 				return denyAuthz(req, res, 'Patient portal module is not enabled', 403);
 			}
-			if (patient.status !== 'active' || patient.portalAccessEnabled === false) {
+			if (
+				patientDoc.status === 'inactive' ||
+				patientDoc.portalAccessEnabled === false
+			) {
 				return denyAuthz(req, res, 'Patient portal access is disabled', 403);
 			}
 

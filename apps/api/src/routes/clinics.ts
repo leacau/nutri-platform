@@ -1116,6 +1116,7 @@ router.get('/mine', authMiddleware, async (req: Request, res: Response) => {
 		req.auth.uid,
 		xClinicId,
 		req.auth.isPlatformAdmin,
+		req.auth.email,
 	);
 
 	const clinics: Array<{

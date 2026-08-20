@@ -9,6 +9,8 @@ import { analyzeUserSession } from '../middlewares/resolveSessionContext.js';
 import { auditRouter } from './audit.js';
 import { complianceRouter } from './compliance.js';
 import { messageTemplatesRouter } from './messageTemplates.js';
+import { foodLogsRouter } from './food-logs.js';
+import { measurementStandardsRouter } from './measurementStandards.js';
 
 export const apiRouter = Router();
 import { authMiddleware } from '../middlewares/authMiddleware.js';
@@ -36,6 +38,7 @@ apiRouter.get(
 				req.auth.uid,
 				xClinicId,
 				req.auth.isPlatformAdmin,
+				req.auth.email,
 			);
 
 			logEvent('session', {
@@ -106,3 +109,9 @@ apiRouter.use('/compliance', complianceRouter);
 
 // Automated message templates
 apiRouter.use('/templates', messageTemplatesRouter);
+
+// Patient food logs
+apiRouter.use('/food-logs', foodLogsRouter);
+
+// Clinical measurement standards
+apiRouter.use('/measurement-standards', measurementStandardsRouter);

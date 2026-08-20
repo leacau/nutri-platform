@@ -13,7 +13,7 @@ import {
 import { RecordTimeline } from '../../../(protected)/app/patients/[id]/components/record-timeline';
 import { UserAccount } from '../../../../lib/types';
 import { apiClient } from '../../../../lib/api-client';
-import { formatDate } from '../../../../lib/utils';
+import { formatDateTime } from '../../../../lib/utils';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
 import { useClinic } from '../../../../providers/clinic-provider';
 import { useI18n } from '../../../../providers/i18n-provider';
@@ -34,38 +34,45 @@ const parseSafeDate = (dateVal: any): Date | null => {
 
 const formatSafeDate = (dateVal: any, fallback: string) => {
 	const date = parseSafeDate(dateVal);
-	return date ? formatDate(date.toISOString()) : fallback;
+	return date ? formatDateTime(date.toISOString()) : fallback;
 };
 
 const accountUid = (account: UserAccount) => account.uid || account.id;
 
 export default function PortalDashboardPage() {
-	const { activeMembership } = useClinic();
+	const { activeClinicId, me } = useClinic();
 	const { t } = useI18n();
-	const patientId = activeMembership?.patientId;
+	const patientMembership = me?.memberships.find(
+		(membership) =>
+			membership.clinicId === activeClinicId && membership.role === 'patient',
+	);
+	const patientId = patientMembership?.patientId;
 
 	const patientQuery = useAuthedQuery({
 		queryKey: ['portal-patient', patientId],
-		queryFn: (token, clinicId) => apiClient.patient(patientId!, clinicId, token),
+		queryFn: (token, clinicId) =>
+			apiClient.patient(patientId!, clinicId, token, 'patient'),
 		enabled: Boolean(patientId),
 	});
 
 	const appointmentsQuery = useAuthedQuery({
 		queryKey: ['portal-appointments'],
-		queryFn: (token, clinicId) => apiClient.appointments(clinicId, token),
+		queryFn: (token, clinicId) =>
+			apiClient.appointments(clinicId, token, 'patient'),
 		enabled: Boolean(patientId),
 	});
 
 	const recordsQuery = useAuthedQuery({
 		queryKey: ['portal-clinical-records', patientId],
 		queryFn: (token, clinicId) =>
-			apiClient.getClinicalRecords(patientId!, clinicId, token),
+			apiClient.getClinicalRecords(patientId!, clinicId, token, 'patient'),
 		enabled: Boolean(patientId),
 		retry: false,
 	});
 	const professionalsQuery = useAuthedQuery({
 		queryKey: ['portal-professionals'],
-		queryFn: (token, clinicId) => apiClient.professionals(clinicId, token),
+		queryFn: (token, clinicId) =>
+			apiClient.professionals(clinicId, token, 'patient'),
 		enabled: Boolean(patientId),
 	});
 
