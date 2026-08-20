@@ -22,49 +22,50 @@ import { useI18n } from "../providers/i18n-provider";
 const whatsappHref =
   "https://wa.me/5493424790708?text=Hola%2C%20quiero%20conocer%20AMSA%20Core%20para%20mi%20cl%C3%ADnica%20o%20consultorio.";
 
-function ProductBackdrop() {
+function ProductPreview() {
   const { t } = useI18n();
 
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden bg-[#f4f8f7]">
-      <div className="absolute inset-x-0 top-0 h-20 bg-white/90" />
-      <div className="absolute left-[6vw] top-24 hidden h-[560px] w-[240px] rounded-md border bg-white shadow-sm lg:block">
-        <div className="border-b p-5">
-          <div className="h-10 w-10 rounded-md bg-emerald-100" />
-          <div className="mt-4 h-3 w-24 rounded bg-slate-200" />
-          <div className="mt-2 h-2 w-32 rounded bg-slate-100" />
+    <div className="overflow-hidden rounded-md border bg-white shadow-xl">
+      <div className="flex items-center justify-between border-b px-5 py-4">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            {t("common.workspace")}
+          </p>
+          <p className="font-semibold text-slate-900">{t("home.previewClinic")}</p>
         </div>
-        {[
-          t("nav.dashboard"),
-          t("nav.patients"),
-          t("nav.appointments"),
-          t("nav.nutritionists"),
-          t("nav.compliance"),
-        ].map((item, index) => (
-          <div
-            key={item}
-            className={`mx-4 mt-3 flex h-10 items-center gap-3 rounded-md px-3 text-sm ${
-              index === 0 ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-500"
-            }`}
-          >
-            <span className="h-3 w-3 rounded-sm bg-current opacity-40" />
-            {item}
-          </div>
-        ))}
+        <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+          {t("common.active")}
+        </div>
       </div>
-      <div className="absolute left-[20vw] right-[4vw] top-24 rounded-md border bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-400">
-              {t("common.workspace")}
-            </p>
-            <p className="font-semibold text-slate-900">{t("home.previewClinic")}</p>
+      <div className="grid min-h-[480px] lg:grid-cols-[220px,1fr]">
+        <aside className="hidden border-r bg-slate-50 p-4 lg:block">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="h-10 w-10 rounded-md bg-emerald-100" />
+            <div>
+              <div className="h-3 w-24 rounded bg-slate-300" />
+              <div className="mt-2 h-2 w-32 rounded bg-slate-200" />
+            </div>
           </div>
-          <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-            {t("common.active")}
-          </div>
-        </div>
-        <div className="grid gap-4 p-6 md:grid-cols-[1.2fr,0.8fr]">
+          {[
+            t("nav.dashboard"),
+            t("nav.patients"),
+            t("nav.appointments"),
+            t("nav.nutritionists"),
+            t("nav.compliance"),
+          ].map((item, index) => (
+            <div
+              key={item}
+              className={`mt-2 flex h-10 items-center gap-3 rounded-md px-3 text-sm ${
+                index === 0 ? "bg-slate-900 text-white" : "bg-white text-slate-500"
+              }`}
+            >
+              <span className="h-3 w-3 rounded-sm bg-current opacity-40" />
+              {item}
+            </div>
+          ))}
+        </aside>
+        <div className="grid gap-4 bg-white p-5 md:grid-cols-[1.2fr,0.8fr]">
           <div className="space-y-4">
             <div>
               <p className="text-sm text-slate-500">{t("home.previewDashboard")}</p>
@@ -87,7 +88,7 @@ function ProductBackdrop() {
               <div className="mt-4 space-y-3">
                 <div className="h-3 w-3/4 rounded bg-slate-200" />
                 <div className="h-3 w-1/2 rounded bg-slate-100" />
-                <div className="h-24 rounded border bg-emerald-50/60" />
+                <div className="h-24 rounded border bg-emerald-50" />
               </div>
             </div>
           </div>
@@ -113,7 +114,6 @@ function ProductBackdrop() {
           </div>
         </div>
       </div>
-      <div className="absolute inset-0 bg-gradient-to-r from-white via-white/90 to-white/20" />
     </div>
   );
 }
@@ -163,9 +163,8 @@ export default function Home() {
 
   return (
     <main className="bg-white text-slate-950">
-      <section id="producto" className="relative min-h-[88vh] overflow-hidden">
-        <ProductBackdrop />
-        <header className="relative z-10 mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+      <section id="producto" className="border-b bg-white">
+        <header className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <Link href="/" className="text-lg font-bold text-slate-950">
             AMSA Core
           </Link>
@@ -191,8 +190,8 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="relative z-10 mx-auto flex min-h-[72vh] max-w-7xl items-center px-6 py-16">
-          <div className="max-w-2xl">
+        <div className="mx-auto grid max-w-7xl items-center gap-10 px-6 py-14 lg:grid-cols-[0.9fr,1.1fr] lg:py-20">
+          <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
               {t("home.heroKicker")}
             </p>
@@ -229,6 +228,7 @@ export default function Home() {
               )}
             </div>
           </div>
+          <ProductPreview />
         </div>
       </section>
 
@@ -344,7 +344,7 @@ export default function Home() {
           <div className="grid gap-4 sm:grid-cols-3">
             {[t("home.securityRoles"), t("home.securityAudit"), t("home.securityPortal")].map(
               (item) => (
-                <div key={item} className="rounded-md border border-white/10 bg-white/5 p-5">
+                <div key={item} className="rounded-md border border-slate-700 bg-slate-900 p-5">
                   <LockKeyhole className="mb-4 h-5 w-5 text-emerald-300" />
                   <p className="text-sm leading-6 text-slate-200">{item}</p>
                 </div>

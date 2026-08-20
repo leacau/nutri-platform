@@ -62,24 +62,6 @@ export async function requireClinicContext(
 	const headerClinicId = req.header(HEADER) ?? null;
 	const portalMode = req.header('x-portal-mode') === 'patient';
 
-	// Platform admin: confía en el header (auditaría en prod)
-	if (req.auth.isPlatformAdmin) {
-		if (!headerClinicId) {
-			return res.status(400).json({
-				success: false,
-				message: 'Missing X-Clinic-Id header',
-			});
-		}
-		if (!(await assertClinicIsActive(headerClinicId, res))) return;
-		req.auth = {
-			...req.auth,
-			clinicId: headerClinicId,
-			role: 'platform_admin',
-			clinicCapabilities: defaultCapabilitiesForRole('clinic_admin'),
-		};
-		return next();
-	}
-
 	if (portalMode) {
 		if (!headerClinicId) {
 			return res.status(400).json({
@@ -128,6 +110,24 @@ export async function requireClinicContext(
 			clinicId: headerClinicId,
 			role: 'patient',
 			clinicCapabilities: [],
+		};
+		return next();
+	}
+
+	// Platform admin: confía en el header (auditaría en prod)
+	if (req.auth.isPlatformAdmin) {
+		if (!headerClinicId) {
+			return res.status(400).json({
+				success: false,
+				message: 'Missing X-Clinic-Id header',
+			});
+		}
+		if (!(await assertClinicIsActive(headerClinicId, res))) return;
+		req.auth = {
+			...req.auth,
+			clinicId: headerClinicId,
+			role: 'platform_admin',
+			clinicCapabilities: defaultCapabilitiesForRole('clinic_admin'),
 		};
 		return next();
 	}

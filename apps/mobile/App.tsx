@@ -280,17 +280,21 @@ function PatientPortalApp() {
 							(parseDate(a.scheduledFor || a.requestedAt)?.getTime() || 0),
 					),
 			);
-			setRecords(nextRecords);
+			const assignedProfessionalIds = new Set(
+				nextPatientData.assignedProfessionalUids ?? [],
+			);
+			const availableAssignedProfessionalUids = nextProfessionals
+				.filter((professional) => assignedProfessionalIds.has(accountUid(professional)))
+				.map((professional) => accountUid(professional));
 			const currentFoodLog = nextFoodLogs[0];
+
+			setRecords(nextRecords);
 			setFoodLogDays(currentFoodLog?.days ?? createEmptyDays());
 			setSharedWithProfessionalUids(
-				currentFoodLog?.sharedWithProfessionalUids ??
-					nextPatientData.assignedProfessionalUids ??
-					[],
+				(currentFoodLog?.sharedWithProfessionalUids ?? availableAssignedProfessionalUids)
+					.filter((uid) => availableAssignedProfessionalUids.includes(uid)),
 			);
-			setAppointmentProfessionalUid(
-				nextPatientData.assignedProfessionalUids?.[0] ?? '',
-			);
+			setAppointmentProfessionalUid(availableAssignedProfessionalUids[0] ?? '');
 			setAppointmentVisibleMonth(monthKeyFor(new Date()));
 			setAppointmentDate('');
 			setAvailableDays([]);

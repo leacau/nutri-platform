@@ -3,6 +3,8 @@
 import {
 	Calendar,
 	CheckCircle2,
+	ChevronLeft,
+	ChevronRight,
 	Clock3,
 	PlusCircle,
 	Trash2,
@@ -24,6 +26,7 @@ import { Label } from '../../../../components/ui/label';
 import { Select } from '../../../../components/ui/select';
 import { AvailabilityDay, UserAccount } from '../../../../lib/types';
 import { apiClient } from '../../../../lib/api-client';
+import { cn } from '../../../../lib/utils';
 import { formatDateTime } from '../../../../lib/utils';
 import { useAuth } from '../../../../providers/auth-provider';
 import { useAuthedQuery } from '../../../../hooks/use-authed-query';
@@ -52,18 +55,43 @@ const toDateTimeLocal = (date: Date | null) => {
 };
 
 const dateTimeDatePart = (value: string) => value.slice(0, 10);
-const dateTimeTimePart = (value: string) => value.slice(11, 16);
-const combineDateTimeLocal = (value: string, part: 'date' | 'time', next: string) => {
-	const date = part === 'date' ? next : dateTimeDatePart(value);
-	const time = part === 'time' ? next : dateTimeTimePart(value);
-	if (!date && !time) return '';
-	return `${date || new Date().toISOString().slice(0, 10)}T${time || '08:00'}`;
-};
-
 const isValidLocalDateTime = (value: string) =>
 	/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(value);
 
 const accountUid = (account: UserAccount) => account.uid || account.id;
+const toIsoDate = (date: Date) => {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+};
+const monthBounds = (monthKey: string) => {
+	const [year = '0', month = '1'] = monthKey.split('-');
+	const first = new Date(Number(year), Number(month) - 1, 1);
+	const last = new Date(Number(year), Number(month), 0);
+	return { first, last, from: toIsoDate(first), to: toIsoDate(last) };
+};
+const addMonths = (monthKey: string, amount: number) => {
+	const [year = '0', month = '1'] = monthKey.split('-');
+	const next = new Date(Number(year), Number(month) - 1 + amount, 1);
+	return toIsoDate(next).slice(0, 7);
+};
+const calendarCells = (monthKey: string) => {
+	const { first, last } = monthBounds(monthKey);
+	const cells: Array<{ date: string; inMonth: boolean }> = [];
+	const start = new Date(first);
+	const startOffset = start.getDay() === 0 ? 6 : start.getDay() - 1;
+	start.setDate(start.getDate() - startOffset);
+	for (let index = 0; index < 42; index += 1) {
+		const date = new Date(start);
+		date.setDate(start.getDate() + index);
+		cells.push({
+			date: toIsoDate(date),
+			inMonth: date.getMonth() === first.getMonth() && date <= last,
+		});
+	}
+	return cells;
+};
 const weekDays = [
 	{ dayOfWeek: 1, labelKey: 'appointments.day.monday' },
 	{ dayOfWeek: 2, labelKey: 'appointments.day.tuesday' },
@@ -131,6 +159,9 @@ export default function AppointmentsPage() {
 	const { t } = useI18n();
 	const [filterStatus, setFilterStatus] = useState('all');
 	const [isQuickPatientOpen, setIsQuickPatientOpen] = useState(false);
+	const [visibleMonth, setVisibleMonth] = useState(() =>
+		toIsoDate(new Date()).slice(0, 7),
+	);
 	const [quickPatient, setQuickPatient] = useState({
 		name: '',
 		dni: '',
@@ -203,6 +234,29 @@ export default function AppointmentsPage() {
 	const selectedProfessionalUid =
 		newAppointment.professionalUid || (isMeProfessional ? user?.uid || '' : '');
 	const selectedDate = dateTimeDatePart(newAppointment.scheduledFor);
+	const currentMonth = monthBounds(visibleMonth);
+	const availableDaysQuery = useAuthedQuery({
+		queryKey: [
+			'appointment-available-days',
+			selectedProfessionalUid,
+			currentMonth.from,
+			currentMonth.to,
+		],
+		queryFn: (token, clinicId) =>
+			apiClient.appointmentAvailableDays(
+				clinicId,
+				selectedProfessionalUid,
+				currentMonth.from,
+				currentMonth.to,
+				token,
+			),
+		enabled: Boolean(selectedProfessionalUid),
+	});
+	const availableDaysByDate = useMemo(() => {
+		return new Map(
+			(availableDaysQuery.data?.days ?? []).map((day) => [day.date, day]),
+		);
+	}, [availableDaysQuery.data?.days]);
 	const slotsQuery = useAuthedQuery({
 		queryKey: ['appointment-slots', selectedProfessionalUid, selectedDate],
 		queryFn: (token, clinicId) =>
@@ -711,6 +765,7 @@ export default function AppointmentsPage() {
 									setNewAppointment({
 										...newAppointment,
 										professionalUid: e.target.value,
+										scheduledFor: '',
 									})
 								}
 								disabled={isMeProfessional}
@@ -730,89 +785,147 @@ export default function AppointmentsPage() {
 								)}
 							</Select>
 						</div>
-						<div className='space-y-1'>
-							<Label>{t('common.dateTime')}</Label>
-							<div className='grid grid-cols-[1.2fr,0.8fr] gap-2'>
-								<Input
-									type='date'
-									value={dateTimeDatePart(newAppointment.scheduledFor)}
-									onChange={(e) =>
-										setNewAppointment({
-											...newAppointment,
-											scheduledFor: combineDateTimeLocal(
-												newAppointment.scheduledFor,
-												'date',
-												e.target.value,
-											),
-										})
-									}
-								/>
-								<Input
-									type='text'
-									inputMode='numeric'
-									pattern='[0-2][0-9]:[0-5][0-9]'
-									placeholder='HH:mm'
-									value={dateTimeTimePart(newAppointment.scheduledFor)}
-									onChange={(e) =>
-										setNewAppointment({
-											...newAppointment,
-											scheduledFor: combineDateTimeLocal(
-												newAppointment.scheduledFor,
-												'time',
-												e.target.value,
-											),
-										})
-									}
-								/>
-							</div>
-						</div>
-						{selectedProfessionalUid && selectedDate ? (
-							<div className='space-y-2 rounded-lg border bg-slate-50/60 p-3'>
+						{selectedProfessionalUid ? (
+							<div className='space-y-3 rounded-lg border bg-slate-50/60 p-3'>
 								<div className='flex items-center justify-between gap-2'>
-									<p className='text-sm font-semibold text-slate-800'>
-										{t('appointments.availableSlots')}
-									</p>
-									<p className='text-xs text-muted-foreground'>
-										{slotsQuery.data?.slotMinutes ?? availabilityForm.slotMinutes} min
-									</p>
+									<div>
+										<p className='text-sm font-semibold text-slate-800'>
+											{t('portal.availableDays')}
+										</p>
+										<p className='text-xs text-muted-foreground'>
+											{t('portal.chooseDateAndProfessional')}
+										</p>
+									</div>
+									<div className='flex items-center gap-1'>
+										<Button
+											type='button'
+											size='icon'
+											variant='outline'
+											aria-label={t('portal.previousMonth')}
+											onClick={() => {
+												setVisibleMonth((current) => addMonths(current, -1));
+												setNewAppointment((prev) => ({
+													...prev,
+													scheduledFor: '',
+												}));
+											}}
+										>
+											<ChevronLeft className='h-4 w-4' />
+										</Button>
+										<span className='min-w-28 text-center text-xs font-semibold capitalize text-slate-700'>
+											{currentMonth.first.toLocaleDateString(undefined, {
+												month: 'long',
+												year: 'numeric',
+											})}
+										</span>
+										<Button
+											type='button'
+											size='icon'
+											variant='outline'
+											aria-label={t('portal.nextMonth')}
+											onClick={() => {
+												setVisibleMonth((current) => addMonths(current, 1));
+												setNewAppointment((prev) => ({
+													...prev,
+													scheduledFor: '',
+												}));
+											}}
+										>
+											<ChevronRight className='h-4 w-4' />
+										</Button>
+									</div>
 								</div>
-								{slotsQuery.isLoading ? (
+								<div className='grid grid-cols-7 gap-1'>
+									{calendarCells(visibleMonth).map((cell) => {
+										const day = availableDaysByDate.get(cell.date);
+										const selected = selectedDate === cell.date;
+										return (
+											<button
+												key={cell.date}
+												type='button'
+												disabled={!cell.inMonth || !day}
+												onClick={() =>
+													setNewAppointment((prev) => ({
+														...prev,
+														scheduledFor: `${cell.date}T`,
+													}))
+												}
+												className={cn(
+													'min-h-14 rounded-lg border p-1.5 text-left text-xs transition',
+													selected
+														? 'border-primary bg-primary text-primary-foreground'
+														: day
+															? 'border-emerald-200 bg-white hover:bg-emerald-50'
+															: 'border-transparent bg-transparent text-muted-foreground/40',
+													!cell.inMonth && 'opacity-0',
+												)}
+											>
+												<span className='block font-semibold'>
+													{Number(cell.date.slice(8, 10))}
+												</span>
+												{day ? (
+													<span className='mt-1 block leading-tight'>
+														{day.freeCount}
+													</span>
+												) : null}
+											</button>
+										);
+									})}
+								</div>
+								{availableDaysQuery.isLoading ? (
 									<p className='text-xs text-muted-foreground'>
 										{t('common.loading')}
 									</p>
-								) : slotsQuery.data?.slots.length ? (
-									<div className='grid grid-cols-3 gap-2'>
-										{slotsQuery.data.slots.map((slot) => {
-											const selected =
-												dateTimeTimePart(newAppointment.scheduledFor) ===
-												slot.time;
-											return (
-												<Button
-													key={slot.startsAt}
-													type='button'
-													size='sm'
-													variant={selected ? 'default' : 'outline'}
-													disabled={!slot.available}
-													className='font-mono'
-													onClick={() =>
-														setNewAppointment({
-															...newAppointment,
-															scheduledFor: toDateTimeLocal(
-																new Date(slot.startsAt),
-															),
-														})
-													}
-												>
-													{slot.time}
-												</Button>
-											);
-										})}
+								) : null}
+								{selectedDate ? (
+									<div className='space-y-2'>
+										<div className='flex items-center justify-between gap-2'>
+											<p className='text-sm font-semibold text-slate-800'>
+												{t('appointments.availableSlots')}
+											</p>
+											<p className='text-xs text-muted-foreground'>
+												{slotsQuery.data?.slotMinutes ?? availabilityForm.slotMinutes} min
+											</p>
+										</div>
+										{slotsQuery.isLoading ? (
+											<p className='text-xs text-muted-foreground'>
+												{t('common.loading')}
+											</p>
+										) : slotsQuery.data?.slots.length ? (
+											<div className='grid grid-cols-3 gap-2'>
+												{slotsQuery.data.slots.map((slot) => {
+													const selected =
+														newAppointment.scheduledFor ===
+														toDateTimeLocal(new Date(slot.startsAt));
+													return (
+														<Button
+															key={slot.startsAt}
+															type='button'
+															size='sm'
+															variant={selected ? 'default' : 'outline'}
+															disabled={!slot.available}
+															className='font-mono'
+															onClick={() =>
+																setNewAppointment({
+																	...newAppointment,
+																	scheduledFor: toDateTimeLocal(
+																		new Date(slot.startsAt),
+																	),
+																})
+															}
+														>
+															{slot.time}
+														</Button>
+													);
+												})}
+											</div>
+										) : (
+											<p className='text-xs text-muted-foreground'>
+												{t('appointments.noSlotsForDate')}
+											</p>
+										)}
 									</div>
-								) : (
-									<p className='text-xs text-muted-foreground'>
-										{t('appointments.noSlotsForDate')}
-									</p>
-								)}
+								) : null}
 							</div>
 						) : null}
 						<Button
@@ -824,6 +937,7 @@ export default function AppointmentsPage() {
 							}
 							disabled={
 								isSubmitting ||
+								!isValidLocalDateTime(newAppointment.scheduledFor) ||
 								(!perms.canScheduleForOthers && !isMeProfessional)
 							}
 						>
