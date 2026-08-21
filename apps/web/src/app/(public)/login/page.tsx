@@ -99,8 +99,8 @@ function LoginContent() {
 		<div className='flex min-h-screen'>
 			<div className='relative hidden w-1/2 items-center justify-center bg-primary text-white lg:flex'>
 				<div className='relative z-10 max-w-md space-y-6 p-12'>
-					<NoriaLogo variant='dark' className='h-20 w-auto' />
-					<div className='inline-flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold'>
+{/* 					<NoriaLogo variant='dark' className='h-20 w-auto' />
+ */}					<div className='inline-flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold'>
 						<ShieldCheck className='h-4 w-4' />
 						{t('auth.featureBadge')}
 					</div>

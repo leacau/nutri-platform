@@ -159,7 +159,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 	}
 
 	const filteredNav = navItems.filter((item) => {
-		if (item.href === '/portal/dashboard' && !patientPortalEnabled) return false;
+		if (item.href === '/portal/dashboard' && !patientPortalEnabled)
+			return false;
 		if (
 			item.requiredModule &&
 			activeClinic?.billing?.enabledModules?.[item.requiredModule] !== true
@@ -167,14 +168,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 			return false;
 		}
 		if (!item.roles) return true;
-		if (platformRole === 'platform_admin' && item.href !== '/portal/dashboard') {
+		if (
+			platformRole === 'platform_admin' &&
+			item.href !== '/portal/dashboard'
+		) {
 			return true;
 		}
 		return currentRole ? item.roles.includes(currentRole) : false;
 	});
 
 	const workspaceName =
-		activeMembership?.clinicName ?? activeClinic?.name ?? t('common.noWorkspace');
+		activeMembership?.clinicName ??
+		activeClinic?.name ??
+		t('common.noWorkspace');
 	const goToWorkspaceSelection = () => {
 		setIsMobileMenuOpen(false);
 		router.push('/select-clinic');
@@ -213,8 +219,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 				</div>
 			)}
 			<div className='min-w-0'>
-				<p className='truncate text-sm font-semibold text-primary'>{t('app.name')}</p>
-				<p className='truncate text-xs text-muted-foreground'>{workspaceName}</p>
+				<p className='truncate text-sm font-semibold text-primary'>
+					{t('app.name')}
+				</p>
+				<p className='truncate text-xs text-muted-foreground'>by AMSA Core</p>
+				<p className='truncate text-xs text-primary'>{workspaceName}</p>
 			</div>
 		</div>
 	);
@@ -242,7 +251,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 					<BarChart3 className='h-4 w-4' />
 					<span>{t('common.status')}</span>
 				</div>
-				<p>{t('common.currentRole', { role: displayRole || t('common.noRole') })}</p>
+				<p>
+					{t('common.currentRole', { role: displayRole || t('common.noRole') })}
+				</p>
 			</div>
 			<Button
 				variant='outline'
@@ -325,3 +336,4 @@ export function AppShell({ children }: { children: ReactNode }) {
 		</div>
 	);
 }
+
