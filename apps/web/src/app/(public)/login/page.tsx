@@ -8,6 +8,7 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import Link from 'next/link';
+import { NoriaLogo } from '../../../components/brand/noria-logo';
 import { apiClient } from '../../../lib/api-client';
 import { useAuth } from '../../../providers/auth-provider';
 import { useForm } from 'react-hook-form';
@@ -96,14 +97,16 @@ function LoginContent() {
 
 	return (
 		<div className='flex min-h-screen'>
-			<div className='relative hidden w-1/2 items-center justify-center bg-gradient-to-br from-primary via-primary to-secondary text-white lg:flex'>
-				<div className='absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(47,143,123,0.35),_transparent_50%)]' />
+			<div className='relative hidden w-1/2 items-center justify-center bg-primary text-white lg:flex'>
 				<div className='relative z-10 max-w-md space-y-6 p-12'>
+					<NoriaLogo variant='dark' className='h-20 w-auto' />
 					<div className='inline-flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold'>
 						<ShieldCheck className='h-4 w-4' />
 						{t('auth.featureBadge')}
 					</div>
-					<h2 className='text-4xl font-bold leading-tight'>AMSA Core</h2>
+					<h2 className='font-display text-4xl font-semibold leading-tight'>
+						{t('home.title')}
+					</h2>
 					<p className='text-lg text-white/80'>{t('auth.subtitle')}</p>
 					<ul className='space-y-2 text-sm text-white/80'>
 						<li>{t('auth.featureFirebase')}</li>
@@ -114,6 +117,7 @@ function LoginContent() {
 			</div>
 			<div className='mx-auto flex w-full max-w-xl flex-col justify-center px-8 py-16'>
 				<div className='mb-8 space-y-2 text-center'>
+					<NoriaLogo className='mx-auto mb-6 h-14 w-auto' />
 					<div className='inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1 text-xs font-semibold text-primary'>
 						{t('auth.access')}
 					</div>

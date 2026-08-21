@@ -1,7 +1,7 @@
 {
 	"expo": {
-		"name": "AMSA Core Paciente",
-		"slug": "amsa-core-paciente",
+		"name": "Noria Paciente",
+		"slug": "noria-paciente",
 		"version": "0.1.0",
 		"orientation": "portrait",
 		"userInterfaceStyle": "light",
@@ -10,7 +10,7 @@
 		},
 		"android": {
 			"adaptiveIcon": {
-				"backgroundColor": "#0f2f4f"
+				"backgroundColor": "#0E3A47"
 			}
 		}
 	}

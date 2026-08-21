@@ -624,7 +624,7 @@ function PatientPortalApp() {
 		return (
 			<View style={safeScreenStyle}>
 				<ScrollView contentContainerStyle={styles.login}>
-					<Text style={styles.eyebrow}>AMSA Core</Text>
+					<Text style={styles.eyebrow}>Noria</Text>
 					<Text style={styles.title}>Elegí tu portal</Text>
 					<Text style={styles.subtitle}>
 						Tu usuario tiene acceso como paciente en más de un espacio.
@@ -663,7 +663,7 @@ function PatientPortalApp() {
 		return (
 			<View style={safeScreenStyle}>
 				<ScrollView contentContainerStyle={styles.login}>
-					<Text style={styles.eyebrow}>AMSA Core</Text>
+					<Text style={styles.eyebrow}>Noria</Text>
 					<Text style={styles.title}>Portal paciente</Text>
 					{pendingPasswordToken ? (
 						<>

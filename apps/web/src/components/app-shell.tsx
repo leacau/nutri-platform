@@ -25,6 +25,7 @@ import { Button } from './ui/button';
 import { ClinicSwitcher } from './clinic-switcher';
 import { LanguageSelector } from './language-selector';
 import Link from 'next/link';
+import { NoriaLogo } from './brand/noria-logo';
 import { ThemeToggle } from './theme-toggle';
 import type { BillingModuleKey } from '../lib/types';
 import { cn } from '../lib/utils';
@@ -196,8 +197,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 			) : (
 				<div
 					className={cn(
-						'flex items-center justify-center rounded-xl bg-primary/10 text-primary',
-						compact ? 'h-9 w-9 text-xs' : 'h-10 w-10',
+						'flex items-center justify-center rounded-xl border bg-white',
+						compact ? 'h-9 w-9' : 'h-10 w-10',
 					)}
 					style={
 						accentColor
@@ -208,7 +209,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 							: undefined
 					}
 				>
-					AC
+					<NoriaLogo markOnly className={compact ? 'h-6 w-6' : 'h-7 w-7'} />
 				</div>
 			)}
 			<div className='min-w-0'>
@@ -236,7 +237,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 	);
 	const SidebarActions = () => (
 		<div className='mt-auto space-y-2 px-4 pb-4'>
-			<div className='rounded-xl border bg-gradient-to-r from-primary/10 to-secondary/10 px-3 py-3 text-xs text-muted-foreground'>
+			<div className='rounded-xl border bg-muted px-3 py-3 text-xs text-muted-foreground'>
 				<div className='flex items-center gap-2 text-primary'>
 					<BarChart3 className='h-4 w-4' />
 					<span>{t('common.status')}</span>

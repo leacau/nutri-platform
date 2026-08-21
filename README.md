@@ -1,6 +1,6 @@
 # Nutri Platform
 
-Frontend y backend para AMSA Core. Incluye Next.js App Router, Firebase Auth,
+Frontend y backend para Noria by AmsaCore. Incluye Next.js App Router, Firebase Auth,
 multi-clinica, consultorios individuales, RBAC por membership y auditoria.
 
 ## Requisitos
@@ -29,7 +29,7 @@ CLINICAL_ENCRYPTION_KEY=change-me
 ALLOWED_ORIGINS=http://localhost:3000
 ```
 
-Frontend AMSA Core (`apps/web/.env.local`, hay plantilla en `.env.example`):
+Frontend Noria (`apps/web/.env.local`, hay plantilla en `.env.example`):
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=/api
@@ -57,7 +57,7 @@ Backend API:
 npm run dev:api
 ```
 
-Frontend AMSA Core:
+Frontend Noria:
 
 ```bash
 npm run dev:web

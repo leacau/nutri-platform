@@ -1,6 +1,6 @@
-# AMSA Core Web
+# Noria Web
 
-Frontend principal del producto AMSA Core con Next.js App Router.
+Frontend principal del producto Noria by AmsaCore con Next.js App Router.
 
 Incluye:
 - Autenticacion con Firebase Auth por email/password y Google.
